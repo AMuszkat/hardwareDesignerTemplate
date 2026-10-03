@@ -4,8 +4,9 @@ Check this machine and this clone against everything the two sessions use.
 
     python3 tools/setup/check.py          # (./setup.sh check runs this)
 
-Every item is REQUIRED: a missing one prints FAIL with the command that fixes
-it, and the script exits 1.  MANUAL items cannot be tested from a shell and
+Every item is REQUIRED -- a missing one prints FAIL with the command that
+fixes it, and the script exits 1 -- except those marked OPT: a feature the
+user chooses per use (Blender, for one render engine), never counted.  MANUAL items cannot be tested from a shell and
 are listed for you to confirm once.
 """
 import json
@@ -25,7 +26,7 @@ API_KEYS = ["NEXAR_CLIENT_ID", "NEXAR_CLIENT_SECRET", "DIGIKEY_CLIENT_ID",
 KONNECT_SKILLS = ["konnect", "kicad-schematic", "kicad-pcb", "kicad-manufacture",
                   "kicad-review", "kicad-library"]
 KONNECT_AGENTS = ["kicad-design-review-agent.md", "kicad-schematic-build-agent.md"]
-PROJECT_SKILLS_BOARD = ["board-setup", "footprint", "placement", "routing"]
+PROJECT_SKILLS_BOARD = ["board-setup", "footprint", "placement", "routing", "render"]
 # the same list tools/parts/datasheet.py and kicad_project/tools/fp/fp.py search
 CHROMES = [c for c in (os.environ.get("CHROME_BIN"), "google-chrome-stable", "google-chrome",
                        "chromium", "chromium-browser",
@@ -36,7 +37,7 @@ HOOK_SCRIPTS = ["kicad_project/tools/session/relay.py", "kicad_project/tools/ses
                 "kicad_project/tools/session/wall.py", "kicad_project/tools/boardsel.py"]
 LAUNCHERS = ["bin/concept", "bin/board", "bin/relay", "setup.sh", "verify.sh",
              "kicad_project/tools/kpy", "kicad_project/tools/setup.sh",
-             "kicad_project/tools/freerouting/freerouting-mcp.sh"]
+             "kicad_project/tools/freerouting/freerouting-mcp.sh", "kicad_project/tools/render/setup.sh"]
 PCBNEW_PYTHONS = ["/usr/bin/python3",
                   "/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/"
                   "Versions/Current/bin/python3"]
@@ -148,10 +149,21 @@ def venvs():
     add("ok" if rc == 0 else "FAIL", "concept venv (.venv)", "numpy, scipy, matplotlib"
         if rc == 0 else out.splitlines()[-1], "./setup.sh install")
     py = KP / "tools" / ".venv" / "bin" / "python"
-    rc, out = run([str(py), "-c", "import fitz, easyeda2kicad; print('ok')"]) \
+    rc, out = run([str(py), "-c", "import fitz, easyeda2kicad, PIL; print('ok')"]) \
         if py.exists() else (1, "missing")
     add("ok" if rc == 0 else "FAIL", "board venv (kicad_project/tools/.venv)",
-        "easyeda2kicad, PyMuPDF" if rc == 0 else out.splitlines()[-1], "./setup.sh install")
+        "easyeda2kicad, PyMuPDF, Pillow" if rc == 0 else out.splitlines()[-1], "./setup.sh install")
+
+
+def optional():
+    """Only for a feature the user chooses per use: never counted as missing."""
+    rc, out = run(["sh", str(KP / "tools" / "render" / "setup.sh"), "--check"])
+    line = (out.splitlines() or ["missing"])[-1]
+    if line.startswith("ok "):
+        add("opt", "Blender (3D renders, --engine blender)", line[3:].replace(str(Path.home()), "~"))
+    else:
+        add("OPT", "Blender (3D renders, --engine blender)", "not installed -- needed only when the "
+            "user picks the Blender engine", "./setup.sh install-blender  (add --amd-gpu for an AMD GPU)")
 
 
 def keys():
@@ -228,15 +240,18 @@ def main():
     venvs()
     keys()
     project()
+    optional()
     manual()
     w = max(len(r[1]) for r in results)
     for state, what, detail, fix in results:
         print(f"{state:6} {what:<{w}}  {detail}")
-        if state in ("FAIL", "WARN") and fix:
+        if state in ("FAIL", "WARN", "OPT") and fix:
             print(f"{'':6} {'':<{w}}  -> {fix}")
     fails = sum(1 for r in results if r[0] == "FAIL")
     print(f"\n{fails} required item(s) missing." if fails else
           "\nAll required items present. Confirm the MANUAL items once.")
+    if any(r[0] == "OPT" for r in results):
+        print("OPT = optional, for a feature used only when the user chooses it.")
     return 1 if fails else 0
 
 

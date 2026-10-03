@@ -3,3 +3,4 @@
 # KiCad's own interpreter, which tools/kpy runs.
 easyeda2kicad      # fp.py get --lcsc: LCSC/EasyEDA symbol + footprint + 3D
 PyMuPDF            # route.py render / view.py / placement renders: PDF/SVG -> PNG
+Pillow             # render/render.py: composing the 3D renders, the gallery page images

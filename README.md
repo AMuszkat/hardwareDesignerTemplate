@@ -57,6 +57,7 @@ one comes from.
 | why anything is the way it is | `history/HISTORY.md` |
 | the handoff engine, adding a board | `tools/handoff/README.md` |
 | the PCB tools | `kicad_project/tools/*/README.md` |
+| 3D renders of a board (KiCad or Blender, the user's pick) | `kicad_project/tools/render/README.md` |
 
 ## What makes it work
 

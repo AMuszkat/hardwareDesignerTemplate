@@ -1,9 +1,9 @@
 # SETUP — getting a machine and a clone ready
 
 `./setup.sh check` tests everything below and prints the fix for anything
-missing. **Every item in section 1 is required**: the sessions' workflows call
-each of them, and a missing one surfaces mid-task as a tool that silently
-cannot do its step.
+missing. **Every item in section 1 is required** (except the one marked
+*optional*): the sessions' workflows call each of them, and a missing one
+surfaces mid-task as a tool that silently cannot do its step.
 
 ## 1. Requirements
 
@@ -20,7 +20,8 @@ cannot do its step.
 | 9 | **Claude in Chrome** extension, connected to the same Claude account | login-walled datasheets and CAD downloads (SnapEDA, Ultra Librarian, vendor portals) | https://claude.ai/chrome — the launchers start sessions with `--chrome` |
 | 10 | **Inkscape** | `tools/diagrams/check_diagrams.py` (rendered text bounds) | Debian/Ubuntu `sudo apt install -y inkscape` · macOS `brew install --cask inkscape` |
 | 11 | **Distributor API keys**: DigiKey, Mouser, element14, Nexar | `tools/parts/` (price, stock, lead time, datasheet URLs, catalogue search) | section 4 |
-| 12 | Python packages | concept `.venv` (numpy, scipy, matplotlib); board `kicad_project/tools/.venv` (easyeda2kicad, PyMuPDF) | `./setup.sh install` |
+| 12 | Python packages | concept `.venv` (numpy, scipy, matplotlib); board `kicad_project/tools/.venv` (easyeda2kicad, PyMuPDF, Pillow) | `./setup.sh install` |
+| 13 | *optional:* **Blender ≥ 4.2** | 3D renders with `render.py --engine blender` only — the user picks the engine per render, and the KiCad engine needs nothing extra | `./setup.sh install-blender` downloads Blender 4.5 LTS (Linux x86-64, sha256-verified, ~1.2 GB) into `~/.local/share/hwdesign/blender/`; `--amd-gpu` adds AMD's HIP runtime (Debian/Ubuntu, unpacked, no root). Elsewhere: install from blender.org and set `BLENDER_BIN` |
 
 ## 2. Install
 
@@ -114,6 +115,7 @@ publish.
 | relay switch, pcbnew interpreter | `kicad_project/relay.json`, `kicad_project/local.json` | no | `init`, `bin/relay` |
 | venvs | `.venv/`, `kicad_project/tools/.venv/` | no | `./setup.sh install` |
 | freerouting jar and its data | `~/.local/share/freerouting/` | — | `./setup.sh install` |
+| Blender (optional) and AMD's HIP runtime | `~/.local/share/hwdesign/blender/` (`HWDESIGN_BLENDER_HOME`) | — | `./setup.sh install-blender [--amd-gpu]` |
 | API keys | `~/.config/hwdesign/api.env` | — | you (section 4) |
 | Konnect binary, KiCad, Java, Chrome + extension, Inkscape | the machine | — | you (section 1) |
 
@@ -190,3 +192,5 @@ A line that is deliberately fine carries the marker `public-check: ok`.
 | the relay "does nothing" | `bin/relay status`; both sessions started with the launchers; see RELAY_PROTOCOL §8 |
 | `[Cross-session delivery notice]` | the two sessions run in different permission modes: set `permission_mode` in `kicad_project/project.json`, restart both with the launchers |
 | `fetch.py` shows a source as FAILED | that distributor's key or quota; the other sources still answer |
+| `render.py` stops: "choose the engine" | by design: there is no default; say `--engine kicad` or `--engine blender` |
+| a Blender render says `Cycles on: CPU` | no usable GPU backend: NVIDIA needs its driver, AMD `./setup.sh install-blender --amd-gpu`, Intel its Level Zero runtime; `./setup.sh check` shows the GPU it sees |

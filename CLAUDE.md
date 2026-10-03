@@ -31,7 +31,7 @@ Start with `design/IMPLEMENTATION.md` and the sheets in `design/diagrams/`.
 | `reference/` | `papers/`, `vendor/` (the datasheet store), `market/` (distributor cache), `sandbox/` — source material, never authority | — |
 | `out/` | study outputs; generated, disposable, gitignored | studies |
 | `kicad_project/boardN_*/` | KiCad files, `QUESTIONS.md`, `lib/`, plans — theirs; `handoff/` — ours, generated | board session |
-| `kicad_project/tools/` | the board sessions' own tools (footprints, board setup, placement, routing, freerouting) | board session |
+| `kicad_project/tools/` | the board sessions' own tools (footprints, board setup, placement, routing, freerouting, 3D renders) | board session |
 | `kicad_project/tools/session/`, `kicad_project/.claude/`, `kicad_project/.mcp.json`, `kicad_project/CLAUDE.md` | the hooks that enforce the walls, the board sessions' skills and MCP servers, their contract | the user (edit only at their request) |
 | `kicad_project/RELAY_PROTOCOL.md`, `project.json`, `relay.json` | the communication protocol, the session names, the relay switch | the user |
 

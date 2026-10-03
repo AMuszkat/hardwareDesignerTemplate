@@ -32,6 +32,7 @@ else
     if .venv/bin/pip install --quiet -r requirements.txt; then
       ok ".venv" "$(.venv/bin/python -c 'import pymupdf,sys; print("PyMuPDF", pymupdf.VersionBind, "| python", sys.version.split()[0])')"
       ok "easyeda2kicad" "$(.venv/bin/pip show easyeda2kicad 2>/dev/null | sed -n 's/^Version: //p')"
+      ok "Pillow" "$(.venv/bin/python -c 'import PIL; print(PIL.__version__)' 2>/dev/null)"
     else
       bad ".venv" "pip install -r requirements.txt failed (network?)"
     fi
@@ -72,6 +73,13 @@ if [ -n "$chrome" ]; then
 else
   bad "chrome" "install Google Chrome or Chromium (headless fallback for CAD and datasheet downloads)"
 fi
+
+# --- 4. optional: Blender, for render.py --engine blender only -------------------
+b="$(sh ./render/setup.sh --check 2>/dev/null || true)"
+case "$b" in
+  ok*) ok "blender (optional)" "${b#ok }" ;;
+  *)   ok "blender (optional)" "not installed -- only for render.py --engine blender: ./setup.sh install-blender" ;;
+esac
 
 echo
 if [ "$fail" -ne 0 ]; then

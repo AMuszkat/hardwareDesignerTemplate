@@ -12,6 +12,8 @@
 #                                            skills/agents from the installed binary
 #   ./setup.sh render-settings               re-write the per-machine settings (after a move)
 #   ./setup.sh clean-examples [--dry-run]    remove the example studies and their rows
+#   ./setup.sh install-blender [--amd-gpu]   OPTIONAL: Blender, only for 3D renders with
+#                                            --engine blender (~1.2 GB, outside the repo)
 #   ./setup.sh check-public [--history]      before a repo goes public: secrets, personal
 #                                            data, files that are never published
 #   ./setup.sh check-public --install-hook   ... and run it before every git push
@@ -184,5 +186,6 @@ case "${1:-}" in
   render-settings) cmd_render ;;
   clean-examples) shift; python3 tools/setup/clean_examples.py "$@" ;;
   check-public) shift; python3 tools/setup/check_public.py "$@" ;;
+  install-blender) shift; sh "$KP/tools/render/setup.sh" "$@" ;;
   *) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 2 ;;
 esac
