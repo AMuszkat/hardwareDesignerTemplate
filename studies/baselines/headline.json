@@ -1,0 +1,18 @@
+{
+  "divider.r1_ohm": 35700.0,
+  "divider.r2_ohm": 11500.0,
+  "divider.vout_nom_v": 3.2834782608695647,
+  "divider.worst_tol0p1_pct": 1.644512009729393,
+  "divider.worst_tol0p5_pct": 2.2369889682024358,
+  "divider.worst_tol1_pct": 2.9709857942316065,
+  "divider.yield_tol0p1_pct": 100.0,
+  "divider.yield_tol0p5_pct": 100.0,
+  "divider.yield_tol1_pct": 100.0,
+  "ldo.p_worst_w": 0.44033000000000005,
+  "ldo.tj_dfn62x2_degc": 100.82310000000001,
+  "ldo.tj_sot223_degc": 96.41980000000001,
+  "ldo.tj_sot235_degc": 149.25940000000003,
+  "rc.fc_err_pct": -0.5281605675654055,
+  "rc.fc_hz": 1591.5494309189535,
+  "rc.r_ohm": 10000.0
+}

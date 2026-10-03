@@ -1,0 +1,21 @@
+{
+  "_doc": "Rule gates that `tools/kpy tools/route/route.py check` runs beside KiCad's DRC. Yours. Transcribe each from the handoff (14_fab.md, 10_layout.md) and cite the line in \"source\" -- an entry without one is refused. A gate that is empty or null is not run. Schema: tools/route/README.md. `route.py gates` prints what is active.",
+  "plane_layers": [],
+  "class_vias": [],
+  "class_layers": [],
+  "field_vias": [],
+  "keepouts": [],
+  "class_width": null,
+  "edge": null,
+  "angles": null,
+  "_examples": {
+    "plane_layers": [{"layer": "In1.Cu", "net": "GND", "source": "14_fab.md Physical Stackup: In1.Cu GND, one solid pour, no slots"}],
+    "class_vias": [{"class": "Sensitive", "max_vias": 0, "except": {"NET_A": 1}, "source": "14_fab.md Net classes: Sensitive, via none (NET_A one)"}],
+    "class_layers": [{"class": "Sensitive", "layers": ["F.Cu"], "except": ["NET_A"], "source": "14_fab.md Net classes: Sensitive stays on F.Cu"}],
+    "field_vias": [{"ref": "U1", "pad": 0.45, "drill": 0.15, "on_lattice": true, "widths": [0.1016, 0.127], "margin": 0.4, "outside_refused": true, "source": "14_fab.md Net classes: BGA inside U1's field"}],
+    "keepouts": [{"name": "zone A", "from_placement": "zone A (floorplan)", "forbid_classes": ["Fast"], "source": "10_layout.md #3: no Fast net crosses zone A"}],
+    "class_width": {"source": "14_fab.md Net classes: track width per class"},
+    "edge": {"min": 0.5, "source": "14_fab.md: copper-to-edge 0.3 + the fab's +-0.2 mm outline tolerance"},
+    "angles": {"source": "10_layout.md #N: every joint 0 or 45 degrees"}
+  }
+}

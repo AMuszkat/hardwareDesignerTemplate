@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# The relay switch (off by default):  bin/relay on | off | status
+# See kicad_project/RELAY_PROTOCOL.md.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "$root/kicad_project/tools/session/relay.py" "${@:-status}"

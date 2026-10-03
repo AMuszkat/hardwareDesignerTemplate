@@ -1,0 +1,6 @@
+# Concept session venv (.venv) -- the studies and the model.
+# The tools/ generators and the handoff publisher are stdlib-only; add the
+# packages your own studies need here and re-run ./setup.sh install.
+numpy
+scipy
+matplotlib

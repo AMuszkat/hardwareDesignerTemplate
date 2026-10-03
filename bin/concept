@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Start THE concept session: repo root, its relay name, the project's shared
+# permission mode.  Extra arguments go to `claude` (e.g. bin/concept --continue).
+#
+# Exactly one concept session answers the relay. A second session opened at the
+# root is a scratch session: it neither answers relay messages nor publishes.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+relay="$root/kicad_project/tools/session/relay.py"
+name="$(python3 "$relay" name concept)"
+mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("permission_mode","default"))' "$root/kicad_project/project.json")"
+cd "$root"
+exec claude -n "$name" --permission-mode "$mode" --chrome "$@"

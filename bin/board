@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Start the board session for ONE board:
+#
+#     bin/board board1              # new session, told which board it owns
+#     bin/board board1 --continue   # extra arguments go to `claude`
+#
+# It runs in kicad_project/ (so the board contract and its walls apply), named
+# <Project>_Kicad_boardN, in the project's shared permission mode -- the relay
+# only works when both sessions share one -- with HW_BOARD exported so the
+# hooks know which folder this session owns.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+kp="$root/kicad_project"
+board="${1:-}"
+if [[ ! "$board" =~ ^board[0-9]+$ ]]; then
+  echo "usage: bin/board boardN [claude args...]" >&2
+  ls -d "$kp"/board[0-9]*_*/ 2>/dev/null | sed 's|.*/\(board[0-9]*\)_\(.*\)/|  \1   (\1_\2)|' >&2 || true
+  exit 2
+fi
+shift
+folder="$(cd "$kp" && ls -d "${board}"_*/ 2>/dev/null | head -1)"
+folder="${folder%/}"
+if [ -z "$folder" ]; then
+  echo "no folder kicad_project/${board}_*/ -- create the board first: ./setup.sh new-board" >&2
+  exit 1
+fi
+name="$(python3 "$kp/tools/session/relay.py" name "$board")"
+mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("permission_mode","default"))' "$kp/project.json")"
+cd "$kp"
+export HW_BOARD="$board"
+if [ $# -eq 0 ]; then
+  exec claude -n "$name" --permission-mode "$mode" --chrome \
+    "You are the board session for ${board} (kicad_project/${folder}/). Start the way kicad_project/CLAUDE.md says every session starts."
+fi
+exec claude -n "$name" --permission-mode "$mode" --chrome "$@"

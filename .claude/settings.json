@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(.venv/bin/python tools/*)",
+      "Bash(.venv/bin/python studies/*)",
+      "Bash(bin/relay status)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "konnect"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/kicad_project/tools/session/relay.py\" brief concept"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/kicad_project/tools/session/guard.py\" concept"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/kicad_project/tools/session/wall.py\" concept"
+          }
+        ]
+      }
+    ]
+  }
+}

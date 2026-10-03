@@ -1,0 +1,46 @@
+# --- per machine (rendered or created by ./setup.sh) ---
+.claude/settings.local.json
+kicad_project/.claude/settings.local.json
+kicad_project/relay.json
+kicad_project/local.json
+.venv/
+kicad_project/tools/.venv/
+
+# --- Python ---
+__pycache__/
+*.pyc
+
+# --- generated, disposable ---
+out/
+reference/sandbox/*
+!reference/sandbox/.gitkeep
+
+# --- KiCad working files ---
+~*.lck
+*.kicad_prl
+fp-info-cache
+_autosave-*
+*-backups/
+*.bak
+*-bak
+kicad_project/*/.history/
+kicad_project/*/.board_setup_backups/
+kicad_project/*/routing/renders/
+*.ripped
+kicad_project/*/lib/.fp/
+kicad_project/*/handoff.old/
+kicad_project/*/.handoff-new-*/
+kicad_project/*.tmp
+
+# --- Konnect's skills and subagents: generated per machine by
+#     ./setup.sh konnect-sync (run by ./setup.sh install). Konnect is AGPL-3.0;
+#     its files are not redistributed here. konnect.version stays committed.
+kicad_project/.claude/skills/konnect/
+kicad_project/.claude/skills/kicad-*/
+kicad_project/.claude/agents/kicad-*.md
+
+# --- anything credential-shaped, wherever it lands
+*.env
+*.pem
+*.key
+id_rsa*

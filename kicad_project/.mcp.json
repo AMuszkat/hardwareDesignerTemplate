@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "konnect": {
+      "type": "stdio",
+      "command": "konnect"
+    },
+    "freerouting": {
+      "type": "stdio",
+      "command": "./tools/freerouting/freerouting-mcp.sh"
+    }
+  }
+}

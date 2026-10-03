@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(tools/kpy tools/*)",
+      "Bash(tools/.venv/bin/python tools/*)",
+      "Bash(python3 tools/fp/fp.py *)",
+      "Bash(tools/session/relay.py status)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "konnect",
+    "freerouting"
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/session/relay.py\" brief board"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/session/guard.py\" board"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/tools/session/wall.py\" board"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__konnect__(place_component|move_component|rotate_component|route_trace|add_via|route_differential_pair|route_pad_to_pad|refill_zones)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "konnect skill pre-pcb-ipc"
+          }
+        ]
+      }
+    ]
+  }
+}

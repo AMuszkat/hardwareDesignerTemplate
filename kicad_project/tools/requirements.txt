@@ -1,0 +1,5 @@
+# The board session's own Python packages, in kicad_project/tools/.venv
+# (created by tools/setup.sh). KiCad's pcbnew is NOT here: it is built for
+# KiCad's own interpreter, which tools/kpy runs.
+easyeda2kicad      # fp.py get --lcsc: LCSC/EasyEDA symbol + footprint + 3D
+PyMuPDF            # route.py render / view.py / placement renders: PDF/SVG -> PNG
