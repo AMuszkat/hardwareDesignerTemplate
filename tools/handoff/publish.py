@@ -756,7 +756,8 @@ class Board:
             nets.setdefault(n, []).append([r, pin])
         for n in nets:
             nets[n].sort(key=lambda x: (x[0], _pin(x[1])))
-        covered = {r for r, _ in pin_net} | {r for r, _ in nc} | {r for r, _ in open_}
+        covered = {r for r, _ in pin_net} | {r for r, _ in nc} | {r for r, _ in open_} \
+            | set(self.get("PINS") or {})                # a fiducial is given, with no pins
         prose = sorted((r for r, p in parts.items() if not p["placeholder"] and r not in covered), key=_natkey)
         unknown = sorted(covered - set(parts), key=_natkey)
         return dict(board=self.board, title=self.B.TITLE, parts=parts, nets=nets,
