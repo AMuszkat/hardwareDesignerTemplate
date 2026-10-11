@@ -731,8 +731,9 @@ class Board:
         offs = self.get("PIN_OFFSET") or {}
         for cref, _, _, pins in self.get("CONNECTORS", []):
             off = offs.get(cref, 0)
-            for pin, net, _, _ in pins:
-                put(cref, str(int(pin) + off) if off else pin, net, f"connector {cref}")
+            for cell, net, _, _ in pins:
+                for pin in _pins(cell):
+                    put(cref, str(int(pin) + off) if off and pin.isdigit() else pin, net, f"connector {cref}")
         for pref, pins in (self.get("PINS") or {}).items():
             for pin, net in pins.items():
                 put(pref, pin, net, "PINS")
@@ -1100,6 +1101,18 @@ def _refset(cells):
                 out |= {f"{m.group(1)}{i}" for i in range(int(m.group(2)), int(m.group(3)) + 1)}
             elif tok:
                 out.add(tok)
+    return out
+
+
+def _pins(cell):
+    """The pins one table cell names: '7', 'A4, A9, B4, B9', 'S1..S4', '3..6'."""
+    out = []
+    for tok in re.split(r"[,/\s]+", str(cell).strip()):
+        m = re.fullmatch(r"([A-Z_]*)(\d+)\.\.(?:[A-Z_]*)?(\d+)", tok)
+        if m:
+            out += [f"{m.group(1)}{i}" for i in range(int(m.group(2)), int(m.group(3)) + 1)]
+        elif tok:
+            out.append(tok)
     return out
 
 
