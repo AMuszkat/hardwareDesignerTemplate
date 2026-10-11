@@ -106,7 +106,7 @@ publish.
 | item | where | committed | made by |
 |---|---|---|---|
 | concept skills `decision`, `answer-question`, `datasheet`, `study` | `.claude/skills/` | yes | template |
-| board skills `board-setup`, `footprint`, `placement`, `routing` | `kicad_project/.claude/skills/` | yes | template |
+| board skills `schematic`, `board-setup`, `footprint`, `placement`, `routing`, `render` | `kicad_project/.claude/skills/` | yes | template |
 | Konnect skills `konnect`, `kicad-*` and subagents `kicad-design-review-agent`, `kicad-schematic-build-agent` | `kicad_project/.claude/skills/`, `kicad_project/.claude/agents/` | no — Konnect is AGPL-3.0 and generates them; only `konnect.version` (the version tested) is committed | `./setup.sh konnect-sync` (run by `install`) |
 | hooks: session brief, SendMessage guard, the board wall (own folder only), the concept wall (no edits to generated files or the boards' files), Konnect's PCB-IPC hook | `.claude/settings.json`, `kicad_project/.claude/settings.json`, scripts in `kicad_project/tools/session/` | yes | template |
 | board selection for every PCB tool (this session's board by default; another session's refused) | `kicad_project/tools/boardsel.py` | yes | template |

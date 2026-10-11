@@ -26,7 +26,7 @@ API_KEYS = ["NEXAR_CLIENT_ID", "NEXAR_CLIENT_SECRET", "DIGIKEY_CLIENT_ID",
 KONNECT_SKILLS = ["konnect", "kicad-schematic", "kicad-pcb", "kicad-manufacture",
                   "kicad-review", "kicad-library"]
 KONNECT_AGENTS = ["kicad-design-review-agent.md", "kicad-schematic-build-agent.md"]
-PROJECT_SKILLS_BOARD = ["board-setup", "footprint", "placement", "routing", "render"]
+PROJECT_SKILLS_BOARD = ["schematic", "board-setup", "footprint", "placement", "routing", "render"]
 # the same list tools/parts/datasheet.py and kicad_project/tools/fp/fp.py search
 CHROMES = [c for c in (os.environ.get("CHROME_BIN"), "google-chrome-stable", "google-chrome",
                        "chromium", "chromium-browser",

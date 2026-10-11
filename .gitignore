@@ -27,6 +27,7 @@ kicad_project/*/.history/
 kicad_project/*/.board_setup_backups/
 kicad_project/*/routing/renders/
 kicad_project/*/renders/
+kicad_project/*/sch_plan/
 *.ripped
 kicad_project/*/lib/.fp/
 kicad_project/*/handoff.old/
