@@ -734,9 +734,17 @@ class Board:
             for cell, net, _, _ in pins:
                 for pin in _pins(cell):
                     put(cref, str(int(pin) + off) if off and pin.isdigit() else pin, net, f"connector {cref}")
+        swap = {}
         for pref, pins in (self.get("PINS") or {}).items():
+            if isinstance(pins, (tuple, list)):
+                if len(pins) != 2:
+                    die(f"netlist: PINS {pref}: a tuple is a two-pin part either way round -- give two nets")
+                pins = {"1": pins[0], "2": pins[1], "_swap": [["1", "2"]]}
             for pin, net in pins.items():
-                put(pref, pin, net, "PINS")
+                if pin == "_swap":
+                    swap[pref] = [list(map(str, g)) for g in net]
+                else:
+                    put(pref, pin, net, "PINS")
         nets = {}
         for (r, pin), n in pin_net.items():
             nets.setdefault(n, []).append([r, pin])
@@ -750,7 +758,7 @@ class Board:
                     open=sorted([list(x) for x in open_], key=lambda x: (x[0], _pin(x[1]))),
                     decided=decided,
                     rails=sorted(set(self.get("GROUND_NETS") or ("GND",)) | set(self.get("RAILS") or ())),
-                    prose_only=prose, not_in_components=unknown,
+                    swap=swap, prose_only=prose, not_in_components=unknown,
                     complete=not prose and not open_ and not unknown)
 
     # -- lint -------------------------------------------------------------

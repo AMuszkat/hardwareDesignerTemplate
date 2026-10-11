@@ -158,19 +158,54 @@ def handoff_parity(board):
     for r in sorted(real - set(parts)):
         out.append(("extra", r, f"{r} is drawn and has no line in the handoff's components"))
     checked = 0
+    hn = {(r, p): n for n, pins in nl["nets"].items() for r, p in pins}
+    swapped, via_swap = set(), {}
+    for r, groups in nl.get("swap", {}).items():
+        if r not in real:
+            continue
+        for g in groups:
+            want = [hn.get((r, p), "NC") for p in g]
+            got = ["NC" if loose((r, p)) else base(drawn[(r, p)]) for p in g]
+            rem, ok = list(got), True
+            for w in want:
+                if not w.startswith("_"):
+                    if w in rem:
+                        rem.remove(w)
+                    else:
+                        ok = False
+            ok = ok and all(x != "NC" for x in rem[:sum(w.startswith("_") for w in want)])
+            if ok:
+                # the pins left after the named nets matched are the unnamed nets' ends
+                left = [p for p in g if not loose((r, p))]
+                for w in want:
+                    if not w.startswith("_"):
+                        q = next((p for p in left if base(drawn[(r, p)]) == w), None)
+                        if q:
+                            left.remove(q)
+                for w, q in zip([w for w in want if w.startswith("_")], left):
+                    via_swap.setdefault(w, set()).add(drawn[(r, q)])
+            if not ok:
+                out.append(("net", f"{r}.{'/'.join(g)}", f"{r} pins {', '.join(g)} are on {', '.join(got)}; "
+                            f"the handoff puts them on {', '.join(want)} (either way round)"))
+            swapped |= {(r, p) for p in g}
     for n, pins in sorted(nl["nets"].items()):
         seen = set()
         for r, p in pins:
             if r not in real:
                 continue
             checked += 1
+            if (r, p) in swapped:
+                if not loose((r, p)) and base(drawn[(r, p)]) == n:
+                    seen.add(drawn[(r, p)])
+                continue
             d = drawn.get((r, p))
             if loose((r, p)):
                 out.append(("net", f"{r}.{p}", f"{r}.{p} is unconnected; the handoff puts it on {n}"))
-            elif base(d) != n:
+            elif base(d) != n and not n.startswith("_"):
                 out.append(("net", f"{r}.{p}", f"{r}.{p} is on {base(d)}; the handoff puts it on {n}"))
             else:
                 seen.add(d)
+        seen |= via_swap.get(n, set())
         if len(seen) > 1:
             out.append(("split", n, f"{n} is drawn as {len(seen)} separate nets: {', '.join(sorted(seen))}"))
     for kind, rows in (("nc", nl["nc"]), ("open", nl["open"])):

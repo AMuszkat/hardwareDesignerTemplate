@@ -134,9 +134,14 @@ GROUND_NETS = ("GND",)    # net names the connector lint accepts without a NETS 
 # --handoff`); short of that it still checks the drawing pin for pin
 # (`sch.py parity --handoff`). 02_nets.md stays the place for the WHY.
 #                                                       [netlist.json]
+# A two-pin part that may be drawn either way round is a tuple of its two
+# nets; "_swap" lists other pins that are interchangeable (a crystal's two
+# terminals). A net the design does not name starts with "_" (a regulator's
+# switch node): only its connections are checked, never its name.
 PINS = {
-    # "C1": {"1": "+3V3", "2": "GND"},
+    # "C1": ("+3V3", "GND"),
     # "U2": {"1": "+3V3", "2": "GND", "3": "I2C_SCL", "4": "NC"},
+    # "Y1": {"1": "_XTAL_IN", "3": "_XTAL_OUT", "2": "GND", "4": "GND", "_swap": [["1", "3"]]},
 }
 RAILS = ()                # power nets beyond GROUND_NETS, drawn as power symbols ("+3V3", ...)
 
