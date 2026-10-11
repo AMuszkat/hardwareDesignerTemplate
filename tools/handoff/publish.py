@@ -345,9 +345,15 @@ class Board:
         L = ["# Nets and their constraints", "",
              "A constraint here is a design requirement expressed as a wiring "
              "rule. Treat it as a rule, not commentary.", ""]
+        on = self.netlist()["nets"]
         for name, src, dst, con in self.get("NETS", []):
             L += [f"### `{name}`", "", f"- **source:** {src}",
-                  f"- **loads:** {dst}", f"- **constraint:** {con or '—'}", ""]
+                  f"- **loads:** {dst}", f"- **constraint:** {con or '—'}"]
+            if on.get(name):
+                # the complete membership, from the data: the prose above says
+                # why, and may name only the parts that matter to the reader
+                L.append(f"- **every pin on it** (`netlist.json`): {_members(on[name])}")
+            L.append("")
         if not self.get("NETS"):
             L += ["None published yet.", ""]
         return "\n".join(L)
@@ -1110,6 +1116,25 @@ def _refset(cells):
             elif tok:
                 out.add(tok)
     return out
+
+
+def _members(pins):
+    """[[ref, pin], ...] -> 'C18..C25, R40, U1 (13 pins)'."""
+    n = {}
+    for r, _ in pins:
+        n[r] = n.get(r, 0) + 1
+    runs, out = [], []
+    for r in sorted(n, key=_natkey):
+        m = re.fullmatch(r"([A-Z_]+)(\d+)", r)
+        if m and runs and runs[-1][0] == m.group(1) and runs[-1][2] == int(m.group(2)) - 1 \
+                and n[r] == 1 and runs[-1][3] == 1:
+            runs[-1][2] = int(m.group(2))
+        else:
+            runs.append([m.group(1), int(m.group(2)), int(m.group(2)), n[r]] if m else [r, None, None, n[r]])
+    for pre, a, b, k in runs:
+        s = pre if a is None else f"{pre}{a}" if a == b else f"{pre}{a}..{pre}{b}" if b > a + 1 else f"{pre}{a}, {pre}{b}"
+        out.append(s + (f" ({k} pins)" if k > 1 else ""))
+    return ", ".join(out)
 
 
 def _pins(cell):
