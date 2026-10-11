@@ -92,7 +92,7 @@ committed (Konnect is AGPL-3.0). What has to be installed on the machine is
 listed in `SETUP.md`.
 
 Publishing your own project built on this? `./setup.sh check-public` first
-(SETUP.md §8).
+(SETUP.md §9). Taking template improvements into it later: SETUP.md §8.
 
 ## Licence
 

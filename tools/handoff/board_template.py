@@ -65,6 +65,14 @@ CONNECTORS = [
     # ("J2", "NOT DEFINED", "Do not invent this connector.", []),
 ]
 
+# A connector whose table uses a system's numbering on a part numbered from 1
+# (a module's connector B, pins 101-200, on a 100-pin part): the offset from
+# the table's pin to the PART's pin. 09_connectors says so beside the table and
+# netlist.json carries the part's pins.             [09_connectors.md, netlist.json]
+PIN_OFFSET = {
+    # "J2": -100,
+}
+
 # (constraint, sources) -- every layout rule, each with where it came from.
 # Must be COMPLETE before layout starts.                [10_layout.md]
 LAYOUT = [
@@ -98,6 +106,7 @@ BOOT = None
 # spare, reserved or UNKNOWN, reconciled to a total.
 #                                     [03_pinout.csv, 08_pin_accounting.md]
 PINOUT = None
+PINOUT_REF = None         # the refdes the pinout belongs to (e.g. "U1"): its pins go into netlist.json
 PKG_TOTAL = None          # the package's pin count; a mismatch is flagged
 
 # Unassigned pins are classified by PIN NAME, never by the Function column:
@@ -115,6 +124,21 @@ SHARED_PADS = None        # (regex on Function, note) -- signals on dual-use pad
 RESERVED_FUNCTION = None  # regex on Function for pins left empty ON PURPOSE (an
                           # escape channel); default: starts with "RESERVED EMPTY"
 GROUND_NETS = ("GND",)    # net names the connector lint accepts without a NETS row
+
+# -- connectivity as data ----------------------------------------------------
+
+# Pin -> net for every part whose connections are fixed here and are not in
+# the pinout or a connector table: {refdes: {pin: net}}, "NC" for a pin left
+# unconnected. With every part covered, handoff/netlist.json is COMPLETE and
+# the board session can lay its schematic out from it (`tools/sch/sch.py plan
+# --handoff`); short of that it still checks the drawing pin for pin
+# (`sch.py parity --handoff`). 02_nets.md stays the place for the WHY.
+#                                                       [netlist.json]
+PINS = {
+    # "C1": {"1": "+3V3", "2": "GND"},
+    # "U2": {"1": "+3V3", "2": "GND", "3": "I2C_SCL", "4": "NC"},
+}
+RAILS = ()                # power nets beyond GROUND_NETS, drawn as power symbols ("+3V3", ...)
 
 # -- generated drawings and other sources -----------------------------------
 

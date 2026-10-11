@@ -26,7 +26,18 @@ The handoff itself: `00_READ_FIRST`, `01_components`, `02_nets`, `03_pinout.csv`
 and `08_pin_accounting` (only with a `PINOUT`), `04_deliberate`, `05_open`,
 `06_block_diagram.svg` and `11_floorplan.svg` (when the board names them),
 `07_answers`, `09_connectors`, `10_layout`, `12_boot` (with `BOOT`),
-`13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `CHANGELOG`, `MANIFEST.json`.
+`13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `netlist.json`, `CHANGELOG`, `MANIFEST.json`.
+
+`netlist.json` is the connectivity as data, for the board session's
+`tools/sch`: every part from the value bus, and pin -> net from the pinout
+(`PINOUT_REF` names its refdes), the connector tables (`PIN_OFFSET` when a
+table numbers pins the system's way, not the part's) and `PINS` for every other
+part. The board checks its drawing against it pin for pin (`sch.py parity
+--handoff`), so a pin it fixes cannot be transcribed wrong. `prose_only`
+lists the parts whose connections are still only words in `02_nets`; when
+there are none it is `complete` and a new board lays its schematic out from
+it (`sch.py plan --handoff`). A connection that is decided belongs in `PINS`,
+not only in a sentence.
 Numbering is stable; a missing section leaves a gap, and a file that stops
 being published is deleted, not left to read as current.
 

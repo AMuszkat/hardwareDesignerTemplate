@@ -157,7 +157,25 @@ concept to arm it, and expect `boardN armed` back from each board session.
 `kicad_project/RELAY_PROTOCOL.md` is the protocol, including what every
 failure looks like.
 
-## 8. Publishing the repository
+## 8. Taking template updates, and giving fixes back
+
+A project made from this template keeps it as a git remote, `template`
+(once: `git remote add template <the template's URL>`). The template's own files — the tools, the skills, the
+board contract, the publisher — improve over time; a project takes the
+improvements by merging, never by copying files:
+
+```bash
+git fetch template
+git merge template/main            # commit your own work first
+```
+
+A conflict is in a file both sides changed: keep the project's facts and the
+template's mechanism, and run `./verify.sh` after. The reverse direction is
+a pull request against the template: a fix made in a project to a
+template-owned file (a board tool, a skill, `publish.py`) goes back there,
+so the next project starts with it.
+
+## 9. Publishing the repository
 
 Before a repository becomes public — and, with the hook, before every push:
 
@@ -182,7 +200,7 @@ redistribute; a public project publishes the MPN and the URL instead.
 
 A line that is deliberately fine carries the marker `public-check: ok`.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | symptom | fix |
 |---|---|

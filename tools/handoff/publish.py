@@ -260,6 +260,9 @@ class Board:
                  "is a hole the concept session owes you: leave it "
                  "unconnected and ERC-erroring, and do NOT no-connect it."]
                 if self.pinout else [])
+        then += ["**`netlist.json`** — the same connectivity as data, for "
+                 "`tools/sch` (`sch.py parity --handoff` checks your schematic "
+                 "against it, pin for pin)."]
         then += ["**`05_open.md`** — what is not decided yet, what it "
                  "blocks, and what is safe to start; then `04_deliberate.md`.",
                 "**`13_datasheets.md` before any footprint work** — the vendor "
@@ -358,6 +361,11 @@ class Board:
              "order; every other board mirrors it.", ""]
         for name, status, intro, pins in self.get("CONNECTORS", []):
             L += [f"## {name} — {status}", "", intro, ""]
+            off = (self.get("PIN_OFFSET") or {}).get(name)
+            if off:
+                L += [f"**Part pins:** this table's pin N is {name}'s own pin N {'+' if off > 0 else '−'} "
+                      f"{abs(off)} (the symbol and footprint number the part; `netlist.json` carries the "
+                      f"part's pins).", ""]
             if pins:
                 L += ["| pin | net | dir | note |", "|---|---|---|---|"]
                 L += [f"| {p} | `{n}` | {d} | {t} |" for p, n, d, t in pins]
@@ -671,6 +679,79 @@ class Board:
               "No connect. " + ", ".join(sorted(k["spare"], key=_pin)), ""]
         return "\n".join(L)
 
+    # -- netlist.json: the connectivity as data -----------------------------
+    NC_TEXT = re.compile(r"^(unused:\s*)?(no[ -]connect|leave (it )?(unconnected|open|floating)|unconnected|NC\b)", re.I)
+
+    def netlist(self):
+        """Every part and every pin this handoff fixes, as data for the board
+        session's tools (tools/sch): parts from the value bus; pin -> net from
+        the pinout (PINOUT_REF), the connector tables and PINS. `nc` is a pin
+        decided unconnected, `open` one the board must leave unconnected
+        WITHOUT a no-connect flag (OPEN / UNKNOWN), `decided` an unassigned
+        pin whose treatment is text. `prose_only` names the parts whose
+        connections are still only words in 02_nets -- `complete` is true
+        when there are none."""
+        parts = {}
+        for c in self.components():
+            for ref in sorted(_refset([c[0]])):
+                parts[ref] = dict(line=c[0], function=c[1], value=c[2], status=c[3],
+                                  placeholder=c[3] == "tbd")
+        pin_net, nc, open_, decided = {}, set(), set(), {}
+
+        def put(ref, pin, net, where):
+            k = (ref, str(pin))
+            net = (net or "").strip()
+            if not net or net in ("—", "-"):
+                return
+            if net.upper() == "NC":
+                if k in pin_net:
+                    die(f"netlist: {ref}.{pin} is {pin_net[k]} in one table and NC in {where}")
+                nc.add(k)
+                return
+            if k in nc or (k in pin_net and pin_net[k] != net):
+                die(f"netlist: {ref}.{pin} is {pin_net.get(k, 'NC')} in one table and {net} in {where}")
+            pin_net[k] = net
+        ref = self.get("PINOUT_REF")
+        rows = self.pin_rows()
+        if rows and ref:
+            k = self._classify(rows)
+            for r in rows:
+                if r["Signal Name"]:
+                    put(ref, r["Pin Number"], r["Signal Name"], "the pinout")
+            for pin, _, text in k["decided"]:
+                # "no connect but for the DNP strap R61" is a connection
+                if self.NC_TEXT.match(text) and not re.search(r"\b(but|except|strap)\b", text.split(";")[0], re.I):
+                    nc.add((ref, pin))
+                else:
+                    decided[f"{ref}.{pin}"] = text
+            for pin, _, _ in k["open"] + k["unknown"]:
+                open_.add((ref, pin))
+            for pin in k["spare"] + [x[0] for x in k["reserved"]]:
+                nc.add((ref, pin))
+        offs = self.get("PIN_OFFSET") or {}
+        for cref, _, _, pins in self.get("CONNECTORS", []):
+            off = offs.get(cref, 0)
+            for pin, net, _, _ in pins:
+                put(cref, str(int(pin) + off) if off else pin, net, f"connector {cref}")
+        for pref, pins in (self.get("PINS") or {}).items():
+            for pin, net in pins.items():
+                put(pref, pin, net, "PINS")
+        nets = {}
+        for (r, pin), n in pin_net.items():
+            nets.setdefault(n, []).append([r, pin])
+        for n in nets:
+            nets[n].sort(key=lambda x: (x[0], _pin(x[1])))
+        covered = {r for r, _ in pin_net} | {r for r, _ in nc} | {r for r, _ in open_}
+        prose = sorted((r for r, p in parts.items() if not p["placeholder"] and r not in covered), key=_natkey)
+        unknown = sorted(covered - set(parts), key=_natkey)
+        return dict(board=self.board, title=self.B.TITLE, parts=parts, nets=nets,
+                    nc=sorted([list(x) for x in nc], key=lambda x: (x[0], _pin(x[1]))),
+                    open=sorted([list(x) for x in open_], key=lambda x: (x[0], _pin(x[1]))),
+                    decided=decided,
+                    rails=sorted(set(self.get("GROUND_NETS") or ("GND",)) | set(self.get("RAILS") or ())),
+                    prose_only=prose, not_in_components=unknown,
+                    complete=not prose and not open_ and not unknown)
+
     # -- lint -------------------------------------------------------------
     def lint(self, files):
         """Cross-checks that catch real gaps."""
@@ -710,6 +791,16 @@ class Board:
         if getattr(self, "fab_unset", 0):
             prob.append(f"14_fab.md carries {self.fab_unset} UNSET value(s); "
                         "board_setup.py will refuse to apply it")
+        if self.pinout and not self.get("PINOUT_REF"):
+            prob.append("PINOUT has no PINOUT_REF: say which refdes it belongs to, or netlist.json "
+                        "carries none of its pins")
+        nl = self.netlist()
+        if nl["not_in_components"]:
+            prob.append(f"netlist.json gives pins for {', '.join(nl['not_in_components'][:6])}, "
+                        f"which have no COMPONENTS line")
+        if nl["prose_only"]:
+            prob.append(f"netlist.json: {len(nl['prose_only'])} of {len(nl['parts'])} parts have their "
+                        f"connections only in prose (PINS gives them as data)")
         if not os.path.exists(os.path.join(self.out, "QUESTIONS.md")):
             prob.append(f"kicad_project/{self.board}/QUESTIONS.md is missing -- the board "
                         "session has no channel back (tools/handoff/new_board.py creates it)")
@@ -889,6 +980,7 @@ class Board:
         }
         if self.pinout:
             files["08_pin_accounting.md"] = self.pins_md()
+        files["netlist.json"] = json.dumps(self.netlist(), indent=1, sort_keys=True) + "\n"
         if self.get("BOOT"):
             files["12_boot.md"] = self.text_md("BOOT", "Boot sequence", "")
         fab = self.fab_md()
@@ -1009,6 +1101,10 @@ def _refset(cells):
             elif tok:
                 out.add(tok)
     return out
+
+
+def _natkey(s):
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
 
 def _pin(p):
