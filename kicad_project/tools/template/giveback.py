@@ -133,6 +133,7 @@ def cmd_open(repo, _a, say=True):
         git("worktree", "add", "--quiet", "--detach", wt, f"{REMOTE}/{BRANCH}", cwd=repo)
     if say:
         print(wt)
+        return 0          # a string return would be sys.exit's message, and exit 1
     return wt
 
 

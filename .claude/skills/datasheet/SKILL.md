@@ -54,3 +54,8 @@ is never proof the file is unreachable.
 
 A datasheet a board needs reaches it only through the handoff: name the part
 in the board's data, or add it to `DATASHEETS_EXTRA`, and publish.
+
+A fetch path that failed first and worked second — a portal, a viewer, a
+manufacturer's URL pattern — is a lesson for `tools/parts/datasheet.py` or
+this skill, and goes to the template (`kicad_project/SELF_IMPROVEMENT.md`).
+The PDF and its provenance stay in this project.

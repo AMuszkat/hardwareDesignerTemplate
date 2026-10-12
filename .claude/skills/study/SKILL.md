@@ -44,6 +44,11 @@ number. Fill the header (Question / Decides / Inputs / Headline), with
 - Against a hard line, compute the **worst case**; add statistics for "how
   often". Evaluate budgets at the corner, never at the typical point.
 - Report the **achieved** value after snapping to buyable parts.
+- A method that sizes or checks a *kind* of part — above all one found after
+  a first method failed — is a generic function in `studies/common.py` (or a
+  module beside it) with every project number passed in; the study calls it.
+  That function is the template's: give it back
+  (`kicad_project/SELF_IMPROVEMENT.md`). The study, with its numbers, stays here.
 - Plots go to `out/` via `common.out()`; `main()` ends with one
   `-> conclusion` line.
 

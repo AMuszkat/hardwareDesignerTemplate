@@ -43,11 +43,12 @@ step 3.
   `tools/handoff/boards/boardN.py`, or the board's `DATASHEETS_EXTRA`.
 - A missing datasheet: `.venv/bin/python tools/parts/datasheet.py <MPN>` (the
   `datasheet` skill), then publish — it is copied and hashed automatically.
-- The retro row — *which page should have carried this before it was
-  asked* — decides where the fix goes: this board's data module when only it
-  needs the fact, `board_template.py` / `publish.py` when every board does, a
-  `00_READ_FIRST` rule when a second board asked the same. Write it in the
-  same turn (`kicad_project/SELF_IMPROVEMENT.md`).
+- A question is design work, not a template lesson: the value, net, pin or
+  part goes into this board's data module and the answer, and nowhere else.
+  The exception is a *kind* of fact the publisher could not carry at all —
+  prose where the board needed data, a connector shape with no row type —
+  which is a mechanism fix in `board_template.py` / `publish.py` and goes to
+  the template (`kicad_project/SELF_IMPROVEMENT.md`).
 - The answer goes in `tools/handoff/answers/boardN.md` under the same `Qn`,
   pointing at where the fact now lives. **Never** answer a footprint question
   with pad dimensions: publish the datasheet; the numbers are theirs to read.

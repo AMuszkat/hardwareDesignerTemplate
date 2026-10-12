@@ -213,43 +213,43 @@ always reported next to a headline. Carry the same conventions to the bench.)**
 
 ## When the second attempt works, the template moves
 
-**Anything that failed on the first attempt and worked on the second with a
-different method is written where the next session reads it before its first
-attempt — in the same turn, not at the end of the task.** Next time is a fresh
-context; nothing is "kept in mind". `kicad_project/SELF_IMPROVEMENT.md` is the
-whole practice, for both sessions; for this one:
+**A method that failed on the first attempt and worked on the second with a
+different approach — and that the next design, with other parts and other
+numbers, would need too — is written where the next session reads it before
+its first attempt, in the same turn, and goes to the template.** Next time is
+a fresh context; nothing is "kept in mind". `kicad_project/SELF_IMPROVEMENT.md`
+is the whole practice, for both sessions; for this one:
 
-- **A board question is the trigger.** The retro row is *which page should
-  have carried this before it was asked*; the fix is the generator
-  (`tools/handoff/boards/boardN.py` when only this board needs it,
-  `board_template.py` / `publish.py` when every board does), so every future
-  board's page carries it. The answer comes second.
-- **Prose a board session had to transcribe by hand becomes data**, with a
-  parity check on their side. `netlist.json` is the model: a board whose pin
-  tables exist gets it complete from the first publish.
-- **A `RELEASE_NOTE` that invalidates drawn work names the board gate that
-  shows the effect** (`sch.py parity --handoff`, `place.py sync`, `place.py
-  drc`), beside the work it invalidates.
-- The same question from two boards is a `00_READ_FIRST` rule or a generator
-  default, not two answers. A datasheet fact cites page and table, so the
-  board's `verify` re-reads the same spot.
+- **The test is reuse, not effort.** A design fact — a capacitor value, a
+  net, a pin, a part, however hard it was to find — is design work: it goes
+  to STATUS, SPECS, the value bus, the generator, the answer, and is never a
+  template lesson. A board session's question is almost always a design
+  fact. A *method* is process: a calculation that sizes a kind of part, a way
+  to fetch a datasheet, a diagram technique, a check, a publisher feature.
+- **A calculation method that serves many designs** — above all one found
+  after a first method failed — goes into `studies/common.py` (or a module
+  beside it) as a generic function with every project number passed in; the
+  study that calls it, with its numbers, stays here.
+- **A part-search or datasheet path** that failed first and worked second
+  goes into `tools/parts/` and the `datasheet` skill; a diagram technique
+  into `tools/diagrams/sheet.py`, never into one generator.
+- **A kind of fact the publisher could not carry** — prose where a board
+  needed data, a connector shape with no row type — is a handoff mechanism
+  lesson: `publish.py` / `board_template.py` (`netlist.json` is the model),
+  so every board's page carries it. The value itself stays in the data
+  module, and the question that exposed it is answered as usual.
 - A fact about a tool goes in its README; a procedure in the skill step that
-  needs it; a sequence done twice by hand becomes a script with an exit code;
-  a check that fired late moves earlier.
-- **Your own tools are in scope too** — the publisher, `lint_docs.py`,
-  `status.py`, the study runner, the diagram engine, `tools/parts/`, your
-  skills in `.claude/skills/`: a failed-first / worked-second there is
-  captured the same way and travels the same way. Only the generic part
-  travels; the project's text in `CLAUDE.md` and `README.md` stays here.
-- **Each publish's report ends with the turn's retro rows** — *failed first /
-  worked second / captured in* — so the user sees the template move and can
-  veto. **A fix to a template-owned file goes to the template first**:
+  needs it; a sequence typed twice becomes a script with an exit code; a
+  check that fired late moves earlier.
+- **Each stop — a study's result, a decision, a publish — ends its report
+  with the turn's retro rows**: *failed first / worked second / captured in*,
+  so the user sees the template move and can veto. **A fix to a
+  template-owned file goes to the template first**:
   `python3 kicad_project/tools/template/giveback.py` (`status`, `open`,
   `push`, `finish`) commits it to the `template` remote, pushes, and merges
-  it back into this project (`kicad_project/SELF_IMPROVEMENT.md`, "Giving it
-  back"). `status` at every publish: a mechanism file that differs from the
-  template is a lesson not given back, or a project fill that belongs in a
-  data file.
+  it back into this project. `status` at every publish: a mechanism file that
+  differs from the template is a lesson not given back, or a project fill
+  that belongs in a data file.
 
 ## Answering the user
 

@@ -216,9 +216,10 @@ about a land pattern, a body height or a clearance.
 
 ## When the second attempt works, the template moves
 
-**Anything that failed on the first attempt and worked on the second with a
-different method is written where the next session reads it before its first
-attempt — in the same turn, not at the end of the task.** Next time is a fresh
+**A method that failed on the first attempt and worked on the second with a
+different approach — one the next board, with other parts, would need too —
+is written where the next session reads it before its first attempt, in the
+same turn, not at the end of the task.** Next time is a fresh
 context; nothing is "kept in mind". `SELF_IMPROVEMENT.md` (this folder) is
 the whole practice, for both sessions; for this one:
 
@@ -230,7 +231,8 @@ the whole practice, for both sessions; for this one:
   with an exit code; a gate that fired after more than one unit of work → the
   same gate earlier (one sheet, one group, one symbol); a guess the user had
   to settle → `AskUserQuestion` with a recommendation; a defect in the
-  handoff → `QUESTIONS.md`, never a local patch.
+  handoff → `QUESTIONS.md`, never a local patch (design work, not a template
+  lesson).
 - **A tool in `tools/`, a skill, this contract are the template's.** A fix
   to one is generic — the board's numbers stay in the board folder — and
   **goes to the template first**: committed to the `template` remote from a

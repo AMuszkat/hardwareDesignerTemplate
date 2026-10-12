@@ -2,44 +2,65 @@
 
 **Scope:** when a lesson learned during a session is owed to the template,
 where each kind of lesson goes, and how the user sees it. Both sessions read
-this file; **neither edits it** (it is the user's, like `RELAY_PROTOCOL.md`).
-**Not here:** the lessons themselves — they live in the READMEs, the skills
-and the tools this file points at.
+this file; **neither edits it in the project** — it is the user's, like
+`RELAY_PROTOCOL.md`, and changes through the template (Giving it back) at
+their request. **Not here:** the lessons themselves — they live in the tools,
+the skills and the READMEs this file points at.
 
 ## The rule
 
-**Anything that failed on the first attempt and worked on the second with a
-different method is written where the next session will read it before its
-first attempt — the moment the second attempt works, not at the end of the
-task.**
+**A method that failed on the first attempt and worked on the second with a
+different approach — and that the next design, with other parts and other
+numbers, would need too — is written where the next session reads it before
+its first attempt, the moment the second attempt works, and goes to the
+template.**
+
+Two tests, and both must hold:
+
+1. **Second attempt.** Something was tried, failed, and a different method
+   worked. A thing that worked the first time is not a lesson; it is already
+   where it belongs.
+2. **Reuse.** The next project — other parts, other numbers, other boards —
+   would need the same method. That makes it *process*: a tool, a script, a
+   skill step, a check, a generic calculation, a publisher feature. A *design
+   fact* fails this test however hard it was to find.
 
 This is the ordinary engineering retrospective (the blameless postmortem,
-"lessons learned"), scoped to one agent session and with one hard trigger
+"lessons learned"), scoped to one agent session, with one hard trigger
 instead of a meeting. Next time is a fresh context: a lesson "kept in mind"
 is lost with the transcript, and the next session pays for it again.
 
-What is NOT a lesson: a thing that worked the first time; a board-specific
-number (it belongs in the board folder); a workaround for a bug that has
-since been fixed.
+## What is not a lesson
+
+- **A design fact**: a capacitor value, a net, a pin, a part, a layout
+  distance, a fab number. It belongs in the design pages, the value bus, the
+  generator and the handoff. A board session's question about it is handoff
+  work, answered through the generator, and never a template change — a
+  question from the board to concept about a regulator's capacitor is the
+  canonical non-example.
+- A thing that worked the first time.
+- A board-specific number (it belongs in the board folder).
+- A workaround for a bug that has since been fixed.
 
 ## The trigger
 
 A session keeps a running table from its first tool call, two columns: *what
 failed first* / *what worked*. The hard rule is the second column: **when a
-second method works, the row is captured within the same turn** — a README
-bullet, a skill line, a script, a gate moved earlier. Three softer triggers
-join it:
+second method works and passes the reuse test, the row is captured within
+the same turn** — a README bullet, a skill line, a script, a generic function,
+a gate moved earlier. Three softer triggers join it:
 
-- the same fact had to be looked up twice → README or skill;
+- the same fact about a tool had to be looked up twice → README or skill;
 - the same multi-call sequence was typed twice → a script with an exit code;
 - a gate fired after more than one unit of work had been done → the gate
   moves earlier (one sheet, one group, one symbol at a time).
 
 At every stop for the user's review — a board session: a schematic, a
-placement or routing group; concept: a publish — **the report ends with the
-table, one line per row: *failed first / worked second / captured in*.** The
-user sees the template move and can veto a change. A row captured nowhere is
-reported as such, and the user says where it goes.
+placement or routing group; concept: a study's result, a decision, a publish
+— **the report ends with the table, one line per row: *failed first / worked
+second / captured in*.** The user sees the template move and can veto a
+change. A row captured nowhere is reported as such, and the user says where
+it goes.
 
 ## Where each kind of lesson goes — board session
 
@@ -50,25 +71,23 @@ reported as such, and the user says where it goes.
 | a mechanical sequence done twice by hand | a script with an exit code, in `kicad_project/tools/`, generic: the board's numbers stay in the board folder |
 | a check that caught a defect late | the same check, earlier — after each sheet, each group, each symbol |
 | a guess the user had to settle | `AskUserQuestion` with a recommendation; the answer in memory |
-| a defect in what concept produced | `QUESTIONS.md` — never a local patch of the handoff |
+| a defect in the handoff (a missing value, a contradiction) | `QUESTIONS.md` — design work, not a template lesson; never a local patch |
 
 ## Where each kind of lesson goes — concept session
 
-Concept's product is the handoff; its failures arrive as board questions and
-as `invalidates:` lines. Its own tools fail too — the publisher, the lint, the
-study runner, the diagram engine, the datasheet fetcher, its skills — and
-those rows take the same table and the same road back. **The trigger is the board's `QUESTIONS.md`**: every
-question answered is a retro row — *which page should have carried this
-before it was asked* — and the generator change comes before the answer.
+The same two tests. Concept's work is design (studies, parts, decisions,
+diagrams) and handoff (the publisher); both produce process lessons. The
+board sessions' questions almost never do: they ask for design facts.
 
 | what was learned | where it goes |
 |---|---|
-| a page lacked a fact the board needed | the generator — `tools/handoff/boards/boardN.py` when only this board needs it, `board_template.py` / `publish.py` when every board does — not only the answer |
-| prose the board session had to transcribe by hand | the same thing as data, with a parity tool on the board side (`netlist.json` is the model; it is complete from the first publish of a board whose pin tables exist) |
-| an answer that invalidated drawn work | the `RELEASE_NOTE` names the board gate that shows the effect (`sch.py parity --handoff`, `place.py sync`, `place.py drc`), beside the work |
-| the same question from two boards | a `00_READ_FIRST` rule or a generator default |
-| a datasheet read wrongly on the concept side | the page cites page and table, so the board's `verify` re-reads the same spot |
+| a calculation method that sizes or checks a *kind* of part, found after a first method failed | a generic function in `studies/common.py` (or a module beside it) with every project number passed in; the study that calls it stays in the project |
+| a way to find a part or fetch a datasheet that worked where the first did not | `tools/parts/` and the `datasheet` skill |
+| a diagram technique (a layout, a notation, a check) | `tools/diagrams/sheet.py` and `check_diagrams.py`, never one generator |
+| a kind of fact the publisher could not carry — prose where the board needed data, a connector shape with no row type | `publish.py` / `board_template.py`, so every board's page carries it (`netlist.json` is the model). The value itself stays in the board's data module |
+| a rule both boards needed about how to read the handoff | the publisher's `00_READ_FIRST` text, not two answers |
 | a fact about a concept tool, a procedure, a sequence typed twice | README bullet, skill step, script — as for the board session |
+| a board's question about a value, a net, a pin, a part | **not here**: the data module, the value bus, the answer (`answer-question` skill) |
 
 ## Giving it back — the template first, the project by merge
 

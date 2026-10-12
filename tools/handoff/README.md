@@ -88,9 +88,12 @@ creates its KiCad project itself, through Konnect.
 - **A `RELEASE_NOTE` that invalidates drawn work names the board gate that
   shows it** (`sch.py parity --handoff`, `place.py sync`, `place.py drc`),
   beside the work it invalidates.
-- **Every question answered is a retro row**: *which page should have carried
-  this before it was asked*. The generator change comes first, the answer
-  second (`kicad_project/SELF_IMPROVEMENT.md`).
+- **A question is design work; a missing row TYPE is a mechanism lesson.** A
+  value, a net, a pin goes into the board's data module and the answer. A
+  kind of fact the publisher could not carry — prose where the board needed
+  data, a connector shape with no row type — is fixed in this engine or
+  `board_template.py` and given back to the template
+  (`kicad_project/SELF_IMPROVEMENT.md`).
 
 ## Datasheets cross the wall, passives do not
 
