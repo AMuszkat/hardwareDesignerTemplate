@@ -46,7 +46,7 @@ reported as such, and the user says where it goes.
 | what was learned | where it goes |
 |---|---|
 | a fact about a tool ("X cannot do Y; do Z") | the tool's README, one bullet: the trap, the way around it, how to prove it |
-| a procedure (an order of steps that works) | the skill, in the step where it is needed — `.claude/skills/` is the user's, so a board session writes it into the tool's README and proposes the skill line in its report |
+| a procedure (an order of steps that works) | the skill, in the step where it is needed — a board session cannot edit the project's `.claude/skills/`; it edits the template's copy (Giving it back) and the merge brings it home |
 | a mechanical sequence done twice by hand | a script with an exit code, in `kicad_project/tools/`, generic: the board's numbers stay in the board folder |
 | a check that caught a defect late | the same check, earlier — after each sheet, each group, each symbol |
 | a guess the user had to settle | `AskUserQuestion` with a recommendation; the answer in memory |
@@ -68,12 +68,38 @@ before it was asked* — and the generator change comes before the answer.
 | a datasheet read wrongly on the concept side | the page cites page and table, so the board's `verify` re-reads the same spot |
 | a fact about a concept tool, a procedure, a sequence typed twice | README bullet, skill step, script — as for the board session |
 
-## Giving it back
+## Giving it back — the template first, the project by merge
 
-A lesson captured in a template-owned file (a tool, a skill, a contract, the
-publisher) is owed to the template, not only to this project: `SETUP.md` §8
-(a merge takes updates in; a pull request gives fixes back). The user does
-that step; the sessions make it possible by keeping the fix generic.
+A lesson captured in a template-owned file — a tool under
+`kicad_project/tools/`, a skill, either `CLAUDE.md`, this file, the handoff
+publisher — belongs to every project started from the template, not to this
+one. **It is committed to the template remote and pushed, and the project
+takes it back as a merge**, the same way it takes any template update
+(`SETUP.md` §8). A project is a different remote from the template
+(`https://github.com/AMuszkat/hardwareDesignerTemplate`, named `template` in
+the project's remotes); the project's own facts never travel, and no project
+keeps a private copy of a template file.
+
+At each stop for the user's review, the turn's template-owned lessons go as
+one commit, from a worktree outside the project tree:
+
+    git fetch template
+    git worktree add <scratch>/tpl template/main          # a checkout of the template
+    cp <changed template-owned files> <scratch>/tpl/<same paths>
+    git -C <scratch>/tpl add -A
+    git -C <scratch>/tpl commit -F <message file>         # what failed, what works, where it is written
+    git -C <scratch>/tpl push template HEAD:main
+    git worktree remove <scratch>/tpl
+    git fetch template && git merge template/main         # the project: "Merge template: <subject>"
+
+The report's retro rows name the template commit. The worktree is outside the
+project's folders, so the project's walls do not apply there: this is also how
+a board session's lesson reaches a skill — it edits the template's copy under
+`kicad_project/.claude/skills/`, and the merge brings the skill home. A fix is
+made generic before it travels; the board's numbers stay in the board folder.
+A project whose working tree holds uncommitted edits to the same files puts
+them aside first (`git stash push -- <paths>`), merges, and checks that the
+merged tree equals them before dropping the stash.
 
 ## Worked example — a schematic redraw, the first project on this template (2026-10)
 

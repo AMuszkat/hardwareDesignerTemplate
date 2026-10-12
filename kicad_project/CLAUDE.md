@@ -230,12 +230,14 @@ the whole practice, for both sessions; for this one:
   same gate earlier (one sheet, one group, one symbol); a guess the user had
   to settle → `AskUserQuestion` with a recommendation; a defect in the
   handoff → `QUESTIONS.md`, never a local patch.
-- **`.claude/skills/` is the user's**, and a hook keeps you out: a lesson that
-  belongs in a skill goes into the tool's README now, and the skill line is
-  proposed in your report for the user to move.
-- **A tool in `tools/` is the template's.** A fix to it is generic — the
-  board's numbers stay in the board folder — and is owed back to the template
-  (SETUP.md §8 at the repo root; the user does the pull request).
+- **A tool in `tools/`, a skill, this contract are the template's.** A fix
+  to one is generic — the board's numbers stay in the board folder — and
+  **goes to the template first**: committed to the `template` remote from a
+  worktree outside the project and pushed, then merged into this project
+  (`SELF_IMPROVEMENT.md`, "Giving it back", has the commands). This is also
+  how a lesson reaches a skill: `.claude/skills/` here is the user's and a
+  hook keeps you out, but the template's copy is yours to edit, and the merge
+  brings it home.
 - **A board build script** (`<board>/build/*.py`, a generator for your
   symbols or netlist) is named after what it makes, never after a stdlib
   module (`selectors.py`, `types.py`, `json.py`): a script beside the tools

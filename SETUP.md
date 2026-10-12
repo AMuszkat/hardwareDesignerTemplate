@@ -170,12 +170,17 @@ git merge template/main            # commit your own work first
 ```
 
 A conflict is in a file both sides changed: keep the project's facts and the
-template's mechanism, and run `./verify.sh` after. The reverse direction is
-a pull request against the template: a fix made in a project to a
-template-owned file (a board tool, a skill, `publish.py`) goes back there,
-so the next project starts with it. `kicad_project/SELF_IMPROVEMENT.md` says
-when such a fix is owed — the moment a second method works where the first
-failed — and where each kind of lesson goes.
+template's mechanism, and run `./verify.sh` after.
+
+The reverse direction is the rule, not a courtesy: **an improvement to a
+template-owned file (a board tool, a skill, a contract, `publish.py`) found
+in a project is committed to the template remote and pushed, then merged into
+the project** — the template first, the project by merge, so every project
+started from it gets it and none carries a private copy. The template remote
+is `https://github.com/AMuszkat/hardwareDesignerTemplate` (`template` in a
+project's remotes). `kicad_project/SELF_IMPROVEMENT.md` says when such a fix
+is owed — the moment a second method works where the first failed — where each
+kind of lesson goes, and the commands.
 
 ## 9. Publishing the repository
 

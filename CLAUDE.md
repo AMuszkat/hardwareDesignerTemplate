@@ -236,8 +236,9 @@ whole practice, for both sessions; for this one:
   a check that fired late moves earlier.
 - **Each publish's report ends with the turn's retro rows** — *failed first /
   worked second / captured in* — so the user sees the template move and can
-  veto. A fix to a template-owned file is owed back to the template
-  (SETUP.md §8).
+  veto. **A fix to a template-owned file goes to the template first**:
+  committed to the `template` remote and pushed, then merged into this
+  project (`kicad_project/SELF_IMPROVEMENT.md`, "Giving it back").
 
 ## Answering the user
 
