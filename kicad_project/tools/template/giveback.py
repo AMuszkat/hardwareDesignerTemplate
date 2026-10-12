@@ -180,8 +180,11 @@ def cmd_finish(repo, a):
     git("worktree", "remove", "--force", wt, cwd=repo)
     fetch(repo)
 
-    # the project takes it back as a merge, over nothing it cannot prove harmless
-    touched = set(git("diff", "--name-only", "HEAD", f"{REMOTE}/{BRANCH}", cwd=repo).stdout.split())
+    # the project takes it back as a merge, over nothing it cannot prove harmless.
+    # Touched = what the template changed since the last merge -- NOT every file
+    # that differs from the template, which is the project's own data too
+    base = git("merge-base", "HEAD", f"{REMOTE}/{BRANCH}", cwd=repo).stdout.strip()
+    touched = set(git("diff", "--name-only", base, f"{REMOTE}/{BRANCH}", cwd=repo).stdout.split())
     dirty = {l[3:] for l in git("status", "--porcelain", "--untracked-files=all", cwd=repo).stdout.splitlines()}
     tracked_dirty = [p for p in touched & dirty
                      if git("ls-files", "--error-unmatch", p, cwd=repo, check=False).returncode == 0]
