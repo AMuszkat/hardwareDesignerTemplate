@@ -64,8 +64,8 @@ triggers join it:
 
 At every stop for the user's review — a board session: a schematic, a
 placement or routing group; concept: a study's result, a decision, a publish
-— **the report ends with the table, one line per row: *failed first / worked
-second / captured in*.** The user sees the template move and can veto a
+— **the report ends with the table, one line per row: *failed first or missing /
+worked / captured in*.** The user sees the template move and can veto a
 change. A row captured nowhere is reported as such, and the user says where
 it goes.
 
