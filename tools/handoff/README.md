@@ -81,6 +81,16 @@ creates its KiCad project itself, through Konnect.
   an answer: publish the datasheet, and the numbers are theirs to read.
 - **Run `--check` before answering any question.** An answer written against a
   stale handoff answers a board that no longer exists.
+- **`netlist.json` is complete from the first publish of a board whose pin
+  tables exist.** A connection that is decided goes in `PINS`, not in a
+  sentence: prose costs the board session a transcription; data lets its
+  `parity --handoff` catch a wrong ball the day it arrives.
+- **A `RELEASE_NOTE` that invalidates drawn work names the board gate that
+  shows it** (`sch.py parity --handoff`, `place.py sync`, `place.py drc`),
+  beside the work it invalidates.
+- **Every question answered is a retro row**: *which page should have carried
+  this before it was asked*. The generator change comes first, the answer
+  second (`kicad_project/SELF_IMPROVEMENT.md`).
 
 ## Datasheets cross the wall, passives do not
 

@@ -213,6 +213,37 @@ about a land pattern, a body height or a clearance.
     tools/setup.sh                        # once per machine (./setup.sh install runs it)
     tools/session/relay.py status         # the relay switch and the session names
 
+## When the second attempt works, the template moves
+
+**Anything that failed on the first attempt and worked on the second with a
+different method is written where the next session reads it before its first
+attempt — in the same turn, not at the end of the task.** Next time is a fresh
+context; nothing is "kept in mind". `SELF_IMPROVEMENT.md` (this folder) is
+the whole practice, for both sessions; for this one:
+
+- **Keep a two-column table from the first tool call**: *failed first /
+  worked second*. When the second column fills, the row is captured before
+  the next call: a fact about a tool → one bullet in that tool's README (the
+  trap, the way around it, how to prove it); a procedure → the skill step
+  that needs it; a multi-call sequence typed twice → a script in `tools/`
+  with an exit code; a gate that fired after more than one unit of work → the
+  same gate earlier (one sheet, one group, one symbol); a guess the user had
+  to settle → `AskUserQuestion` with a recommendation; a defect in the
+  handoff → `QUESTIONS.md`, never a local patch.
+- **`.claude/skills/` is the user's**, and a hook keeps you out: a lesson that
+  belongs in a skill goes into the tool's README now, and the skill line is
+  proposed in your report for the user to move.
+- **A tool in `tools/` is the template's.** A fix to it is generic — the
+  board's numbers stay in the board folder — and is owed back to the template
+  (SETUP.md §8 at the repo root; the user does the pull request).
+- **A board build script** (`<board>/build/*.py`, a generator for your
+  symbols or netlist) is named after what it makes, never after a stdlib
+  module (`selectors.py`, `types.py`, `json.py`): a script beside the tools
+  shadows the module `tools/sch` imports, and the error points elsewhere.
+- **Every stop for the user's review** (a schematic, a placement group, a
+  routing group) ends with the turn's retro rows, one line each, with where
+  each was captured — so the user sees the template move and can veto.
+
 ## Answering the user
 
 As short as possible: answer what was asked and stop. A defect found on the

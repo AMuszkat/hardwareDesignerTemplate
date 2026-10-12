@@ -45,6 +45,8 @@ wins where they disagree.
 - **At most 40 pin rows on a side of a unit** (`pins-side`). Split a big IC
   into units by function — each bank's signals, each power domain, the
   grounds in their own unit — the way the datasheet's ball map groups them.
+  A group longer than 80 pins becomes `NAME_1`, `NAME_2`, split across both
+  sides.
 - **Every unit's body has its top-left corner at the origin, and Reference
   and Value sit just above the origin.** KiCad shares one field position
   between all units; this is the only position that suits every unit
@@ -52,12 +54,36 @@ wins where they disagree.
 - **Value is what a reader needs at a glance**: `100n`, `10k 1%`, `0.47u`,
   plus `(PROPOSED)` where the handoff marks it. The part number goes in an
   `MPN` field. A long Value runs across its neighbours.
+- **Two-pin parts whose stock Value sits inside the body** (`Device:R`) run
+  any Value longer than the body over their own wires, in every orientation.
+  Use the board's derived copy with the Value beside the body:
+  `symfields.py --derive Device:R` → `<board>:R`, for every resistor.
+- **A stock multi-unit symbol whose fields sit on a unit's pin numbers**
+  (`74xGxx:74LVC2G07`'s power unit) is redrawn in the board library with the
+  same pins and units as origin-anchored boxes.
+
+**Making a unit land at the origin with Konnect's `create_symbol`** — it
+takes a pin's x as its connection point and grows a body too narrow for the
+names, centred on what you asked, so the body rarely lands where the pins
+say. Two passes, no guessing: create with left pins at x = −2.54 and the
+first row at y = −2.54 (the top edge is then exactly 0); read the response's
+resolved left-pin x `lx`; the body's left edge is `lx + 2.54`; if that is
+not 0, `delete_symbol` and create again with every pin's x shifted by
+−(lx + 2.54). Then:
+
+```
+tools/.venv/bin/python tools/sch/symfields.py --board <board> SYMBOL ...    # fields above the corner
+```
+
+Verify a rebuilt symbol against the old one pin by pin (number, name,
+type) before any sheet uses it: a rebuild is where a ball silently changes
+type.
 
 ## 1. Before the first sheet
 
 - The board's `sym-lib-table` has `hw_sch` →
-  `${KIPRJMOD}/../tools/sch/hw_sch.kicad_sym` (Konnect, `library` toolset).
-  Its power glyphs keep a rail's name horizontal whichever way they point.
+  `${KIPRJMOD}/../tools/sch/hw_sch.kicad_sym` (Konnect
+  `register_symbol_library`, scope project; `plan` says so when missing).
 - Your own symbols meet the symbol rules above (the library is yours, like
   the footprints).
 - A new board: `handoff/netlist.json` is the connectivity as data. When it
@@ -66,19 +92,28 @@ wins where they disagree.
   lists parts in `prose_only`, the handoff still owes you those connections
   as data: draw the settled parts and ask for the rest in `QUESTIONS.md` —
   never type a pin table the handoff already has.
+- A redraw whose symbols change (units split, a ball retyped, Values
+  shortened) does not plan `--from-sch`: write the source netlist as data
+  (`--netlist`, the README's format) from the drawn schematic plus the
+  changes, so the plan proves the new drawing against the intended one.
+- Back up every sheet and the library before the first Konnect call
+  (`<board>/.sch_backups/<name>/`); a redraw deletes everything on a sheet.
 
 ## 2. Plan, and look at it
 
 ```
 tools/.venv/bin/python tools/sch/sch.py plan --board <board> --handoff                # new
-tools/.venv/bin/python tools/sch/sch.py plan --board <board> --from-sch               # redraw
+tools/.venv/bin/python tools/sch/sch.py plan --board <board> --from-sch               # redraw, same symbols
+tools/.venv/bin/python tools/sch/sch.py plan --board <board> --netlist <json>         # redraw, changed symbols
 ```
 
 It writes `<board>/sch_plan/`, then proves the plan on a scratch copy:
-netlist parity with the source, ERC, and `check`. **`PLAN PASSES`** — or every
-remaining finding is a symbol or Value issue from the list above, which you
-fix in the library and plan again. Never draw a plan whose parity is not
-`IDENTICAL`.
+netlist parity with the source, ERC, and `check` (the board's waivers
+apply). **`PLAN PASSES`** — or every remaining finding is a symbol or Value
+issue from the list above, which you fix in the library and plan again. A
+finding the plan cannot clear by rule (a wire through a text the block
+layout puts there) may be fixed after drawing with a Konnect move; note it
+before drawing. Never draw a plan whose parity is not `IDENTICAL`.
 
 Render the preview and look at every sheet:
 
@@ -86,12 +121,30 @@ Render the preview and look at every sheet:
 kicad-cli sch export pdf -o /tmp/plan.pdf <board>/sch_plan/preview/<board>/<board>.kicad_sch
 ```
 
-## 3. Draw, then frame
+## 3. Draw, gate each sheet, then frame
 
-`get_project_info` first: the open project must be yours. Then, sheet by
-sheet, make the calls in `sch_plan/<sheet>.ops.json` **in order, with the
-arguments as written** (a redraw's first call clears the sheet), and
-`save_project` after each sheet. The root's file comes last.
+`get_project_info` first: the open project must be yours; the schematic
+editor stays closed while Konnect writes. Each sub-sheet is independent of
+the others until the root, so **draw them in parallel, one agent per sheet**,
+with the prompt in `draw_sheet.md` beside this skill (fill the placeholders).
+The root sheet is drawn last, by you, from its ops.json.
+
+Each agent makes the calls in `sch_plan/<sheet>.ops.json` **in order, with
+the arguments as written**, splitting only a long list across consecutive
+calls of the same tool, then gates its sheet:
+
+```
+tools/.venv/bin/python tools/sch/sch.py drawn --board <board> <sheet>.kicad_sch   # 0 missing, 0 extra, fields as planned
+```
+
+The plan already carries the three calls Konnect needs and does not do by
+itself (the README's "What Konnect cannot do" has the whole list):
+`update_symbols_from_library` + `reset_schematic_field_positions` right after
+the parts are placed (a sheet keeps its old copy of a rebuilt symbol),
+`add_component_annotation` for a field the symbol does not have yet (MPN,
+DNP), and `import_sheet_pins` + `edit_sheet_pin` for a root sheet's
+left-edge pins (`add_sheet_pin` makes every pin face right, and KiCad then
+shorts a left pin to the right-edge pin at its height).
 
 Konnect has no call for a section frame or the title block, so those are
 written by the tool, graphics only, once every part is where the plan put it
@@ -112,15 +165,20 @@ tools/.venv/bin/python tools/sch/sch.py parity --board <board> --handoff    # HA
 tools/.venv/bin/python tools/sch/sch.py check  --board <board>              # CHECKS PASS
 ```
 
-plus Konnect's `run_erc`. A finding after drawing is fixed with a Konnect edit
-(move, rotate) and `check` again. A waiver (`<board>/schematic.json`, with a
-`why`) is for a choice that is right, such as a connector kept as one 2 × 50
-row; it is never for a collision.
+plus ERC (`check` prints kicad-cli's). `parity` is the one that catches a
+root-sheet short (two interfaces merged); run it before `frame`. A finding
+after drawing is fixed with a Konnect edit (move, rotate, re-route a jog)
+and `check` again; `drawn` then reports that spot as planned-vs-drawn, which
+is expected — parity is the final word. A waiver (`<board>/schematic.json`,
+with a `why`) is for a choice that is right, such as a connector kept as one
+2 × 50 row; it is never for a collision.
 
 ⚠ **A redraw gives every symbol a new UUID.** If the PCB already holds the
 parts, tell the user before any PCB work: Update PCB from Schematic with
 *Re-link footprints to schematic symbols based on their reference
-designators*.
+designators*. KiCad's own DNP / in_bom flags are not set by any Konnect
+call; they stay a task for the user in eeschema, and a redraw does not lose
+ones already set (check `(dnp yes)` counts before and after).
 
 ## 5. Stop
 

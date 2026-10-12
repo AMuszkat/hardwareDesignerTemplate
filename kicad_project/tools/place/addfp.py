@@ -53,14 +53,18 @@ def netlist(pcb):
             sys.exit(f"netlist export failed: {r.stderr.strip()[-300:]}")
         s = out.read_text()
     comps = {}
-    for c in re.split(r"\n\t*\(comp\b", s)[1:]:
+    # the components section only: the last (comp ...) block would otherwise run on
+    # into (libparts ...) and take every library part's fields -- Reference "U",
+    # another part's Value -- as its own
+    end = min([i for i in (s.find("(libparts"), s.find("(nets")) if i > 0] or [len(s)])
+    for c in re.split(r"\n\t*\(comp\b", s[:end])[1:]:
         ref = re.search(r'\(ref "([^"]+)"\)', c)
         val = re.search(r'\(value "([^"]*)"\)', c)
         fp = re.search(r'\(footprint "([^"]*)"\)', c)
         if ref:
             fields = {k: v for k, v in re.findall(
                 r'\(field\s*\(name "([^"]+)"\)\s*"([^"]*)"\)', c)
-                if k != "Footprint"}
+                if k not in ("Footprint", "Reference", "Value")}
             ds = re.search(r'\(datasheet "([^"]*)"\)', c)
             if ds and ds.group(1) not in ("", "~"):
                 fields.setdefault("Datasheet", ds.group(1))

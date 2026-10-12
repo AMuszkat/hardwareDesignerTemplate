@@ -258,6 +258,13 @@ def parse_fab(path):
                 "fab: hole to board edge",
                 [f"(constraint physical_hole_clearance (min {v}mm))"],
                 "B.Layer == 'Edge.Cuts'"))
+        elif n == "allow bridged solder mask apertures between pads within footprints":
+            # Board Setup -> Solder Mask/Paste, board-wide; webs BETWEEN footprints are
+            # still checked. Strict yes / no: anything else is a page to read again.
+            v = value.strip("* ").lower()
+            if v not in ("yes", "no"):
+                die(f"'{name}': the script reads 'yes' or 'no', not '{value}'")
+            spec["bridges_in_fps"] = v == "yes"
         elif n == "board outline":
             nums = floats(value)
             m_tol = re.search(r"\+-\s*(\d+(?:\.\d+)?)", value)
@@ -701,6 +708,8 @@ def compare(spec, board_dir):
     if "tent" in spec:
         cmp("m_TentViasFront", spec["tent"], bool(ds.m_TentViasFront))
         cmp("m_TentViasBack", spec["tent"], bool(ds.m_TentViasBack))
+    if "bridges_in_fps" in spec:
+        cmp("m_AllowSoldermaskBridgesInFPs", spec["bridges_in_fps"], bool(ds.m_AllowSoldermaskBridgesInFPs))
 
     # net classes
     netnames = [str(n) for n in b.GetNetsByName().keys() if str(n)]
@@ -848,6 +857,9 @@ def cmd_plan(spec, board_dir, _args):
         print(f"  {k:<26} {v}")
     print(f"Layers {spec.get('layers')}, thickness {spec.get('thickness')} mm, "
           f"vias {'tented both sides' if spec.get('tent') else 'not tented'}")
+    if "bridges_in_fps" in spec:
+        print(f"Solder mask: bridged apertures between pads within footprints "
+              f"{'allowed' if spec['bridges_in_fps'] else 'not allowed'} (board-wide)")
     print("Net classes (track / clearance / via drill / via pad):")
     for c in spec["classes"]:
         via = f"{c['drill']} / {c['via']}" if "drill" in c else "no vias (custom rule)"
@@ -925,6 +937,8 @@ def cmd_apply(spec, board_dir, args):
             setattr(ds, attr, mm(v, pcbnew))
         ds.m_TentViasFront = spec["tent"]
         ds.m_TentViasBack = spec["tent"]
+        if "bridges_in_fps" in spec:
+            ds.m_AllowSoldermaskBridgesInFPs = spec["bridges_in_fps"]
         if not ds.m_HasStackup:
             ds.SetBoardThickness(mm(spec["thickness"], pcbnew))
 

@@ -33,7 +33,7 @@ Start with `design/IMPLEMENTATION.md` and the sheets in `design/diagrams/`.
 | `kicad_project/boardN_*/` | KiCad files, `QUESTIONS.md`, `lib/`, plans — theirs; `handoff/` — ours, generated | board session |
 | `kicad_project/tools/` | the board sessions' own tools (schematic layout and gate, footprints, board setup, placement, routing, freerouting, 3D renders) | board session |
 | `kicad_project/tools/session/`, `kicad_project/.claude/`, `kicad_project/.mcp.json`, `kicad_project/CLAUDE.md` | the hooks that enforce the walls, the board sessions' skills and MCP servers, their contract | the user (edit only at their request) |
-| `kicad_project/RELAY_PROTOCOL.md`, `project.json`, `relay.json` | the communication protocol, the session names, the relay switch | the user |
+| `kicad_project/RELAY_PROTOCOL.md`, `kicad_project/SELF_IMPROVEMENT.md`, `project.json`, `relay.json` | the communication protocol, how a session improves the template, the session names, the relay switch | the user |
 
 ## A decision is not finished until every home moves
 
@@ -208,6 +208,36 @@ disagrees with a published one.
 
 **(Fill in: how this project measures — units, windows, test levels, what is
 always reported next to a headline. Carry the same conventions to the bench.)**
+
+## When the second attempt works, the template moves
+
+**Anything that failed on the first attempt and worked on the second with a
+different method is written where the next session reads it before its first
+attempt — in the same turn, not at the end of the task.** Next time is a fresh
+context; nothing is "kept in mind". `kicad_project/SELF_IMPROVEMENT.md` is the
+whole practice, for both sessions; for this one:
+
+- **A board question is the trigger.** The retro row is *which page should
+  have carried this before it was asked*; the fix is the generator
+  (`tools/handoff/boards/boardN.py` when only this board needs it,
+  `board_template.py` / `publish.py` when every board does), so every future
+  board's page carries it. The answer comes second.
+- **Prose a board session had to transcribe by hand becomes data**, with a
+  parity check on their side. `netlist.json` is the model: a board whose pin
+  tables exist gets it complete from the first publish.
+- **A `RELEASE_NOTE` that invalidates drawn work names the board gate that
+  shows the effect** (`sch.py parity --handoff`, `place.py sync`, `place.py
+  drc`), beside the work it invalidates.
+- The same question from two boards is a `00_READ_FIRST` rule or a generator
+  default, not two answers. A datasheet fact cites page and table, so the
+  board's `verify` re-reads the same spot.
+- A fact about a tool goes in its README; a procedure in the skill step that
+  needs it; a sequence done twice by hand becomes a script with an exit code;
+  a check that fired late moves earlier.
+- **Each publish's report ends with the turn's retro rows** — *failed first /
+  worked second / captured in* — so the user sees the template move and can
+  veto. A fix to a template-owned file is owed back to the template
+  (SETUP.md §8).
 
 ## Answering the user
 

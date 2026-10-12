@@ -43,14 +43,20 @@ step 3.
   `tools/handoff/boards/boardN.py`, or the board's `DATASHEETS_EXTRA`.
 - A missing datasheet: `.venv/bin/python tools/parts/datasheet.py <MPN>` (the
   `datasheet` skill), then publish — it is copied and hashed automatically.
+- The retro row — *which page should have carried this before it was
+  asked* — decides where the fix goes: this board's data module when only it
+  needs the fact, `board_template.py` / `publish.py` when every board does, a
+  `00_READ_FIRST` rule when a second board asked the same. Write it in the
+  same turn (`kicad_project/SELF_IMPROVEMENT.md`).
 - The answer goes in `tools/handoff/answers/boardN.md` under the same `Qn`,
   pointing at where the fact now lives. **Never** answer a footprint question
   with pad dimensions: publish the datasheet; the numbers are theirs to read.
 
 ## 4. Publish
 
-Set `RELEASE_NOTE` — which questions this answers and **which of their drawn
-work is now wrong** (or "nothing") — then
+Set `RELEASE_NOTE` — which questions this answers, **which of their drawn
+work is now wrong** (or "nothing") and the board gate that shows it
+(`sch.py parity --handoff`, `place.py sync`, `place.py drc`) — then
 
     .venv/bin/python tools/handoff/publish.py --board boardN
     .venv/bin/python tools/handoff/publish.py --check --all

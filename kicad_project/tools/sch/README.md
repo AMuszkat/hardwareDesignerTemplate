@@ -8,11 +8,14 @@ The `schematic` skill is the workflow; this is the tool.
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --handoff                # a new board, complete handoff
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --from-sch               # a redraw
     tools/.venv/bin/python tools/sch/sch.py check  --board board1 [--json]
+    tools/.venv/bin/python tools/sch/sch.py drawn  --board board1 [SHEET ...]     # after EACH sheet
     tools/.venv/bin/python tools/sch/sch.py frame  --board board1 [--remove]      # after drawing
     tools/.venv/bin/python tools/sch/sch.py parity --board board1                       # drawn == the plan
     tools/.venv/bin/python tools/sch/sch.py parity --board board1 --handoff             # drawn == the handoff
     tools/.venv/bin/python tools/sch/sch.py rules
     python3 tools/sch/hw_sch.py                    # regenerates hw_sch.kicad_sym
+    tools/.venv/bin/python tools/sch/symfields.py --board board1 SYMBOL ...    # fields above the top-left corner
+    tools/.venv/bin/python tools/sch/symfields.py --board board1 --derive Device:R   # stock symbol in, Value beside
 
 Plain Python 3 and `kicad-cli` — no `pcbnew`, so not `tools/kpy`. `--board`
 works as everywhere in `tools/` (`boardsel.py`). `plan` writes under
@@ -57,7 +60,7 @@ reason, exactly as a DRC exclusion is recorded:
                 "why": "the CM5 connector is one 2 x 50 row; splitting it hides the pinout"}]}
 
 `key` is printed with every finding (`--json` shows it). A waiver without a
-`why` is refused.
+`why` is refused. `plan` applies the same waivers when it checks its preview.
 
 ## The plan (`plan`)
 
@@ -102,6 +105,20 @@ Outputs: `sch_plan/<sheet>.ops.json` — the Konnect calls for that sheet, in
 order, with complete arguments; `plan.json` (parts, sections and the title
 block, what `frame` writes); `netlist.json` (what `parity` compares the
 drawn board with); `preview/`.
+
+## The sheet gate (`drawn`)
+
+After each sheet is drawn, before the next: the drawn sheet against the
+plan's preview as sets — every symbol (reference, unit, position, rotation,
+lib_id, Value), wire, label, junction, no-connect, sheet and sheet pin — and
+every field the sheet's ops.json asked for (Footprint, Datasheet, MPN, DNP)
+with its value. It prints what is planned and not drawn (make it with the
+same call) and what is drawn and not planned (delete it), and exits 1. A
+Konnect call that fails half-way, a list split with an element dropped, a
+field the batch edit silently skipped: this is where they show, one sheet at
+a time, instead of as a parity puzzle at the end. After a hand fix made on
+purpose (a jog moved to clear a text) it reports that spot as a difference;
+`parity` is then the word that counts.
 
 ## The frames (`frame`)
 
@@ -181,7 +198,28 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   multi-unit symbol whose Value suits its tallest unit lands it far from the
   small ones (`field-far`, and the text collisions that follow). Fix it in the
   library: each unit's body with its top-left corner at the origin, Reference
-  and Value just above the origin.
+  and Value just above the origin. `symfields.py` moves them there (the parsed
+  tree, proven by a kicad-cli resave that differs in those two fields only,
+  backup in `<board>/.sch_backups/`); `--derive LIB:NAME` copies a stock symbol
+  into the board's library with its fields beside the body -- for Device:R,
+  whose Value sits inside the body, so a Value longer than the body ("33 1%
+  (PROPOSED)") runs over the resistor's own wires in any orientation.
+- **Library symbols a sheet already embeds.** Placing a part copies its
+  definition into the sheet only if the sheet has none: a symbol rebuilt in the
+  library keeps its old pins on every sheet that used it. After the parts of a
+  redraw are placed and before any wire, `update_symbols_from_library`
+  (`allow_pin_moves`) and `reset_schematic_field_positions` on that sheet.
+- **Hierarchy instance paths.** A part placed on a sub-sheet gets an instance
+  path of that sheet alone; the root's `edit_sheet` calls, made last, re-link
+  them (check `kicad-cli sch export netlist` for annotation errors).
+- **Sheet-pin sides.** `add_sheet_pin` writes every pin facing right, and KiCad
+  then puts a left-edge pin on the right edge, shorting it to the right-edge pin
+  at its height (`parity` shows two interfaces merged). The root's calls add the
+  right-edge pins, then `import_sheet_pins` (side left) and `edit_sheet_pin` to
+  each left pin's spot.
+- **New fields.** `batch_edit_schematic_components` only edits a field the
+  symbol already has ("Field 'MPN' not found"); a new one (MPN, DNP) goes in
+  with `add_component_annotation`, hidden.
 - **A redraw changes every symbol's UUID** (parts are deleted and placed again:
   Konnect moves a multi-unit part only as a whole). On a board whose PCB
   already holds the parts, the PCB must be updated from the schematic with

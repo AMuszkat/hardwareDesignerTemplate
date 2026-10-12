@@ -47,6 +47,7 @@ board):
 | `hole_to_edge` | minimum hole-to-edge distance, from `14_fab.md` (Board Setup has no field for it). Starts as `null`: `check` refuses until you transcribe it |
 | `net_report_limit` | how many nets `check` lists in its span report |
 | `labels.hide` | references whose designator never goes on silk |
+| `shared_pad` | `[{refs: [A, B], net, source}]`: two stock parts drawn as one selector, their `net` pads on one point and the parts at 90° (a 3-pad selector made of two 0402s). That pair skips the courtyard test -- their courtyards overlap by design -- and `check` proves the merge instead: the `net` pads coincide, one side, 90° apart. Everything else (foreign-net pads, holes, silk) is still tested. KiCad's own DRC reports the overlap: exclude it there with the handoff's comment |
 
 A keep-out may carry `"side": "F" | "B" | "both"` (default `F`) and an
 `"allow": [refs]` list for the parts that belong inside it. `routing/gates.json`

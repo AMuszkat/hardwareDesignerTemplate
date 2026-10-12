@@ -36,6 +36,7 @@ touches `.kicad_pcb` or `.kicad_pro`.
 | order form: Via process (tenting / untented) | tent vias front + back | `.kicad_pcb` |
 | Constraints: clearance, track, annular, via, copper-to-hole, copper-to-edge, through hole, hole-to-hole | Board Setup → Constraints | `.kicad_pro` |
 | Constraints: mask expansion, mask minimum web | Board Setup → Solder Mask/Paste | `.kicad_pcb` |
+| Constraints: allow bridged solder mask apertures between pads within footprints (yes / no; optional row) | Board Setup → Solder Mask/Paste, board-wide | `.kicad_pcb` |
 | Constraints: silk height and stroke | minimum text height / thickness | `.kicad_pro` |
 | Constraints: "keep silk ≥ X mm off every pad" | silk clearance **X − mask expansion** | `.kicad_pro` |
 | Constraints: hole to board edge | custom rule `physical_hole_clearance` against `Edge.Cuts` | `.kicad_dru` |

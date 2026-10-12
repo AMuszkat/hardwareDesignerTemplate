@@ -425,14 +425,34 @@ def run_check(B, moves, verbose=True):
     fixed = set(B.cfg.get("fixed", []))
     overhang = set(B.cfg.get("overhang", []))
     min_cy = B.cfg.get("min_courtyard_gap", 0.03)
+    # a selector drawn as two stock parts on one shared pad (placement.json "shared_pad"):
+    # their courtyards overlap by design, so that pair skips the courtyard test and must
+    # instead prove the merge -- the shared-net pads coincide and the parts sit at 90 deg
+    shared_pairs = {frozenset(s["refs"]): s for s in B.cfg.get("shared_pad", [])}
     # mask web between two openings, and never less than the copper clearance
     pad_min = max(B.web + 2 * B.mask_exp, B.clearance)
     fails = []
+    for pair, s in shared_pairs.items():
+        a, b = sorted(pair)
+        if a in refs and b in refs and (a in moves or b in moves):
+            A, Bp = after[a], after[b]
+            pa = [p for p in A["pads"] if p["net"].split("/")[-1] == s["net"]]
+            pb = [p for p in Bp["pads"] if p["net"].split("/")[-1] == s["net"]]
+            if not pa or not pb or math.dist(pa[0]["pos"], pb[0]["pos"]) > 0.01:
+                fails.append(f"SHARED PAD {a}/{b}: the {s['net']} pads do not coincide")
+            if A["side"] != Bp["side"]:
+                fails.append(f"SHARED PAD {a}/{b}: not on one side")
+            ra = B.fps[a].GetOrientationDegrees() if hasattr(B, "fps") and a in B.fps else None
+            rb = B.fps[b].GetOrientationDegrees() if hasattr(B, "fps") and b in B.fps else None
+            if ra is not None and rb is not None and round((ra - rb) % 180) != 90:
+                fails.append(f"SHARED PAD {a}/{b}: not at 90 degrees ({ra:g} / {rb:g})")
     for x, y in itertools.combinations(sorted(refs), 2):
         if x not in moves and y not in moves:
             continue
         X, Y = after[x], after[y]
-        if X["box"] and Y["box"] and X["side"] == Y["side"]:
+        if frozenset((x, y)) in shared_pairs:
+            pass                                         # overlapping courtyards by design
+        elif X["box"] and Y["box"] and X["side"] == Y["side"]:
             g = min(rgap(a_, b_) for a_ in X["rects"] for b_ in Y["rects"])
             if g < min_cy:
                 fails.append(f"COURTYARD {x}-{y} ({X['side']}) gap {g:.3f}")

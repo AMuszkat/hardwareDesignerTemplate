@@ -4,6 +4,7 @@
     tools/.venv/bin/python tools/sch/sch.py check  --board board1 [--json]
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 [--from-sch | --netlist n.json]
                                                     [--only SHEET] [--out DIR]
+    tools/.venv/bin/python tools/sch/sch.py drawn  --board board1 [--plan DIR] [SHEET.kicad_sch ...]
     tools/.venv/bin/python tools/sch/sch.py frame  --board board1 [--plan DIR] [--remove]
     tools/.venv/bin/python tools/sch/sch.py parity --board board1 [--plan DIR | --handoff]
     tools/.venv/bin/python tools/sch/sch.py rules
@@ -23,6 +24,10 @@
           schematic (a redraw); --netlist reads tools/sch/README.md's format;
           --handoff reads handoff/netlist.json when the handoff marks it
           complete, with the board's symbols from <board>/schematic.json.
+  drawn   after EACH sheet: the drawn sheet against the plan's preview, item
+          for item (symbols, wires, labels, junctions, no-connects, sheet
+          pins) and field for field (what ops.json asked for). Exit 1 on a
+          difference, listing what to make or delete.
   parity  after drawing: the board's netlist, as KiCad exports it now, against
           the netlist the plan was made from (<plan>/netlist.json) -- the same
           connections, pin for pin, whatever the net names. Exit 1 on a
@@ -117,6 +122,13 @@ def cmd_plan(a):
     else:
         src = plan.Source.from_sch(board)
     sys.exit(plan.run(src, out, only=a.only))
+
+
+def cmd_drawn(a):
+    import drawn
+    board = boardsel.resolve(a.board)
+    plan_dir = Path(a.plan) if a.plan else Path(board) / "sch_plan"
+    sys.exit(1 if drawn.run(board, plan_dir, a.sheets or None) else 0)
 
 
 def cmd_frame(a):
@@ -269,6 +281,11 @@ def main():
     p.add_argument("--only", help="one sheet, by name")
     p.add_argument("--out")
     p.set_defaults(fn=cmd_plan)
+    dr = sub.add_parser("drawn")
+    dr.add_argument("--board")
+    dr.add_argument("--plan")
+    dr.add_argument("sheets", nargs="*", help="sheet files to compare (default: every sheet in the preview)")
+    dr.set_defaults(fn=cmd_drawn)
     fr = sub.add_parser("frame")
     fr.add_argument("--board")
     fr.add_argument("--plan")

@@ -81,7 +81,7 @@ def ops_for(src, name, file, paper, items, sch_path, existing, page):
     for e in sorted(items["parts"], key=lambda e: (nat(e.ref), e.unit)):
         comps.append(dict(lib_id=e.lib_id, reference=e.ref, value=e.part.value, unit=e.unit,
                           x=e.x, y=e.y, rotation=e.rot))
-    seen = set()
+    seen, new_fields = set(), []
     for e in items["parts"]:
         if e.ref in seen:
             continue
@@ -89,14 +89,24 @@ def ops_for(src, name, file, paper, items, sch_path, existing, page):
         ed = dict(reference=e.ref)
         if e.part.footprint:
             ed["footprint"] = e.part.footprint
-        if e.part.fields:
-            ed["fields"] = dict(e.part.fields)
+        # batch_edit_schematic_components edits only a field the symbol has; a new one is an annotation
+        have = getattr(e.part.lib, "fields", {}) or {}
+        old = {k: v for k, v in (e.part.fields or {}).items() if k in have or k in ("Datasheet", "Description")}
+        new_fields += [(e.ref, k, v) for k, v in (e.part.fields or {}).items() if k not in old]
+        if old:
+            ed["fields"] = old
         if len(ed) > 1:
             edits.append(ed)
     if comps:
         calls.append(dict(tool="batch_place_components", args=dict(schematic=sch_path, components=comps)))
+        # a sheet keeps its own copy of every symbol it ever placed: a symbol rebuilt in the library
+        # would keep its old pins here. Re-embed from the library before any wire, then the fields.
+        calls.append(dict(tool="update_symbols_from_library", args=dict(schematic=sch_path, allow_pin_moves=True)))
+        calls.append(dict(tool="reset_schematic_field_positions", args=dict(schematic=sch_path)))
     if edits:
         calls.append(dict(tool="batch_edit_schematic_components", args=dict(schematic=sch_path, edits=edits)))
+    for ref, k, v in new_fields:
+        calls.append(dict(tool="add_component_annotation", args=dict(schematic=sch_path, reference=ref, key=k, value=v)))
     if items["wires"]:
         calls.append(dict(tool="batch_add_wire", args=dict(
             schematic=sch_path, wires=[dict(x1=a[0], y1=a[1], x2=b[0], y2=b[1]) for a, b in items["wires"]])))
@@ -135,10 +145,21 @@ def root_ops(src, paper, items, syms, sch_path, existing):
         else:
             calls.append(dict(tool="add_hierarchical_sheet", args=dict(
                 schematic=sch_path, sheet_name=s["name"], sheet_file=s["file"], project_name=src.root_name, **geo)))
+        # add_sheet_pin writes every pin facing right (angle 0) and KiCad then puts a left-edge pin on
+        # the right edge, onto whatever pin shares its height there. So: the right-edge pins by hand,
+        # then import_sheet_pins(side=left) makes the rest facing left, then each is moved to its spot.
+        left = [p for p in s["pins"] if abs(p["x"] - s["x"]) < 0.01]
         for p in s["pins"]:
-            calls.append(dict(tool="add_sheet_pin", args=dict(schematic=sch_path, sheet_name=s["name"],
-                                                              pin_name=p["name"], pin_type="bidirectional",
-                                                              x=p["x"], y=p["y"])))
+            if p not in left:
+                calls.append(dict(tool="add_sheet_pin", args=dict(schematic=sch_path, sheet_name=s["name"],
+                                                                  pin_name=p["name"], pin_type="bidirectional",
+                                                                  x=p["x"], y=p["y"])))
+        if left:
+            calls.append(dict(tool="import_sheet_pins", args=dict(schematic=sch_path, sheet_name=s["name"],
+                                                                  side="left")))
+            for p in left:
+                calls.append(dict(tool="edit_sheet_pin", args=dict(schematic=sch_path, sheet_name=s["name"],
+                                                                   pin_name=p["name"], x=p["x"], y=p["y"])))
     if items["wires"]:
         calls.append(dict(tool="batch_add_wire", args=dict(
             schematic=sch_path, wires=[dict(x1=a[0], y1=a[1], x2=b[0], y2=b[1]) for a, b in items["wires"]])))
@@ -393,11 +414,15 @@ def prove(src, out):
     e, w = model.erc(prev / f"{src.root_name}.kicad_sch")
     print(f"ERC on the preview: {e} errors, {w} warnings")
     design = model.Design(prev)
-    findings, _ = check.run(design)
+    sj = Path(src.board) / "schematic.json"                 # the board's waivers hold for its preview too
+    waive = json.loads(sj.read_text()).get("waive", []) if sj.exists() else []
+    findings, waived = check.run(design, waive)
     by = Counter(f[0] for f in findings)
     print(f"check on the preview: {len(findings)} finding(s) {dict(by) if by else ''}")
     for f in findings[:25]:
         print(f"  {f[0]:10} {f[1][:28]:28} {f[3]}")
+    for f, w in waived:
+        print(f"  waived {f[0]} {f[2]} -- {w['why']}")
     ok = not missing and not extra and not findings and not e
     print("PLAN PASSES" if ok else "PLAN FAILS")
     return 0 if ok else 1

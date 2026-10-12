@@ -173,7 +173,9 @@ A conflict is in a file both sides changed: keep the project's facts and the
 template's mechanism, and run `./verify.sh` after. The reverse direction is
 a pull request against the template: a fix made in a project to a
 template-owned file (a board tool, a skill, `publish.py`) goes back there,
-so the next project starts with it.
+so the next project starts with it. `kicad_project/SELF_IMPROVEMENT.md` says
+when such a fix is owed — the moment a second method works where the first
+failed — and where each kind of lesson goes.
 
 ## 9. Publishing the repository
 
