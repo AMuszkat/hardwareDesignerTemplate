@@ -214,8 +214,9 @@ always reported next to a headline. Carry the same conventions to the bench.)**
 ## When the second attempt works, the template moves
 
 **A method that failed on the first attempt and worked on the second with a
-different approach — and that the next design, with other parts and other
-numbers, would need too — is written where the next session reads it before
+different approach — or a tool, a script or a skill built because none
+existed for the job — that the next design, with other parts and other
+numbers, would need too, is written where the next session reads it before
 its first attempt, in the same turn, and goes to the template.** Next time is
 a fresh context; nothing is "kept in mind". `kicad_project/SELF_IMPROVEMENT.md`
 is the whole practice, for both sessions; for this one:
@@ -226,6 +227,9 @@ is the whole practice, for both sessions; for this one:
   template lesson. A board session's question is almost always a design
   fact. A *method* is process: a calculation that sizes a kind of part, a way
   to fetch a datasheet, a diagram technique, a check, a publisher feature.
+- **No failure is needed.** A tool, a script or a skill built because none
+  existed for the job, and that passes the test, goes to the template as it
+  is built — the way the publisher and the study runner once did.
 - **A calculation method that serves many designs** — above all one found
   after a first method failed — goes into `studies/common.py` (or a module
   beside it) as a generic function with every project number passed in; the
@@ -242,7 +246,7 @@ is the whole practice, for both sessions; for this one:
   needs it; a sequence typed twice becomes a script with an exit code; a
   check that fired late moves earlier.
 - **Each stop — a study's result, a decision, a publish — ends its report
-  with the turn's retro rows**: *failed first / worked second / captured in*,
+  with the turn's retro rows**: *failed first or missing / worked / captured in*,
   so the user sees the template move and can veto. **A fix to a
   template-owned file goes to the template first**:
   `python3 kicad_project/tools/template/giveback.py` (`status`, `open`,

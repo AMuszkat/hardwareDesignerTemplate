@@ -10,20 +10,22 @@ the skills and the READMEs this file points at.
 ## The rule
 
 **A method that failed on the first attempt and worked on the second with a
-different approach — and that the next design, with other parts and other
-numbers, would need too — is written where the next session reads it before
-its first attempt, the moment the second attempt works, and goes to the
-template.**
+different approach — or a tool, a script or a skill built because none
+existed for the job — that the next design, with other parts and other
+numbers, would need too, is written where the next session reads it before
+its first attempt, the moment it works, and goes to the template.**
 
-Two tests, and both must hold:
+Two ways in, and one test every candidate must pass:
 
 1. **Second attempt.** Something was tried, failed, and a different method
-   worked. A thing that worked the first time is not a lesson; it is already
-   where it belongs.
-2. **Reuse.** The next project — other parts, other numbers, other boards —
-   would need the same method. That makes it *process*: a tool, a script, a
-   skill step, a check, a generic calculation, a publisher feature. A *design
-   fact* fails this test however hard it was to find.
+   worked. The second method is the lesson.
+2. **Missing capability.** Nothing did the job, so the session built it — a
+   script, a check, a skill, a generic function — and it worked, perhaps the
+   first time. The thing built is the lesson; no failure is needed.
+3. **Reuse — the test.** The next project — other parts, other numbers,
+   other boards — would need the same method. That makes it *process*: a
+   tool, a script, a skill step, a check, a generic calculation, a publisher
+   feature. A *design fact* fails this test however hard it was to find.
 
 This is the ordinary engineering retrospective (the blameless postmortem,
 "lessons learned"), scoped to one agent session, with one hard trigger
@@ -38,17 +40,22 @@ is lost with the transcript, and the next session pays for it again.
   work, answered through the generator, and never a template change — a
   question from the board to concept about a regulator's capacitor is the
   canonical non-example.
-- A thing that worked the first time.
+- A job done the first time with what already existed — an existing tool, a
+  skill step as written. It is already where it belongs.
 - A board-specific number (it belongs in the board folder).
 - A workaround for a bug that has since been fixed.
 
 ## The trigger
 
 A session keeps a running table from its first tool call, two columns: *what
-failed first* / *what worked*. The hard rule is the second column: **when a
-second method works and passes the reuse test, the row is captured within
-the same turn** — a README bullet, a skill line, a script, a generic function,
-a gate moved earlier. Three softer triggers join it:
+failed first, or was missing* / *what worked*. The hard rule is the second
+column: **when a second method works, or something built because nothing
+existed does the job, and it passes the reuse test, the row is captured
+within the same turn** — a README bullet, a skill line, a script, a generic
+function, a gate moved earlier. A thing built new goes to the template as it
+is built, not once it has failed somewhere: the schematic planner, the
+placement checker and `giveback.py` itself entered that way. Three softer
+triggers join it:
 
 - the same fact about a tool had to be looked up twice → README or skill;
 - the same multi-call sequence was typed twice → a script with an exit code;

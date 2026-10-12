@@ -217,14 +217,15 @@ about a land pattern, a body height or a clearance.
 ## When the second attempt works, the template moves
 
 **A method that failed on the first attempt and worked on the second with a
-different approach — one the next board, with other parts, would need too —
+different approach — or a tool, a script or a skill built because none
+existed for the job — that the next board, with other parts, would need too,
 is written where the next session reads it before its first attempt, in the
 same turn, not at the end of the task.** Next time is a fresh
 context; nothing is "kept in mind". `SELF_IMPROVEMENT.md` (this folder) is
 the whole practice, for both sessions; for this one:
 
-- **Keep a two-column table from the first tool call**: *failed first /
-  worked second*. When the second column fills, the row is captured before
+- **Keep a two-column table from the first tool call**: *failed first or missing /
+  worked*. When the second column fills, the row is captured before
   the next call: a fact about a tool → one bullet in that tool's README (the
   trap, the way around it, how to prove it); a procedure → the skill step
   that needs it; a multi-call sequence typed twice → a script in `tools/`
@@ -233,6 +234,10 @@ the whole practice, for both sessions; for this one:
   to settle → `AskUserQuestion` with a recommendation; a defect in the
   handoff → `QUESTIONS.md`, never a local patch (design work, not a template
   lesson).
+- **No failure is needed.** A tool, a script or a skill you build because
+  none existed for the job, and that the next board would use too, goes to
+  the template as it is built — the schematic planner and the placement
+  checker entered that way.
 - **A tool in `tools/`, a skill, this contract are the template's.** A fix
   to one is generic — the board's numbers stay in the board folder — and
   **goes to the template first**: committed to the `template` remote from a
