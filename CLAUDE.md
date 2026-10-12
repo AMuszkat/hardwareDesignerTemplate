@@ -34,6 +34,7 @@ Start with `design/IMPLEMENTATION.md` and the sheets in `design/diagrams/`.
 | `kicad_project/tools/` | the board sessions' own tools (schematic layout and gate, footprints, board setup, placement, routing, freerouting, 3D renders) | board session |
 | `kicad_project/tools/session/`, `kicad_project/.claude/`, `kicad_project/.mcp.json`, `kicad_project/CLAUDE.md` | the hooks that enforce the walls, the board sessions' skills and MCP servers, their contract | the user (edit only at their request) |
 | `kicad_project/RELAY_PROTOCOL.md`, `kicad_project/SELF_IMPROVEMENT.md`, `project.json`, `relay.json` | the communication protocol, how a session improves the template, the session names, the relay switch | the user |
+| `kicad_project/tools/template/` | `giveback.py`: a template-owned fix to the template first, then merged back — both sessions | template |
 
 ## A decision is not finished until every home moves
 
@@ -93,8 +94,8 @@ in its own folder, a hook on THIS side that blocks edits to generated files
 and to the board sessions' files, the board tools refusing another session's
 board, and the SendMessage guard. **Bash bypasses the hooks and rules**, so
 the contract carries the boundary too: never write into a board folder or
-`kicad_project/tools/` from here except through `publish.py` and
-`new_board.py`.
+`kicad_project/tools/` from here except through `publish.py`, `new_board.py`
+and the template merge that `giveback.py` runs.
 
 ## The handoff
 
@@ -160,6 +161,7 @@ The concept venv is `.venv` (`./setup.sh install`); matplotlib uses `Agg`.
     .venv/bin/python tools/diagrams/<generator>.py      # one sheet
     .venv/bin/python tools/handoff/publish.py --board board1   # publish (RELEASE_NOTE first)
     .venv/bin/python tools/handoff/publish.py --check --all    # fresh = the folder is what the sources render to now
+    python3 kicad_project/tools/template/giveback.py status  # template-owned files changed here and not given back
     .venv/bin/python tools/status.py                    # STATUS generated block
     .venv/bin/python tools/parts/fetch.py <MPN>         # price, stock, lead time
     .venv/bin/python tools/parts/search.py --help       # discover candidates in a category
@@ -234,11 +236,20 @@ whole practice, for both sessions; for this one:
 - A fact about a tool goes in its README; a procedure in the skill step that
   needs it; a sequence done twice by hand becomes a script with an exit code;
   a check that fired late moves earlier.
+- **Your own tools are in scope too** — the publisher, `lint_docs.py`,
+  `status.py`, the study runner, the diagram engine, `tools/parts/`, your
+  skills in `.claude/skills/`: a failed-first / worked-second there is
+  captured the same way and travels the same way. Only the generic part
+  travels; the project's text in `CLAUDE.md` and `README.md` stays here.
 - **Each publish's report ends with the turn's retro rows** — *failed first /
   worked second / captured in* — so the user sees the template move and can
   veto. **A fix to a template-owned file goes to the template first**:
-  committed to the `template` remote and pushed, then merged into this
-  project (`kicad_project/SELF_IMPROVEMENT.md`, "Giving it back").
+  `python3 kicad_project/tools/template/giveback.py` (`status`, `open`,
+  `push`, `finish`) commits it to the `template` remote, pushes, and merges
+  it back into this project (`kicad_project/SELF_IMPROVEMENT.md`, "Giving it
+  back"). `status` at every publish: a mechanism file that differs from the
+  template is a lesson not given back, or a project fill that belongs in a
+  data file.
 
 ## Answering the user
 

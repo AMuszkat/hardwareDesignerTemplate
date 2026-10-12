@@ -179,8 +179,9 @@ the project** — the template first, the project by merge, so every project
 started from it gets it and none carries a private copy. The template remote
 is `https://github.com/AMuszkat/hardwareDesignerTemplate` (`template` in a
 project's remotes). `kicad_project/SELF_IMPROVEMENT.md` says when such a fix
-is owed — the moment a second method works where the first failed — where each
-kind of lesson goes, and the commands.
+is owed — the moment a second method works where the first failed — and where
+each kind of lesson goes; `kicad_project/tools/template/giveback.py` does the
+round trip (`status`, `push`, `open`, `finish`).
 
 ## 9. Publishing the repository
 

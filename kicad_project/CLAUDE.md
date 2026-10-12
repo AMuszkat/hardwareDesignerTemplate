@@ -212,6 +212,7 @@ about a land pattern, a body height or a clearance.
     tools/.venv/bin/python …              # easyeda2kicad, PyMuPDF, Pillow (and render/render.py)
     tools/setup.sh                        # once per machine (./setup.sh install runs it)
     tools/session/relay.py status         # the relay switch and the session names
+    python3 tools/template/giveback.py status   # template-owned files changed here and not given back
 
 ## When the second attempt works, the template moves
 
@@ -234,7 +235,8 @@ the whole practice, for both sessions; for this one:
   to one is generic — the board's numbers stay in the board folder — and
   **goes to the template first**: committed to the `template` remote from a
   worktree outside the project and pushed, then merged into this project
-  (`SELF_IMPROVEMENT.md`, "Giving it back", has the commands). This is also
+  (`python3 tools/template/giveback.py push <paths> -m MSG`; `open`, edit,
+  `finish` for a skill — `SELF_IMPROVEMENT.md`, "Giving it back"). This is also
   how a lesson reaches a skill: `.claude/skills/` here is the user's and a
   hook keeps you out, but the template's copy is yours to edit, and the merge
   brings it home.

@@ -55,7 +55,9 @@ reported as such, and the user says where it goes.
 ## Where each kind of lesson goes — concept session
 
 Concept's product is the handoff; its failures arrive as board questions and
-as `invalidates:` lines. **The trigger is the board's `QUESTIONS.md`**: every
+as `invalidates:` lines. Its own tools fail too — the publisher, the lint, the
+study runner, the diagram engine, the datasheet fetcher, its skills — and
+those rows take the same table and the same road back. **The trigger is the board's `QUESTIONS.md`**: every
 question answered is a retro row — *which page should have carried this
 before it was asked* — and the generator change comes before the answer.
 
@@ -81,25 +83,23 @@ the project's remotes); the project's own facts never travel, and no project
 keeps a private copy of a template file.
 
 At each stop for the user's review, the turn's template-owned lessons go as
-one commit, from a worktree outside the project tree:
+one commit, through `kicad_project/tools/template/giveback.py` (its README has
+the details; a board session runs it as `tools/template/giveback.py`):
 
-    git fetch template
-    git worktree add <scratch>/tpl template/main          # a checkout of the template
-    cp <changed template-owned files> <scratch>/tpl/<same paths>
-    git -C <scratch>/tpl add -A
-    git -C <scratch>/tpl commit -F <message file>         # what failed, what works, where it is written
-    git -C <scratch>/tpl push template HEAD:main
-    git worktree remove <scratch>/tpl
-    git fetch template && git merge template/main         # the project: "Merge template: <subject>"
+    giveback.py status                  # mechanism files that differ from template/main, and new ones
+    giveback.py push PATH... -m MSG     # copy these project files into a worktree of template/main,
+                                        # commit, push to the template, merge template/main back
+    giveback.py open                    # the worktree alone, to edit the template's copy of a file
+    giveback.py finish -m MSG           # that carries project fills (CLAUDE.md, README.md); then finish
 
 The report's retro rows name the template commit. The worktree is outside the
 project's folders, so the project's walls do not apply there: this is also how
 a board session's lesson reaches a skill — it edits the template's copy under
 `kicad_project/.claude/skills/`, and the merge brings the skill home. A fix is
 made generic before it travels; the board's numbers stay in the board folder.
-A project whose working tree holds uncommitted edits to the same files puts
-them aside first (`git stash push -- <paths>`), merges, and checks that the
-merged tree equals them before dropping the stash.
+`finish` proves the merge: the project's uncommitted edits to the files the
+merge touches are stashed, merged over and compared before the stash is
+dropped; a conflict aborts and is reported.
 
 ## Worked example — a schematic redraw, the first project on this template (2026-10)
 
