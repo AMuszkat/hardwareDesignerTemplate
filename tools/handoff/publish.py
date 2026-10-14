@@ -792,6 +792,12 @@ class Board:
                                 f"a ground net, nor a pinout signal")
             if cname not in refs:
                 prob.append(f"connector {cname} has no COMPONENTS line")
+        for c in self.components():
+            # 'C1, C2, C3' with '100 nF; 1 uF; 22 uF': netlist.json gives every
+            # part all three, and the board session cannot set one Value.
+            if len(_refset([c[0]])) > 1 and ";" in c[2]:
+                prob.append(f"{c[0]}: one line, several parts, several values ({c[2]}) -- "
+                            f"which part takes which? Give each its own line")
         if rows:
             k = self._classify(rows)
             if k["unknown"]:
