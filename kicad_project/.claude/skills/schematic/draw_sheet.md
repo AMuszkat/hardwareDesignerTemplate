@@ -2,7 +2,10 @@
 
 Fill `<BOARD_DIR>` (absolute path of the board folder), `<board>` (its
 short name, e.g. `board1`), `<SHEET>` (the sheet file, e.g. `emmc.kicad_sch`)
-and `<STEM>` (its stem, e.g. `emmc`), launch one agent per sub-sheet in the
+and `<STEM>` (its stem, e.g. `emmc`), load Konnect's `sch_components`,
+`sch_wiring` and `sch_batch` toolsets yourself FIRST (an agent's tools are
+fixed at spawn; one spawned before the load cannot reach them), then launch
+one agent per sub-sheet in the
 same message, and draw the root sheet yourself after they report. Proven on
 board1 (8 sheets, 787 calls, every sheet `0 missing, 0 extra` on the first
 pass, 5–10 minutes a sheet in parallel).

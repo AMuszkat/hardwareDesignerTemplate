@@ -124,7 +124,12 @@ kicad-cli sch export pdf -o /tmp/plan.pdf <board>/sch_plan/preview/<board>/<boar
 ## 3. Draw, gate each sheet, then frame
 
 `get_project_info` first: the open project must be yours; the schematic
-editor stays closed while Konnect writes. Each sub-sheet is independent of
+editor stays closed while Konnect writes. **Before spawning any agent, load
+Konnect's `sch_components`, `sch_wiring` and `sch_batch` toolsets yourself**
+(`load_toolset`): an agent's tool list is fixed when it is spawned, so one
+started before them sees no `batch_add_wire` or `add_schematic_net_label`,
+and its own `load_toolset` does not reach it (board2: the first agent drew
+nothing; the one spawned after the load drew 720 of 720). Each sub-sheet is independent of
 the others until the root, so **draw them in parallel, one agent per sheet**,
 with the prompt in `draw_sheet.md` beside this skill (fill the placeholders).
 The root sheet is drawn last, by you, from its ops.json.
