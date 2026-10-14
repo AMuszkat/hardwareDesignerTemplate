@@ -20,13 +20,14 @@ in conversation rather than in copper.
 | `new_board.py` | creates a board on both sides of the wall and publishes rev 1 |
 | `fabs/<profile>.py` | what a fab can build, each value with its source page. `example_standard.py` is an illustrative example (no fab's real numbers), `_blank.py` the shape to fill |
 | `answers/boardN.md` | concept's answers to that board's `QUESTIONS.md` — the only place they are written |
+| `reviews/boardN.md` | the verdicts and findings of the reviews that board asked for in its `REVIEW.md` (the `review-board` skill, `tools/review/`) — the only place they are written |
 | `studies/components_boardN.py` | the value bus: `(refdes, function, value, status, note)`, status `set` / `proposed` / `tbd` |
 
 The handoff itself: `00_READ_FIRST`, `01_components`, `02_nets`, `03_pinout.csv`
 and `08_pin_accounting` (only with a `PINOUT`), `04_deliberate`, `05_open`,
 `06_block_diagram.svg` and `11_floorplan.svg` (when the board names them),
 `07_answers`, `09_connectors`, `10_layout`, `12_boot` (with `BOOT`),
-`13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `netlist.json`, `CHANGELOG`, `MANIFEST.json`.
+`13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `15_reviews`, `netlist.json`, `CHANGELOG`, `MANIFEST.json`.
 
 `netlist.json` is the connectivity as data, for the board session's
 `tools/sch`: every part from the value bus, and pin -> net from the pinout

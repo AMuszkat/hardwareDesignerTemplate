@@ -9,13 +9,14 @@ Writes, and refuses if any of them already exists:
   concept side   tools/handoff/boards/boardN.py      (from board_template.py)
                  studies/components_boardN.py        (the value bus)
                  tools/handoff/answers/boardN.md
+                 tools/handoff/reviews/boardN.md      (the reviewers' verdicts, the review-board skill)
   board side     kicad_project/boardN_<slug>/        (from kicad_project/tools/board_scaffold/)
                  kicad_project/boardN_<slug>/handoff/ (publish.py, rev 1)
 
 The board-side files are the board session's from the moment they exist --
 this is the one-time bootstrap, done before that session starts. After it,
 concept writes only `handoff/` there (through publish.py) and reads
-QUESTIONS.md. The KiCad project itself is NOT created here: the board
+QUESTIONS.md and REVIEW.md. The KiCad project itself is NOT created here: the board
 session creates it through Konnect, named after the folder.
 """
 import argparse
@@ -73,6 +74,17 @@ value bus, NETS, LAYOUT, PIN_TREATMENT) too, never only into an answer.
 Nothing answered yet.
 """
 
+REVIEWS = """# Reviews — {title} ({bid})
+
+Concept writes here and nowhere else (the `review-board` skill); publish.py
+renders it as `handoff/15_reviews.md`. One `## RVn` heading per review, numbered
+as in the board session's REVIEW.md: the verdict, then each finding the
+board session must fix or may dispute. The board session replies in its own
+REVIEW.md, never here.
+
+No review yet.
+"""
+
 FAB = '''FAB = {{
     "profile": "{fab}",
     "layers": None,               # 2, 4, ... a stackup the profile has -- UNSET until decided
@@ -110,7 +122,8 @@ def main():
     kp = os.path.join(ROOT, "kicad_project")
     targets = [os.path.join(HERE, "boards", bid + ".py"),
                os.path.join(ROOT, "studies", f"components_{bid}.py"),
-               os.path.join(HERE, "answers", bid + ".md")]
+               os.path.join(HERE, "answers", bid + ".md"),
+               os.path.join(HERE, "reviews", bid + ".md")]
     taken = [os.path.relpath(t, ROOT) for t in targets if os.path.exists(t)]
     if os.path.isdir(kp):
         taken += [f"kicad_project/{d}" for d in os.listdir(kp)
@@ -129,12 +142,13 @@ def main():
         tpl, n = re.subn(r"^FAB = None$", lambda _m: FAB.format(fab=a.fab), tpl, flags=re.M)
         if n != 1:
             sys.exit("new_board: board_template.py no longer has exactly one `FAB = None` line")
-    for d in ("boards", "answers"):
+    for d in ("boards", "answers", "reviews"):
         os.makedirs(os.path.join(HERE, d), exist_ok=True)
     os.makedirs(os.path.join(ROOT, "studies"), exist_ok=True)
     open(targets[0], "w").write(tpl)
     open(targets[1], "w").write(BUS.format(title=tq, bid=bid))
     open(targets[2], "w").write(ANSWERS.format(title=a.title, bid=bid))
+    open(targets[3], "w").write(REVIEWS.format(title=a.title, bid=bid))
 
     dst = os.path.join(kp, board)
     if os.path.isdir(SCAFFOLD):
@@ -143,7 +157,7 @@ def main():
         print("WARNING: kicad_project/tools/board_scaffold/ is missing; the board "
               "folder gets only lib/ and no QUESTIONS.md")
         os.makedirs(os.path.join(dst, "lib"))
-    for f in ("QUESTIONS.md", "ROUTING_PLAN.md"):
+    for f in ("QUESTIONS.md", "REVIEW.md", "ROUTING_PLAN.md"):
         p = os.path.join(dst, f)
         if os.path.exists(p):
             t = open(p).read()

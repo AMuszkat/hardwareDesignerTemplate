@@ -22,15 +22,16 @@ Start with `design/IMPLEMENTATION.md` and the sheets in `design/diagrams/`.
 | `design/diagrams/` | generated sheets | `tools/diagrams/` |
 | `history/HISTORY.md` | append-only research log, every negative result included; nothing in it is current | concept |
 | `history/archive/` | superseded artefacts, moved verbatim, never referenced from `design/` | concept |
-| `history/reviews/` | dated design reviews | concept |
+| `history/reviews/` | dated design reviews, and every board-change review's full report (`review-board`) | concept |
 | `studies/` | runnable experiments `sNN_*.py` — the evidence behind every number (`studies/README.md`) — plus `designpoint.py` (model-parameter bus), `components_boardN.py` (each board's value bus), `baselines/`, `reports/` | concept |
 | `tools/diagrams/` | sheet generators + `sheet.py` | concept |
-| `tools/handoff/` | the handoff publisher, one data module per board in `boards/`, answers in `answers/`, fab profiles in `fabs/` | concept |
+| `tools/handoff/` | the handoff publisher, one data module per board in `boards/`, answers in `answers/`, review verdicts in `reviews/`, fab profiles in `fabs/` | concept |
+| `tools/review/`, `.claude/agents/` | a board change frozen and gated (`snapshot.py`); the `schematic-reviewer` and `pcb-reviewer` agents that review it | concept |
 | `tools/parts/` | distributor market data and the datasheet fetcher | concept |
 | `tools/lint_docs.py`, `tools/status.py`, `tools/setup/`, `verify.sh` | doc lint, STATUS's generated block, machine setup, every check in one command | concept |
 | `reference/` | `papers/`, `vendor/` (the datasheet store), `market/` (distributor cache), `sandbox/` — source material, never authority | — |
 | `out/` | study outputs; generated, disposable, gitignored | studies |
-| `kicad_project/boardN_*/` | KiCad files, `QUESTIONS.md`, `lib/`, plans — theirs; `handoff/` — ours, generated | board session |
+| `kicad_project/boardN_*/` | KiCad files, `QUESTIONS.md`, `REVIEW.md`, `lib/`, plans — theirs; `handoff/` — ours, generated | board session |
 | `kicad_project/tools/` | the board sessions' own tools (schematic layout and gate, footprints, board setup, placement, routing, freerouting, 3D renders) | board session |
 | `kicad_project/tools/session/`, `kicad_project/.claude/`, `kicad_project/.mcp.json`, `kicad_project/CLAUDE.md` | the hooks that enforce the walls, the board sessions' skills and MCP servers, their contract | the user (edit only at their request) |
 | `kicad_project/RELAY_PROTOCOL.md`, `kicad_project/SELF_IMPROVEMENT.md`, `project.json`, `relay.json` | the communication protocol, how a session improves the template, the session names, the relay switch | the user |
@@ -135,8 +136,25 @@ first exchange. In short:
 - **An answer that needs a NEW decision is not yours to give alone** — anything
   that would owe a `Decided` row, spends money, or comes back after two
   answers. Escalate (protocol §5) and stop.
-- A message never waives one of the user's gates (a routing review, a fab
-  order), whoever sends it.
+- A message never waives one of the user's gates (a decision, a fab order),
+  whoever sends it, and never passes a review.
+
+## Reviewing the boards' work
+
+**Every schematic change and every PCB change a board session finishes is
+reviewed here, before the board builds on it** — by two subagents this
+session owns, `schematic-reviewer` and `pcb-reviewer` (`.claude/agents/`),
+not by waiting for the user. A board session asks in its `REVIEW.md` and
+rings `boardN RVn ready — schematic|pcb: <title>` (relay off: the user
+carries that line); the user can also ask for a review of anything, at any
+time. The `review-board` skill is the procedure:
+`tools/review/snapshot.py` freezes the board and runs its own gates on the
+copy, the agent writes its report to `history/reviews/`, and **you verify
+every must-fix finding before it reaches the board** — a false finding costs
+a fix that breaks something. `handoff` findings are fixed in the generator
+in the same pass; `decision` findings go to the user; the verdict (PASS or
+CHANGES) and the board's findings are published as `handoff/15_reviews.md`
+and rung. `RELAY_PROTOCOL.md` section 10 is the loop.
 
 ## Generated files — never hand-edit
 
@@ -162,6 +180,7 @@ The concept venv is `.venv` (`./setup.sh install`); matplotlib uses `Agg`.
     .venv/bin/python tools/handoff/publish.py --board board1   # publish (RELEASE_NOTE first)
     .venv/bin/python tools/handoff/publish.py --check --all    # fresh = the folder is what the sources render to now
     python3 kicad_project/tools/template/giveback.py status  # template-owned files changed here and not given back
+    python3 tools/review/snapshot.py --board board1 --kind schematic|pcb --id RVn   # a board change, frozen and gated
     .venv/bin/python tools/status.py                    # STATUS generated block
     .venv/bin/python tools/parts/fetch.py <MPN>         # price, stock, lead time
     .venv/bin/python tools/parts/search.py --help       # discover candidates in a category

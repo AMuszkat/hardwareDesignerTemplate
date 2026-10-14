@@ -11,8 +11,8 @@ description: >
 
 # Placement, one group at a time
 
-A board is placed **group by group, and the user reviews each group** in KiCad
-before the next. Tools: Konnect for moves and refreshes,
+A board is placed **group by group, and each group is reviewed** before the
+next: its request in `REVIEW.md`, the verdict in `handoff/15_reviews.md`. Tools: Konnect for moves and refreshes,
 `tools/place/place.py` for checks (read `tools/place/README.md`), and
 `<board>/placement.json` for keep-outs and group lists. Every `tools/place`
 script runs as `tools/kpy tools/place/<script>.py` (it imports `pcbnew`).
@@ -173,5 +173,6 @@ permission in `ROUTING_PLAN.md` §4.
    meet is a QUESTIONS.md item.
 4. **Deliberate positions stay** (`04_deliberate.md`) even when a compaction
    would like them elsewhere.
-5. **Each group stops for the user's review.** Routing starts after placement
-   is agreed (the `routing` skill).
+5. **Each group stops for review**: with `place.py check` and `place.py drc`
+   clean, write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line). The next group starts on PASS;
+   routing starts after the last placement group passes (the `routing` skill).

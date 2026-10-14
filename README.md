@@ -81,8 +81,14 @@ one comes from.
   relay switch real.
 - **One command checks everything**: `./verify.sh` — the headline numbers
   against their baseline, the doc lint, the diagram tests, handoff freshness.
-- **The user's gates stay the user's**: decisions, each placement or routing
-  group's review, and the fab order.
+- **Every board change is reviewed before the next one builds on it**: a
+  board session requests the review of each schematic change and each
+  placement or routing group in its `REVIEW.md`; the concept session's
+  `schematic-reviewer` and `pcb-reviewer` subagents check a frozen copy
+  against the handoff and the datasheets, and the verdict comes back in the
+  handoff (`15_reviews.md`).
+- **The user's gates stay the user's**: decisions and the fab order — and
+  any review they want to make themselves.
 
 Everything the sessions use — skills, subagents, hooks, MCP servers — is
 declared inside this repository (`.claude/`, `kicad_project/.claude/`,

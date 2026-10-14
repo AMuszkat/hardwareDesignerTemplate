@@ -152,6 +152,7 @@ class Board:
             die(f"{bid}.py: TITLE is required")
         self._validate()
         self.answers_rel = self.get("ANSWERS") or f"tools/handoff/answers/{bid}.md"
+        self.reviews_rel = self.get("REVIEWS") or f"tools/handoff/reviews/{bid}.md"
         self.pinout = self.get("PINOUT")
         F = self.get("FAB")
         self.fab = None
@@ -187,7 +188,7 @@ class Board:
         # Provenance only: freshness is judged on the rendered pages (check()).
         # A file the board module or the bus IMPORTS goes in the board's SOURCES.
         s = [self.bus_rel, "tools/handoff/publish.py",
-             f"tools/handoff/boards/{self.id}.py", self.answers_rel]
+             f"tools/handoff/boards/{self.id}.py", self.answers_rel, self.reviews_rel]
         if self.fab:
             s.append(self.fab_rel)
         s += [self.get(a) for a in ("PINOUT", "DIAGRAM", "FLOORPLAN") if self.get(a)]
@@ -230,11 +231,20 @@ class Board:
             "(`tools/fp/fp.py`), which downloads vendor CAD data from the "
             "internet into your own `lib/`. The vendor documents it is "
             "verified against are in `handoff/datasheets/`.",
-            "Your ONLY channel back to the concept session is "
-            "`../QUESTIONS.md`. A missing fact, a contradiction or a rule "
-            "that blocks the work is a question there -- quoting the "
-            "revision and page hashes in `MANIFEST.json` you work from -- "
-            "never a value you choose yourself.",
+            "Your ONLY channels back to the concept session are "
+            "`../QUESTIONS.md` and `../REVIEW.md`. A missing fact, a "
+            "contradiction or a rule that blocks the work is a question in "
+            "the first -- quoting the revision and page hashes in "
+            "`MANIFEST.json` you work from -- never a value you choose "
+            "yourself.",
+            "A schematic or PCB change is finished when it PASSES REVIEW, "
+            "not when its own gates pass: request the review in "
+            "`../REVIEW.md` (format at its top) and ring concept, or tell "
+            "the user with the relay off. The verdict and the findings come "
+            "back in `15_reviews.md`: PASS -- go on; CHANGES -- fix every "
+            "must-fix finding, or dispute it in `../REVIEW.md` with your "
+            "reason and its evidence, then request again. Do not start the "
+            "next change before the verdict.",
             "Do NOT 'fix' the deliberate items listed in `04_deliberate.md`.",
             "Connectors that leave this board belong on ONE dedicated "
             "connectors sheet, not scattered across functional sheets. "
@@ -255,6 +265,9 @@ class Board:
         n_ph = sum(1 for c in comps if c[3] != "set")
         second = ("**`07_answers.md`** — the concept session's answers to "
                   "your `QUESTIONS.md`. Read, act, then curate your file.")
+        third = ("**`15_reviews.md`** — the reviewers' verdicts and findings "
+                 "on the changes you asked to have reviewed in `../REVIEW.md`. "
+                 "Fix or dispute each open finding before anything new.")
         then = (["**`08_pin_accounting.md`** — every pin, classified and "
                  "reconciled to a total. Anything it marks OPEN or UNKNOWN "
                  "is a hole the concept session owes you: leave it "
@@ -286,11 +299,12 @@ class Board:
              "| path | who writes |", "|---|---|",
              "| `handoff/` | concept session — **read-only to you** |",
              "| `../QUESTIONS.md` | **you** — concept reads it |",
+             "| `../REVIEW.md` | **you** — your review requests and your replies to findings; concept reads it |",
              f"| `../` (the {self.board} KiCad files, `lib/`, plans) | **you**, entirely |",
-             "", "## The two files to open first, every session", "",
+             "", "## The three files to open first, every session", "",
              "1. **`CHANGELOG.md`** — newest first. The handoff moves under "
              "you and this is the only channel that says so.",
-             "2. " + second, "", "Then:", ""]
+             "2. " + second, "3. " + third, "", "Then:", ""]
         L += [f"- {x}" for x in then]
         L += ["", "## Rules", ""]
         L += [f"{i + 1}. {r}" for i, r in enumerate(self.rules())]
@@ -409,6 +423,17 @@ class Board:
         return ("# Answers\n\nNothing answered yet. Concept writes here; the "
                 "board session reads and then curates its own "
                 "`QUESTIONS.md`.\n")
+
+    def reviews_md(self):
+        """Concept-owned review verdicts and findings (the `review-board`
+        skill). The board session replies in its own REVIEW.md, never here."""
+        p = os.path.join(ROOT, self.reviews_rel)
+        if os.path.exists(p) and open(p).read().strip():
+            return open(p).read()
+        return ("# Reviews\n\nNo review yet. When a schematic or PCB change is "
+                "done and its own gates pass, request one in `../REVIEW.md` "
+                "(format at its top); the verdict and the findings appear "
+                "here.\n")
 
     # -- 14 ----------------------------------------------------------------
     def fab_tables(self):
@@ -997,6 +1022,7 @@ class Board:
                                        "Nothing open is recorded. If something "
                                        "you need is undecided, ask."),
             "07_answers.md": self.answers_md(),
+            "15_reviews.md": self.reviews_md(),
             "09_connectors.md": self.connectors_md(),
             "10_layout.md": self.layout_md(),
         }

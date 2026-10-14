@@ -42,13 +42,14 @@ REMOTE = "template"
 BRANCH = "main"
 DATA = ("design/", "history/", "reference/", "studies/baselines/", "studies/reports/",
         "studies/designpoint.py", "studies/components_", "studies/s0", "studies/s1", "studies/s2",
-        "tools/diagrams/", "tools/handoff/boards/", "tools/handoff/answers/", "tools/handoff/fabs/",
+        "tools/diagrams/", "tools/handoff/boards/", "tools/handoff/answers/", "tools/handoff/reviews/",
+        "tools/handoff/fabs/",
         "kicad_project/project.json", "kicad_project/relay.json", ".gitignore", "LICENSE")
 DATA_KEEP = ("tools/diagrams/sheet.py", "tools/diagrams/check_diagrams.py",
              "tools/diagrams/test_diagrams.py", "tools/handoff/fabs/_blank.py")
 FILLED = ("CLAUDE.md", "README.md", "studies/README.md", "design/DIAGRAMS.md")
 MECHANISM_DIRS = ("kicad_project/tools/", "kicad_project/.claude/", ".claude/", "tools/handoff/",
-                  "tools/parts/", "tools/setup/", "bin/")
+                  "tools/parts/", "tools/setup/", "tools/review/", "bin/")
 NOT_MECHANISM = ("kicad_project/.claude/konnect", "kicad_project/.claude/agents/",
                  "kicad_project/.claude/skills/kicad-")   # Konnect's generated files
 

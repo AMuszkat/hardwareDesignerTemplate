@@ -180,9 +180,14 @@ designators*. KiCad's own DNP / in_bom flags are not set by any Konnect
 call; they stay a task for the user in eeschema, and a redraw does not lose
 ones already set (check `(dnp yes)` counts before and after).
 
-## 5. Stop
+## 5. Stop for review
 
-The schematic stops for the user's review, once, with `check`, both
-`parity` runs and ERC clean — the PDF beside it. A handoff-parity difference
+With `check`, both `parity` runs and ERC clean, the schematic is requested for
+review: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — schematic: <title>`; relay off: tell the user that line). Scope: the sheets this change touched ("all"
+for a first drawing or a redraw); Gates: each run's last line. Then stop — the
+concept session's reviewer checks a frozen copy against the handoff and the
+datasheets, and the verdict comes back in `handoff/15_reviews.md`. CHANGES:
+fix or dispute each must-fix finding, run the gates again, request again
+("fixes for RVn"). PASS: the schematic is done; the PCB may use it. A handoff-parity difference
 is never "fixed" by editing the handoff's numbers into agreement with the
 drawing: either the drawing is wrong, or it is a question.

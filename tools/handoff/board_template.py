@@ -150,6 +150,7 @@ RAILS = ()                # power nets beyond GROUND_NETS, drawn as power symbol
 DIAGRAM = None            # e.g. "design/diagrams/{{ID}}_block.svg"   [06_block_diagram.svg]
 FLOORPLAN = None          # e.g. "design/diagrams/{{ID}}_floorplan.svg" [11_floorplan.svg]
 ANSWERS = "tools/handoff/answers/{{ID}}.md"           # [07_answers.md]
+REVIEWS = "tools/handoff/reviews/{{ID}}.md"           # [15_reviews.md] the reviewers' verdicts
 
 # Anything else this handoff is derived from, repo-relative -- a module this
 # file or the bus imports, studies/designpoint.py if a value is read from it.

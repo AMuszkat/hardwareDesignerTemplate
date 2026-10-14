@@ -112,4 +112,4 @@ footprint's own model — name the generated blocks by reference.
   `place.py drc`.
 - "Finished" is the user's word. This skill renders whatever the board file
   holds and does not judge whether the board is done. A routing group still
-  stops for the user's review, and a render does not replace it.
+  stops for its review (`REVIEW.md`), and a render does not replace it.

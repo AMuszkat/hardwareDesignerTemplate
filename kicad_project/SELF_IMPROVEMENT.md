@@ -62,9 +62,9 @@ triggers join it:
 - a gate fired after more than one unit of work had been done → the gate
   moves earlier (one sheet, one group, one symbol at a time).
 
-At every stop for the user's review — a board session: a schematic, a
-placement or routing group; concept: a study's result, a decision, a publish
-— **the report ends with the table, one line per row: *failed first or missing /
+At every stop — a board session: a review request for a schematic, a
+placement or routing group; concept: a study's result, a decision, a publish,
+a review verdict — **the report ends with the table, one line per row: *failed first or missing /
 worked / captured in*.** The user sees the template move and can veto a
 change. A row captured nowhere is reported as such, and the user says where
 it goes.
@@ -108,7 +108,7 @@ takes it back as a merge**, the same way it takes any template update
 the project's remotes); the project's own facts never travel, and no project
 keeps a private copy of a template file.
 
-At each stop for the user's review, the turn's template-owned lessons go as
+At each such stop, the turn's template-owned lessons go as
 one commit, through `kicad_project/tools/template/giveback.py` (its README has
 the details; a board session runs it as `tools/template/giveback.py`):
 

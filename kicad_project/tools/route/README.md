@@ -1,8 +1,9 @@
 # `tools/route` — routing, one reviewed group at a time
 
 **Yours**, like `tools/place` and `tools/fp`. A board is routed in the groups
-`<board>/ROUTING_PLAN.md` lists, and **the user reviews every group before the
-next one starts**. These tools make a group cheap to propose, judge and undo.
+`<board>/ROUTING_PLAN.md` lists, and **every group is reviewed before the
+next one starts** (the board's `REVIEW.md`; the verdict in
+`handoff/15_reviews.md`). These tools make a group cheap to propose, judge and undo.
 The workflow is the `routing` skill.
 
     tools/kpy tools/route/route.py status --board board1 [--nets]

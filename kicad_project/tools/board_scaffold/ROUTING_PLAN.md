@@ -1,7 +1,8 @@
 # Routing plan — {{BOARD}}
 
 Yours. Group by group. **One group is routed, gated and rendered; then it
-STOPS for the user's review. The next group does not start until they say so.**
+STOPS for review (`REVIEW.md`). The next group does not start until the
+verdict in `handoff/15_reviews.md` is PASS.**
 This file is the state: the table at the bottom says where the board is,
 across sessions. Read it first in any routing session.
 
@@ -54,8 +55,9 @@ board, plus `In1.Cu`, `In2.Cu`, … for more):
 5. **Render** (`route.py render`) and write a short report
    (`routing/Rn_REPORT.md`): nets, lengths, vias, every neck-down, every
    deviation, every part moved.
-6. **Stop.** The user reviews in KiCad. A rejection is cheap: `route.py rip Rn`
-   removes exactly that group's copper.
+6. **Stop for review**: request it in `REVIEW.md` and ring concept. A CHANGES
+   verdict is cheap: fix and request again, or `route.py rip Rn` removes
+   exactly that group's copper.
 
 **Moving parts:** if a group cannot be routed as placed, say so and propose the
 smallest move that serves a rule; whether that needs the user's go first is

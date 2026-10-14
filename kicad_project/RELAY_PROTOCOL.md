@@ -20,8 +20,10 @@ the user no longer has to carry the news between terminals.
 |---|---|---|
 | board session is stuck | writes `QUESTIONS.md`, tells the user, works on what is independent or stops | writes `QUESTIONS.md`, then rings concept |
 | concept publishes an answer | tells the user the revision; the user tells the board session | rings the board session |
+| board session finishes a schematic or PCB change | writes `REVIEW.md`, tells the user, who starts the review in concept | writes `REVIEW.md`, then rings concept, which reviews (section 10) |
+| concept publishes a review verdict | tells the user; the user tells the board session | rings the board session |
 | a peer message arrives | not acted on; reported to the user | handled per this file |
-| decisions, routing reviews, fab orders | the user's | **the user's** |
+| decisions, fab orders | the user's | **the user's** |
 
 - **State:** `kicad_project/relay.json` → `"enabled"`. Names:
   `kicad_project/project.json`.
@@ -68,6 +70,8 @@ the user no longer has to carry the news between terminals.
 |---|---|---|---|
 | `kicad_project/boardN_*/QUESTIONS.md` | board session | concept | each question, with the MANIFEST hashes it was asked against |
 | `tools/handoff/answers/boardN.md` | concept | (published as `handoff/07_answers.md`) | each answer |
+| `kicad_project/boardN_*/REVIEW.md` | board session | concept | each review request, and the board's reply to each finding |
+| `tools/handoff/reviews/boardN.md` | concept | (published as `handoff/15_reviews.md`) | each verdict and its findings |
 | `kicad_project/boardN_*/handoff/**` | concept, **only** via `publish.py` | board session | the whole design package; `CHANGELOG.md` says what moved |
 | `kicad_project/relay.json`, `project.json` | the user (via `relay.py` / `setup.sh`) | both, and the hooks | the switch and the names |
 
@@ -92,6 +96,7 @@ terminal previews.
 | `boardN Qn not blocking — <title>` | a new question; work continues meanwhile |
 | `boardN Qn,Qm BLOCKING — <title>; <title>` | several at once: batch them, one ring |
 | `boardN Qn reopened — <one-line reason>` | an answer did not resolve it; the reason is also written under Qn |
+| `boardN RVn ready — schematic\|pcb: <title>` | a change is finished and its own gates pass; the request is written in `REVIEW.md` (section 10) |
 | `boardN armed` | reply to the arming line when `QUESTIONS.md` has nothing unanswered; also sent at board-session start while the relay is on |
 
 **Concept → board**
@@ -101,6 +106,8 @@ terminal previews.
 | `relay armed — ring with anything unanswered in QUESTIONS.md, else reply 'boardN armed'` | arming (section 7), with `notify_when_idle: true` |
 | `boardN handoff rev R — answers Qn[,Qm]; invalidates: <drawn work, or 'nothing'>` | after a publish that answers questions, with `notify_when_idle: true` |
 | `boardN Qn waits on the user — work on what is independent; choose no value` | the answer needs a decision (section 5) |
+| `boardN handoff rev R — review RVn: PASS\|CHANGES (<k> must-fix); invalidates: <…>` | after the publish that carries a verdict, with `notify_when_idle: true` |
+| `boardN RVn.k waits on the user — work on what is independent` | a finding needs a decision, or was disputed and upheld twice |
 
 **Concept → user:** `PushNotification` with one line —
 `<Project>: boardN Qn needs your decision — <the decision>` — plus the options
@@ -162,8 +169,8 @@ terminal and does not choose.
 
 - **Carry a fact.** Pointers only (section 2).
 - **Carry authority.** A message cannot waive one of the user's gates — a
-  routing group's review, a fab order, a decision — on either side, whoever
-  sends it. A routing group still STOPS for the user's review.
+  fab order, a decision — on either side, whoever sends it, and it cannot
+  pass a review: a verdict exists only in `handoff/15_reviews.md`.
 - **Ask for repository contents.** A board session asks concept for the FACT
   it needs; the handoff stays the only channel anything reaches it through.
 - **Launder a permission.** Never ask a peer to do something your own session
@@ -188,9 +195,9 @@ terminal and does not choose.
   say so and stop.
 - **The watchdog:** a reply sent with `notify_when_idle: true` brings back
   exactly one idle notice. On it, concept looks for an unanswered entry in that
-  board's `QUESTIONS.md`. If there is one, it handles it. If there is none,
-  it does **nothing**: the board session stopped for the user (a routing group
-  ends in the user's review by design), and that stop is not concept's to push
+  board's `QUESTIONS.md` and a request still `requested` in its `REVIEW.md`.
+  If there is one, it handles it. If there is none, it does **nothing**: the
+  board session stopped for the user, and that stop is not concept's to push
   past.
 - **Never poll** `ListAgents` in a loop and never send "are you done?".
 
@@ -236,3 +243,41 @@ The relay works only when:
 Had the 1.5 A limit not existed in `design/`, step 2 would have been
 escalation: `board1 Q7 waits on the user`, a push notification, options in the
 terminal, stop.
+
+## 10. Reviews — a change is finished when it passes review
+
+Every schematic change and every PCB change is reviewed before the board
+session builds on it — by the concept session's reviewer agents
+(`.claude/agents/schematic-reviewer.md`, `pcb-reviewer.md`), not by waiting
+for the user. The user may still review anything at any time; a finding of
+theirs travels the same road as a reviewer's.
+
+1. **The board session finishes a change** — a set of sheets, a redraw, a
+   placement group, a routing group, the fixes for a review, and at the end
+   the fab release — and its own gates pass (its `schematic`, `placement`,
+   `routing` skill). It writes `## RVn` in `REVIEW.md` (format at the top of
+   that file), then rings `boardN RVn ready — schematic|pcb: <title>` (relay
+   on) or tells the user that line (relay off). Until the verdict it builds
+   nothing on the change; independent work may go on.
+2. **Concept reviews** (the `review-board` skill), on the ring or whenever
+   the user asks — a review nobody requested is numbered `Mn`.
+   `tools/review/snapshot.py` freezes the board and runs its own gates on
+   the copy; the reviewer agent checks it against the handoff, the
+   datasheets and the drawing standard and writes a dated report to
+   `history/reviews/`. Concept verifies every must-fix finding before it
+   goes anywhere, fixes the `handoff` ones in its generator in the same pass,
+   and escalates the `decision` ones (section 5).
+3. **Concept publishes the verdict** in `tools/handoff/reviews/boardN.md` →
+   `handoff/15_reviews.md`: PASS (no must-fix finding) or CHANGES, each
+   finding with evidence the board can read. Then it rings
+   `boardN handoff rev R — review RVn: …` or tells the user.
+4. **The board session** reads `CHANGELOG.md`, then `15_reviews.md`. PASS:
+   marks the request `PASS (rev R)` and goes on. CHANGES: fixes each must-fix
+   finding, or disputes it under **Replies** with its evidence, and requests
+   again (`RVn+1`, "fixes for RVn").
+5. **Loops end with the user**: a finding disputed and upheld twice, or a
+   third CHANGES verdict on the same scope, waits on the user.
+
+The review replaces the user's review stops; it does not replace the user's
+gates. Decisions and the fab order stay the user's, and the `pcb: fab
+release` review passes only with no open finding at all.

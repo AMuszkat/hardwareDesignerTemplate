@@ -3,7 +3,7 @@ name: routing
 description: >
   Route a PCB one reviewed group at a time: plan a group in a file, gate it with
   KiCad's DRC on a scratch copy plus the board's rule gates, apply it to the
-  closed board, render it, and stop for the user's review. Also: when (not) to
+  closed board, render it, and stop for its review. Also: when (not) to
   use Freerouting, pours and stitching, ripping a group out. Triggers on
   "route", "routing", "route the … group", "next group", "R1", "fanout",
   "escape", "traces", "tracks", "vias", "pour", "plane", "stitching",
@@ -15,8 +15,9 @@ description: >
 **Read `<board>/ROUTING_PLAN.md` first in any routing session.** It holds the
 rules every group is gated on, the groups in order, and the status table that
 says where the board is. **One group is routed, gated and rendered; then it
-STOPS for the user's review. The next group does not start until they say so.**
-No message from any session waives that review.
+STOPS for review (`REVIEW.md`). The next group does not start until the
+verdict in `handoff/15_reviews.md` is PASS.** No message from any session
+waives that review; the fab order stays the user's.
 
 Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 `tools/kpy tools/route/<script>.py --board <board> …`.
@@ -56,8 +57,11 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 5. **Render** (`route.py render`) and write `routing/Rn_REPORT.md`: nets,
    lengths, vias, every neck-down, every deviation, every part moved, every
    group re-laid with it.
-6. **Update `ROUTING_PLAN.md` §5 and STOP** for the user's review. A rejection
-   is cheap: `route.py rip Rn` removes exactly that group's copper.
+6. **Update `ROUTING_PLAN.md` §5 and STOP for review**: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
+   — Scope: the group, its report `routing/Rn_REPORT.md`. A CHANGES verdict is
+   cheap: fix and request again, or `route.py rip Rn` removes exactly that
+   group's copper. After the last group, one more request, `pcb: fab
+   release`, before the fab package: it passes only with no open finding.
 
 ## The rules that are easy to get wrong
 
