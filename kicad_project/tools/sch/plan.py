@@ -9,7 +9,9 @@ one terminator. The small parts (at most four pins) are grouped by function
 into blocks drawn with wires inside: a decoupling bank per rail (caps between
 a rail wire and a ground wire), a pull bank per rail (resistors hanging from
 one rail wire, each ending in its signal's label), a series stack, and a
-ladder for anything else (a crystal with its load caps, a filter). A block
+ladder for anything else (a crystal with its load caps, a filter). A bank or
+pull block holds one role (decoupling, pull-ups, ESD, buttons, headers), so
+its section's title says what is in it. A block
 sits beside the anchor pins it serves, ordered as they are; banks go below.
 Groups are packed onto the smallest ISO paper that holds them.
 
@@ -892,6 +894,28 @@ def clean(blk):
 
 # == a sheet =================================================================
 
+def role(kind, p):
+    """What a small part in a bank or a pull block is for, so that a section
+    holds one function and its title says which: a button or an ESD diode to
+    ground is not a pull-down, a header between two rails is not decoupling.
+    From the refdes prefix, and the symbol for a diode."""
+    pre = re.match(r"[A-Za-z]*", p.ref).group(0).upper()
+    lib = p.lib_id.upper()
+    if pre in ("SW", "S", "BTN", "KEY"):
+        return "buttons"
+    if pre in ("J", "JP", "P", "CN"):
+        return "headers"
+    if pre in ("D", "TVS", "LED"):
+        if pre == "LED" or "LED" in lib:
+            return "LEDs"
+        if pre == "TVS" or any(t in lib for t in ("TVS", "ESD", "POWER_PROTECTION")):
+            return "ESD protection"
+        return "diodes"
+    if kind == "bank":
+        return "decoupling" if pre in ("C", "L", "FB") else "other parts"
+    return {"R": "pull-ups and pull-downs", "C": "capacitors"}.get(pre, "other parts")
+
+
 def plan_sheet(ctx, name):
     src = ctx.src
     units = [(p, u) for p in src.parts.values() for u, s in p.units.items() if s == name]
@@ -957,17 +981,19 @@ def plan_sheet(ctx, name):
             rails = sorted({n for n in ns if n and ctx.is_rail(n)}, key=lambda n: (ctx.ground(n), nat(n)))
             if len(ns) == 2 and len(rails) == 2:
                 k, s, hint = home_of([rails[0]])
-                merged[("bank", k, s, rails[0])].append((nat(p.ref), p))
-                bank_hint[("bank", k, s, rails[0])] = hint
+                key_ = ("bank", k, s, rails[0], role("bank", p))
+                merged[key_].append((nat(p.ref), p))
+                bank_hint[key_] = hint
                 continue
             if len(ns) == 2 and len(rails) == 1 and len(nets) == 1 and re.match(r"(L|FB)\d", p.ref):
                 k, s, hint = home_of([rails[0]])
-                merged[("bank", k, s, rails[0])].append(([""], p))
-                bank_hint[("bank", k, s, rails[0])] = hint
+                key_ = ("bank", k, s, rails[0], role("bank", p))
+                merged[key_].append(([""], p))
+                bank_hint[key_] = hint
                 continue
             if len(ns) == 2 and len(rails) == 1 and len(nets) == 1:
                 k, s, hint = home_of(nets, rails)
-                merged[("pull", k, s, rails[0])].append((hint, p))
+                merged[("pull", k, s, rails[0], role("pull", p))].append((hint, p))
                 continue
             if len(ns) == 2 and not rails and len(nets) == 2:
                 k, s, hint = home_of(nets)
@@ -987,37 +1013,41 @@ def plan_sheet(ctx, name):
     blocks = []
     for key_, items in merged.items():
         kind, k, s = key_[0], key_[1], key_[2]
+        role_ = key_[4] if kind in ("bank", "pull") else None
+        if kind == "bank" and role_ != "decoupling":
+            role_ = f"{role_} on {key_[3]}"        # ESD on a rail is not the ESD on its signals
         items.sort(key=lambda t: (t[0], nat(getattr(t[1], "ref", ""))))
         if kind == "cluster":
             for hint, b in items:
-                blocks.append((k, hint, b, kind))
+                blocks.append((k, hint, b, kind, role_))
             continue
         ps = [p for _, p in items]
         hint = sum(h for h, _ in items) / len(items) if kind != "bank" else bank_hint[key_]
         if kind == "series":
-            blocks.append((k, hint, stack(ctx, ps, hint), kind))
+            blocks.append((k, hint, stack(ctx, ps, hint), kind, role_))
             continue
         if kind == "misc":
             for h_, p_ in items:
-                blocks.append((k, h_, stack(ctx, [p_], h_), kind))
+                blocks.append((k, h_, stack(ctx, [p_], h_), kind, role_))
             continue
         for i in range(0, len(ps), BANK_MAX):
             chunk = ps[i:i + BANK_MAX]
             b = ladder(ctx, chunk, hint, kind)
             if not clean(b):
                 b = stack(ctx, chunk, hint)
-            blocks.append((k, hint, b, kind))
+            blocks.append((k, hint, b, kind, role_))
 
-    for k, hint, b, kind in blocks:
+    for k, hint, b, kind, role_ in blocks:
         if k is None:
             loose.append(b)
         else:
-            homes[k]["sats"].append((kind, hint, b))
+            homes[k]["sats"].append(((kind, role_), hint, b))
 
     # every anchor is a section of its own; its satellites are one section
-    # per kind beside it, sized to its height, so the sheet reads as titled
-    # blocks joined by labels and rails
+    # per kind and role beside it, sized to its height, so the sheet reads as
+    # titled blocks joined by labels and rails
     order = sorted(homes, key=lambda k: (-src.parts[k[0]].pin_count(k[1]), nat(k[0]), k[1]))
+    kinds = ("bank", "pull", "series", "cluster", "misc")
     for (ref, u) in order:
         h = homes[(ref, u)]
         part = src.parts[ref]
@@ -1025,13 +1055,11 @@ def plan_sheet(ctx, name):
         a = section(f"{ref}{unit} — {part.value}", [h["block"]])
         ab = a.box()
         by_kind = defaultdict(list)
-        for kind, hint, b in h["sats"]:
-            by_kind[kind].append((hint, b))
+        for kr, hint, b in h["sats"]:
+            by_kind[kr].append((hint, b))
         home = [a]
-        for kind in ("bank", "pull", "series", "cluster", "misc"):
-            items = sorted(by_kind.get(kind, []), key=lambda t: t[0])
-            if not items:
-                continue
+        for kind, role_ in sorted(by_kind, key=lambda kr: (kinds.index(kr[0]), kr[1] or "")):
+            items = sorted(by_kind[(kind, role_)], key=lambda t: t[0])
             if kind == "cluster":
                 small_, big_ = [b for _, b in items if len(b.els) <= 2], [b for _, b in items if len(b.els) > 2]
                 for b in big_:
@@ -1044,11 +1072,11 @@ def plan_sheet(ctx, name):
                     home.append(balanced(f"{ref}: {t}", small_, ab[3] - ab[1]))
                 continue
             bs = [b for _, b in items]
-            if kind == "bank":
+            if kind == "bank" and role_ == "decoupling":
                 what = "output filters and decoupling" if any(re.match(r"(L|FB)\d", e.ref or "")
                                                                for b in bs for e in b.els) else "decoupling"
-            elif kind == "pull":
-                what = "pull-ups and pull-downs"
+            elif kind in ("bank", "pull"):
+                what = role_
             elif kind == "series":
                 what = "series parts"
             else:
@@ -1059,9 +1087,15 @@ def plan_sheet(ctx, name):
         groups.append(home)
     if loose:
         # a homeless cluster led by an IC-like part (a small regulator, a
-        # transistor) is its own section; the rest share one
+        # transistor) is its own section, and so is a lone connector (an
+        # interface, titled like an anchor); the rest share one
         rest = []
         for b in loose:
+            parts_ = [e for e in b.els if e.ref]
+            if len(parts_) == 1 and re.match(r"(J|P|CN)[A-Z_]*\d", parts_[0].ref):
+                e = parts_[0]
+                groups.append([section(f"{e.ref} — {e.value}" if e.value else e.ref, [b])])
+                continue
             lead = {e.ref for e in b.els if e.ref and not re.match(r"(R|C|L|FB|TP|H|FID|J)\d", e.ref)}
             if len(lead) == 1 and len(b.els) > 1:
                 e = next(e for e in b.els if e.ref in lead)

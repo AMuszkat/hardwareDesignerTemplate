@@ -45,7 +45,7 @@ a number.
 | `sheet-pin` | every sheet pin on the root is connected | — |
 | `stitch` | two pieces of one net closer than 12.7 mm are one wire, not two labels | 12.7 mm |
 | `section` | below the root, every symbol, wire and label sits inside a titled section frame (a KiCad text box, or a rectangle with a text in its top-left corner); frames never overlap; no section is empty | — |
-| `section-title` | every frame has a title | — |
+| `section-title` | every frame has a title, and no two frames on a sheet share one | — |
 | `section-wire` | no wire crosses a frame: sections connect through labels and power symbols | — |
 | `home` | a small part's section stands with the sections of an IC on its nets, as one cluster no more than 25.4 mm apart (a sheet without sections: the part itself within 101.6 mm of the IC) | 25.4 / 101.6 mm |
 | `pins-side` | at most 40 pin rows on one side of one unit | 40 |
@@ -86,8 +86,15 @@ Per sheet:
   decoupling` (or `output filters and decoupling` when an inductor feeds a
   rail), `U1 pull-ups and pull-downs`, `U1 series parts`, `U1 test points`,
   a wired cluster by its lead part (`U1: Y1 24MHz`) or its parts — sized to
-  stand beside the anchor. Parts no anchor on the sheet claims are `Other
-  parts` (a cluster led by a regulator or transistor gets its own); the
+  stand beside the anchor. A bank or pull block holds one *role*, read from
+  the refdes prefix (and the symbol, for a diode), so its title does not lie:
+  a button or an ESD diode from a signal to ground is drawn like a pull-down
+  but titled `U1 buttons` / `U1 ESD protection`, a capacitor to ground `U1
+  capacitors`, and a two-pin part between two rails that is not a capacitor
+  or an inductor says its rail — `J1 ESD protection on +5V`, `J4 headers on
+  +5V` (`role()` in `plan.py`). Parts no anchor on the sheet claims are
+  `Other parts` (a cluster led by a regulator or transistor gets its own,
+  and so does a lone connector, titled like an anchor); the
   PWR_FLAGs are `Power sources`. Sections are packed bottom-left, the
   biggest IC first and each satellite next to a section of its own IC, onto
   the smallest ISO paper (A4 up) that holds them.

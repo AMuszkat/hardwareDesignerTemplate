@@ -10,7 +10,7 @@ A finding is (rule, sheet, key, message). `key` is what a waiver in
 import itertools
 import math
 import tempfile
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 import model
 from model import ISO, FRAME, TITLE_BLOCK, GROUND_RE
@@ -41,7 +41,7 @@ RULES = {
     "pins-side": f"at most {PINS_PER_SIDE} pin rows on one side of one unit",
     "field-far": f"a symbol's Reference and Value sit within {FIELD_NEAR} mm of its body",
     "section": "below the root, everything sits inside one titled section frame; frames never overlap",
-    "section-title": "every section frame has a title in its top-left corner",
+    "section-title": "every section frame has a title in its top-left corner, and no two on a sheet share one",
     "section-wire": "no wire crosses a section frame: sections connect through labels and power symbols",
 }
 
@@ -435,6 +435,9 @@ def run(design, waivers=(), with_svg=True):
                 if not t.strip():
                     find("section-title", sh, f"{b[0]:.1f},{b[1]:.1f}",
                          f"the {kind} at ({b[0]:.1f}, {b[1]:.1f}) has no title")
+            for t, n in Counter(t.strip() for t, _, _, _ in secs if t.strip()).items():
+                if n > 1:
+                    find("section-title", sh, t, f"{n} sections are titled '{t}': a title names one block")
             for i, j in pairs_overlapping(frames):
                 find("section", sh, f"{secs[i][0]}|{secs[j][0]}",
                      f"sections '{secs[i][0]}' and '{secs[j][0]}' overlap")
