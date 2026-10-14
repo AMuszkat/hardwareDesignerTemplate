@@ -177,6 +177,13 @@ given as data). Two uses:
          "pwr_flags": ["+5V", "GND"],
          "waive": []}
 
+  A small part goes to the anchor with the most pins on its nets, and a tie
+  goes to the first anchor by refdes, so on a sheet where two connectors share
+  a rail or a bus the decoupling the handoff puts "at J4" can land beside J1.
+  `"home": "J4"` on that part's entry (the handoff's own words decide it)
+  puts its block with J4's sections; `plan` stops if J4 has no pin on the
+  part's nets. `fields` adds MPN and the like; `dnp: true` marks it DNP.
+
 ### The netlist format (`--netlist`)
 
 For a board drawn from scratch, the board session writes its schematic as data

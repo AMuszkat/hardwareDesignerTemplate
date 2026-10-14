@@ -452,6 +452,13 @@ def dru_block(spec):
     return "\n".join(lines) + "\n"
 
 
+def _unplaced(text):
+    """The block's first line names 14_fab.md by its repo path; a copy of the board
+    (a review snapshot) holds the same page elsewhere. The sha256 beside it says
+    whether it is the same page, so the path is not compared."""
+    return re.sub(r"(generated from )\S+( \(sha256)", r"\1<page>\2", text)
+
+
 def dru_text(existing, spec):
     block = dru_block(spec)
     if existing is None or not existing.strip():
@@ -758,7 +765,7 @@ def compare(spec, board_dir):
 
     # custom rules
     have_dru = dru.read_text() if dru.exists() else None
-    if have_dru is None or dru_block(spec) not in have_dru:
+    if have_dru is None or _unplaced(dru_block(spec)) not in _unplaced(have_dru):
         diffs.append((dru.name, "generated block current", "missing or stale", APPLY))
     for c in spec["classes"]:
         if c["area_ref"] and b.FindFootprintByReference(c["area_ref"]) is None:

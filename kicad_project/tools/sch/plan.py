@@ -88,9 +88,10 @@ def uid():
 # == the source ==============================================================
 
 class Part:
-    def __init__(self, ref, lib_id, lib, value, footprint, fields, units, dnp=False):
+    def __init__(self, ref, lib_id, lib, value, footprint, fields, units, dnp=False, home=None):
         self.ref, self.lib_id, self.lib, self.value = ref, lib_id, lib, value
         self.footprint, self.fields, self.units, self.dnp = footprint, fields, units, dnp
+        self.home = home           # the anchor a small part serves, when the board names it
 
     def pin_count(self, unit):
         return len({p.number for p in self.lib.unit_pins(unit)})
@@ -205,7 +206,7 @@ class Source:
             src.lib_nodes[p["lib_id"]], src.libs[p["lib_id"]] = node, lib
             src.parts[ref] = Part(ref, p["lib_id"], lib, p.get("value", ""), p.get("footprint", ""),
                                   p.get("fields", {}), {int(u): s for u, s in p["units"].items()},
-                                  p.get("dnp", False))
+                                  p.get("dnp", False), p.get("home"))
         src.nets = {n: [tuple(x) for x in nodes] for n, nodes in j["nets"].items()}
         src.rails = set(j.get("rails", []))
         src.nc = {tuple(x) for x in j.get("nc", [])}
@@ -253,7 +254,7 @@ class Source:
             units = {int(u): s for u, s in sym.get("units", {}).items()} or {1: sym["sheet"]}
             value = sym.get("value") or re.split(r",| -- |;", hp["value"])[0].strip()
             src.parts[ref] = Part(ref, sym["lib_id"], lib, value, sym.get("footprint", ""),
-                                  dict(sym.get("fields", {})), units, sym.get("dnp", False))
+                                  dict(sym.get("fields", {})), units, sym.get("dnp", False), sym.get("home"))
         src.nets = {n: [tuple(x) for x in nodes if x[0] in src.parts] for n, nodes in nl["nets"].items()}
         src.rails = set(nl.get("rails", []))
         src.nc = {tuple(x) for x in nl.get("nc", []) if x[0] in src.parts}
@@ -930,12 +931,16 @@ def plan_sheet(ctx, name):
         homes[k] = dict(block=blk, sats=[])
         where_all[k] = where
 
-    def home_of(nets, also=()):
+    def home_of(nets, also=(), only=None):
         """The anchor a block serves: most pins on its signal nets, then on
-        its rails (`also`)."""
+        its rails (`also`) -- among the units of `only`, when the board names
+        the part's home (a tie between a big IC and the connector a part sits
+        at goes to the IC otherwise)."""
         score = Counter()
         side = defaultdict(list)
         for k, w in where_all.items():
+            if only and k[0] != only:
+                continue
             for n in nets:
                 for s, along in w.get(n, []):
                     score[k] += 10
@@ -943,6 +948,9 @@ def plan_sheet(ctx, name):
             if score.get(k):
                 score[k] += sum(len(w.get(n, [])) for n in also)
         score = Counter({k: v for k, v in score.items() if v > 0})
+        if not score and only:
+            raise SystemExit(f"sch: schematic.json homes a part at {only}, which has no pin on "
+                             f"{', '.join(sorted(nets))} on sheet {name}")
         if not score:
             return None, None, 0.0
         k = max(score, key=lambda k: (score[k], -anchors.index(next(a for a in anchors if (a[0].ref, a[1]) == k))))
@@ -971,6 +979,7 @@ def plan_sheet(ctx, name):
     loose = []
     for cl in clusters.values():
         nets = set().union(*(sig[p.ref] for p in cl))
+        only = next((p.home for p in cl if p.home), None)
         rails_of = {ctx.net(p.ref, pin.number) for p in cl for pin in p.lib.unit_pins(next(iter(p.units)))}
         rails_of = {n for n in rails_of if n and ctx.is_rail(n)}
         if len(cl) == 1:
@@ -980,30 +989,30 @@ def plan_sheet(ctx, name):
             ns = list(dict.fromkeys(ns))
             rails = sorted({n for n in ns if n and ctx.is_rail(n)}, key=lambda n: (ctx.ground(n), nat(n)))
             if len(ns) == 2 and len(rails) == 2:
-                k, s, hint = home_of([rails[0]])
+                k, s, hint = home_of([rails[0]], only=only)
                 key_ = ("bank", k, s, rails[0], role("bank", p))
                 merged[key_].append((nat(p.ref), p))
                 bank_hint[key_] = hint
                 continue
             if len(ns) == 2 and len(rails) == 1 and len(nets) == 1 and re.match(r"(L|FB)\d", p.ref):
-                k, s, hint = home_of([rails[0]])
+                k, s, hint = home_of([rails[0]], only=only)
                 key_ = ("bank", k, s, rails[0], role("bank", p))
                 merged[key_].append(([""], p))
                 bank_hint[key_] = hint
                 continue
             if len(ns) == 2 and len(rails) == 1 and len(nets) == 1:
-                k, s, hint = home_of(nets, rails)
+                k, s, hint = home_of(nets, rails, only=only)
                 merged[("pull", k, s, rails[0], role("pull", p))].append((hint, p))
                 continue
             if len(ns) == 2 and not rails and len(nets) == 2:
-                k, s, hint = home_of(nets)
+                k, s, hint = home_of(nets, only=only)
                 merged[("series", k, s)].append((hint, p))
                 continue
             if len(ns) <= 2:
-                k, s, hint = home_of(nets, rails_of)       # a test point, a single pin to a rail
+                k, s, hint = home_of(nets, rails_of, only=only)       # a test point, a single pin to a rail
                 merged[("misc", k, s)].append((hint, p))
                 continue
-        k, s, hint = home_of(nets, rails_of)
+        k, s, hint = home_of(nets, rails_of, only=only)
         b = ladder(ctx, cl, hint)
         if not clean(b):
             b = stack(ctx, cl, hint)
@@ -1113,8 +1122,11 @@ def plan_sheet(ctx, name):
 def cluster_title(home, blk):
     """A wired cluster is named by the part that is not an R, C or L (a
     crystal, a diode, a transistor) with its value's first word, else by its
-    parts."""
+    parts. A lone connector is an interface of its own, titled like an anchor."""
     refs = sorted({e.ref for e in blk.els if e.ref}, key=nat)
+    if len(refs) == 1 and re.match(r"(J|P|CN)[A-Z_]*\d", refs[0]):
+        e = next(e for e in blk.els if e.ref)
+        return f"{e.ref} — {e.value}" if e.value else e.ref
     lead = [e for e in blk.els if e.ref and not re.match(r"(R|C|L|FB)\d", e.ref)]
     if len({e.ref for e in lead}) == 1:
         e = lead[0]
