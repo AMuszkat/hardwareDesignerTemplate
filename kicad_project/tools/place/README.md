@@ -50,8 +50,8 @@ board):
 | `shared_pad` | `[{refs: [A, B], net, source}]`: two stock parts drawn as one selector, their `net` pads on one point and the parts at 90° (a 3-pad selector made of two 0402s). That pair skips the courtyard test -- their courtyards overlap by design -- and `check` proves the merge instead: the `net` pads coincide, one side, 90° apart. Everything else (foreign-net pads, holes, silk) is still tested. KiCad's own DRC reports the overlap: exclude it there with the handoff's comment |
 
 A keep-out may carry `"side": "F" | "B" | "both"` (default `F`) and an
-`"allow": [refs]` list for the parts that belong inside it. `routing/gates.json`
-can reuse one by name (`"from_placement"`).
+`"allow": [refs]` list for the parts that belong inside it. The routing guide's
+`keep-out` row names one to keep a class of tracks out of it.
 
 ## `check moves.json`
 

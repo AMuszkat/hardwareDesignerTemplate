@@ -13,7 +13,8 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/route.py render --board board1 [--out DIR]
     tools/kpy tools/route/route.py angles --board board1 [--nets]
     tools/kpy tools/route/route.py edge   --board board1
-    tools/kpy tools/route/route.py gates  --board board1
+    tools/kpy tools/route/route.py audit  --board board1                      # every rule of the guide, on the board
+    tools/kpy tools/route/route.py rules  --board board1                      # what the guide switches on
     tools/kpy tools/route/netgroup.py --board board1 routing/R3_spec.json
     tools/kpy tools/route/decap.py    --board board1 --group R2 --refs C9,C10 --plan routing/R2_decap.json
     tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
@@ -45,28 +46,35 @@ That indirection is the whole point. A hand-written clearance test that uses
 nets'** clearances — a Default track beside a Power pad needs the Power
 clearance. Ask KiCad.
 
-## The rule gates: `<board>/routing/gates.json`
+## The rules: `<board>/general_routing_guide.md`
 
 DRC cannot express some rules a board lives by — a plane layer that must stay
-unbroken, a class that takes no via, a via size allowed only inside one
-footprint's ball field. Those are DATA, transcribed from the handoff into
-`routing/gates.json` (the skeleton comes with every new board). **Every entry
-must carry a `"source"` citing the handoff line it came from** (`14_fab.md`
-Net classes; `10_layout.md` #7) — the loader refuses one without it, because a
-gate nobody can trace is a rule nobody can retire. **A gate left out (empty
-list or null) is simply not run.** Keys starting with `_` are comments.
-`route.py gates` prints what is active.
+unbroken, a class that takes no via, a via linked straight and centred, a
+track that must not cross a pad's corner. Those live in ONE file per board,
+`general_routing_guide.md` (every new board gets the scaffold): prose for the
+eye, and a table — `rule | setting | source` — that `tools/route/guide.py`
+reads. **Every row names the handoff line it came from**, because a rule
+nobody can trace is a rule nobody can retire. **A row left out is simply not
+run.** `route.py rules` prints what is active; a misspelt row name is an error
+listing the names the tools know.
 
-| key | entry | what `check` fails |
+| row | setting | what `check` fails / `audit` reports |
 |---|---|---|
-| `plane_layers` | `{"layer": "In1.Cu", "net": "GND", "source"}` | any track on that layer; a zone there that is not the plane's net |
-| `class_vias` | `{"class", "max_vias": 0, "except": {"NET": 1}, "source"}` | a net of the class with more vias **on the whole board** (the board's plus the plan's) than its cap: `max_vias` for the class (0 = none), `except` per named net |
-| `class_layers` | `{"class", "layers": ["F.Cu"], "except": ["NET"], "source"}` | a track of the class on any other layer |
-| `field_vias` | `{"ref": "U1", "pad", "drill", "on_lattice": true, "widths": [lo, hi], "margin": 0.4, "outside_refused": true, "source"}` | inside the footprint's pad field (pad centres; tracks get `margin` more): a via that is not exactly `pad`/`drill`, or (with `on_lattice`) not on a diagonal centre of the pad grid; a track whose width is outside `[lo, hi]`. Outside the field: a via of exactly that size, unless `outside_refused` is false |
-| `keepouts` | `{"name", "rect": [x0, y0, x1, y1]` or `"from_placement": "<placement.json keep-out name>", "forbid_classes": ["Fast"], "layers": [...]?, "source"}` | a track of a forbidden class touching the rectangle (on `layers`, or any). `rect` is board-relative like `placement.json` |
-| `class_width` | `{"source"}` | a track whose width is not its class's width (outside a field with `widths`) |
-| `edge` | `{"min": 0.5, "source"}` | new copper (tracks, vias, zone outlines) closer than `min` to Edge.Cuts. Use it for a number STRICTER than Board Setup's copper-to-edge — the fab's minimum plus its outline tolerance — since DRC already enforces Board Setup's |
-| `angles` | `{"source"}` | a joint between two track segments that is not 0 or 45°; a right-angle turn whose diagonal is shorter than one track width; an arc. Entries into a pad or a via are free; a tee is a joint, so a branch leaves at 45° |
+| `joints` | `0/45` | a joint between two track segments that is not 0 or 45°; a right-angle turn whose diagonal is shorter than one track width; an arc. Entries into a pad or a via are free; a tee is a joint, so a branch leaves at 45° |
+| `copper to edge` | `0.5 mm` | new copper (tracks, vias, zone outlines) closer than that to Edge.Cuts. A number STRICTER than Board Setup's copper-to-edge — the fab's minimum plus its outline tolerance — since DRC enforces Board Setup's |
+| `via to pad gap` | `0.15 mm` | a via nearer any pad than the gap (its own net's included — DRC never tests that), or linked to its pad other than straight, centre to centre, on the pad's axis (`tools/copper/vialink.py`) |
+| `45-degree via link` | `last resort` / `allowed` / `never` | a straight 45° link is listed as a choice, free, or a site |
+| `copper shape` | `on` | a plan that adds a shape site: corner / wide / offset pad entry, overshoot, bulb, stacked track, wedge, notch, polygon neck, polygon solid into a pour (`tools/copper/shape.py`) |
+| `class width` | `on` | a track whose width is not its class's (outside a via field with `widths`) |
+| `thermals` | `outer: all pads; inner: THT only` | the thermal policy a plan's `"thermals": true` types into every pour |
+| `plane layer` | `In1.Cu: GND` | any track on that layer; a zone there not of the plane's net |
+| `no vias` | `Class (NET: 1)` | a net of the class with more vias on the whole board than its cap (0 for the class, the named exceptions' own) |
+| `class layers` | `Class: F.Cu (except NET)` | a track of the class on any other layer |
+| `keep-out` | `name: Class` | a track of that class touching the `placement.json` keep-out of that name |
+| `via field` | `U1: 0.45/0.15 lattice, widths 0.1016-0.127, margin 0.4` | inside the part's pad field: a via not exactly that size, or off the pad lattice; a track whose width is outside the range. Outside it: a via of exactly that size. The copper tools skip the field |
+| `ground beside` | `Fast: GND within 0.6 mm` | reported by `audit` and `check`: mm of the class's track with ground on 2 / 1 / 0 sides, before → after |
+| `frozen` | `class X, net Y` | copper `viafix.py --push` never moves |
+| `thermal pad` | `U5.5: solid` | one pad's own connection to the pour |
 
 A plan declares its exceptions, each with a reason printed every run and
 reviewed with the group:
@@ -77,10 +85,17 @@ reviewed with the group:
   purpose (a fanout group ends every escape in free board, which DRC reports
   as unconnected ends). Never a way to wave away a real error; a declared type
   that does not occur is reported so it gets deleted.
+- a via that cannot be linked by the rule: `routing/vialink_exceptions.json`
+  (`{"via": [x, y], "why"}`), listed by every audit, never counted.
 
-Two gates are often *also* expressed as `.kicad_dru` rules by `board_setup.py`
-(a no-via class, an area clearance). Then DRC and the gate agree
-independently, and if they ever disagree, something moved.
+Some rows are *also* expressed as `.kicad_dru` rules by `board_setup.py` (a
+no-via class, an area clearance). Then DRC and the guide agree independently,
+and if they ever disagree, something moved.
+
+`route.py audit` runs every active rule on the board as it is — DRC through
+`place.py drc`, joints, edge, shape, via links, ground beside, pour islands —
+and ends `AUDIT PASS` or `AUDIT FAIL (...)`. It is the line a group report
+quotes, before and after.
 
 ## The plan file
 
@@ -95,6 +110,24 @@ independently, and if they ever disagree, something moved.
              "why": "0.5 mm between U2 pad 4 (Power) and R9's GND pad"}]}
 ```
 
+Copper a plan takes away or draws beside tracks (the copper fixers write
+these; a hand plan may too):
+
+```json
+ "rips":     [{"net": "/BUS0", "layer": "B.Cu", "pts": [[11.5, 7.6], [18.6, 7.6]]}],
+ "ripvias":  [{"net": "/BUS0", "at": [11.5, 7.6]}],
+ "polyrips": [{"net": "/BUS1", "layer": "F.Cu", "at": [20.5, 20.5]}],
+ "polys":    [{"net": "/BUS1", "layer": "F.Cu", "pts": [[20.5, 19.5], [21.3, 19.5], [21.3, 20.9], [20.9, 21.3], [20.5, 20.9]]}],
+ "thermals": true
+```
+
+`rips` names a segment by its two ends (either order), `ripvias` a via by its
+centre, `polyrips` a net-tied polygon by its first vertex; a rip that matches
+nothing fails the plan. `polys` are filled, net-tied copper polygons (the
+guide's rule; `tools/copper/poly.py --plan` dry-runs them); `thermals` re-types
+every pour's connection to the guide's policy. The order on apply: rips, then
+polygons, tracks, vias, zones, thermals, refill, save.
+
 A `tracks` entry is a polyline: consecutive points become segments. Net names
 are exactly as KiCad holds them, hierarchical ones included —
 `route.py status --nets` prints every net with its class. A zone's
@@ -108,12 +141,14 @@ default, which strands caps on islands of their own); `pad_connection` is
 saved file and confirms every item is there** before recording the group in
 `<board>/routing/<group>.applied.json`. That manifest holds each item's UUID,
 which is what makes `rip <group>` exact: it deletes that group's copper and
-nothing else, then renames the manifest to `.ripped`.
+nothing else, then renames the manifest to `.ripped`. What the group REMOVED
+(`rips`, `ripvias`, `polyrips`) is not brought back by `rip` — it is in the
+backup `apply` made, and `rip` says so.
 
 `route.py angles` audits the copper already on the board with the same code
 `check` runs on the scratch copy (the short-diagonal test no longer depends on
 the order segments are stored in, so the two agree). It is a **report** unless
-`gates.json` has an `angles` gate: without one it prints what it finds and
+the guide has a `joints` row: without one it prints what it finds and
 exits 0. `apply --force` replaces a group: the previous copy's copper is
 removed first, by its manifest.
 
@@ -124,8 +159,8 @@ A group of signal nets from a JSON spec: legs to pads, points or prelaid copper
 later group's copper kept free as `reserve_*`, an optional `field` (a BGA's pad
 field, shut or opened on inner layers), a `plane` with aprons. It writes a plan;
 `route.py check` judges it like any other. Every option is in the module
-docstring; the layers default to every copper layer that is not a gates.json
-plane, and the edge band to gates.json `edge` (else Board Setup).
+docstring; the layers default to every copper layer that is not a guide
+`plane layer`, and the edge band to the guide's `copper to edge` (else Board Setup).
 
 `maze.py` is a negotiated-congestion router (PathFinder) with 45° moves: A* over
 (cell, layer, heading); obstacles are *static* (foreign copper, pads, zoning),

@@ -6,7 +6,7 @@
     tools/kpy tools/route/netgroup.py --board board1 routing/R3_spec.json --only SPI_CLK,SPI_CS
 
 It writes the spec's "plan" file, which `route.py check` then judges like any
-other plan: KiCad's DRC on a scratch copy and the rule gates in gates.json.
+other plan: KiCad's DRC on a scratch copy and the rules in general_routing_guide.md.
 
 THE SPEC
 
@@ -16,8 +16,8 @@ THE SPEC
    "padclr": 0.2,            # to everything else (the strictest class near)
    "via": [0.6, 0.3], "via_sep": 0.8,
    "layers": ["F.Cu", "B.Cu"],          # default: every copper layer that is not a
-                                        # gates.json plane layer
-   "edge": 0.5,              # default: gates.json "edge", else Board Setup
+                                        # a guide 'plane layer' row
+   "edge": 0.5,              # default: the guide's 'copper to edge', else Board Setup
    "plane": {"zone": "routing/R2_3v3.json", "net": "+3V3", "layer": "In2.Cu", "apron": 1.0},
    "nets": {
      "SPI_CLK": {"src": [134.1, 129.4], "layer": "F.Cu",
@@ -161,8 +161,8 @@ def main():
     maze.CLR, maze.PADCLR, maze.W, maze.VIA_R = float(S.get("clearance", 0.15)), float(S.get("padclr", 0.2)), W, VIA / 2
     B = P.Board(a.board)
     import pcbnew
-    gates_file = Path(a.board) / "routing" / "gates.json"
-    gates = json.loads(gates_file.read_text()) if gates_file.exists() else {}
+    import guide
+    gates = guide.load(a.board)                       # the board's general_routing_guide.md
     planes = {q["layer"] for q in gates.get("plane_layers", []) or []}
     canon = lambda lid: pcbnew.BOARD.GetStandardLayerName(lid)    # a board may rename its layers
     planes = {canon(B.b.GetLayerID(n)) for n in planes}
@@ -357,7 +357,7 @@ def main():
         return zf.get("zones", []) if isinstance(zf, dict) else zf
     if pln and pln["layer"] not in LAYERS:
         sys.exit(f"spec \"plane\": {pln['layer']} is not one of this group's routing layers "
-                 f"({', '.join(LAYERS)}). A gates.json plane layer is left out by default: name "
+                 f"({', '.join(LAYERS)}). A plane layer of the guide is left out by default: name "
                  "it in the spec's \"layers\" if this group really routes on it.")
     if pln:
         zq = [z for z in zone_file(pln["zone"])

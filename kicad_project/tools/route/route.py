@@ -8,14 +8,15 @@
     tools/kpy tools/route/route.py render --board board1 [--out DIR]
     tools/kpy tools/route/route.py angles --board board1 [--nets]
     tools/kpy tools/route/route.py edge   --board board1
-    tools/kpy tools/route/route.py gates  --board board1
+    tools/kpy tools/route/route.py audit  --board board1              # every rule of the guide, on the board as it is
+    tools/kpy tools/route/route.py rules  --board board1              # what the guide's table switches on
 
   status  what is routed and what is open: per net class, per group, and the
           groups already applied (from their manifests).  Read-only.
   check   write the plan into a SCRATCH COPY of the board and judge it with
           KiCad's own DRC (schematic parity on).  Any violation not already in
-          the baseline fails the plan.  Then the rule gates KiCad cannot
-          express, from <board>/routing/gates.json.  Read-only.
+          the baseline fails the plan.  Then every rule of the board's
+          general_routing_guide.md that DRC cannot express.  Read-only.
   apply   check, then write to the real board (KiCad closed, backup first),
           read back, and record every UUID in <board>/routing/<group>.applied.json
           so the group can be ripped out again.
@@ -23,62 +24,39 @@
   render  colour PNGs of the whole board (top, bottom, inner layers).
   angles  audit the copper already on the board: every joint 0 or 45 degrees.
   edge    audit the copper already on the board against the copper-to-edge
-          minimum (gates.json "edge", else Board Setup's copper-to-edge).
-  gates   print the gates gates.json declares, each with its source.
+          minimum (the guide's "copper to edge", else Board Setup's).
+  audit   every rule of the guide on the copper already laid: DRC, angles,
+          edge, copper shape, via links, ground beside, pour islands.  One
+          PASS/FAIL line each; exit 1 on a failure.  The group report quotes it.
+  rules   print the rules the guide's table switches on, each with its source.
 
 THE GATE IS KICAD'S DRC, NOT ARITHMETIC OF MINE.  A hand-written clearance
 check that uses the track's own net class misses that KiCad enforces the
 STRICTER of the two nets' clearances (a Default track beside a Power pad needs
 the Power clearance).  So `check` writes the plan into a copy and asks KiCad.
 
-THE RULE GATES are the rules DRC has no way to express.  They are DATA, in
-<board>/routing/gates.json, each entry transcribed from a handoff line and
-carrying a "source" that cites it (14_fab.md, 10_layout.md #N).  A gate that
-is absent from the file is simply not run.  tools/route/README.md has the
-schema; in brief:
+THE RULES are in <board>/general_routing_guide.md: prose for the reader and
+one table the tools read (tools/route/guide.py).  A rule absent from the table
+is not run; `route.py rules` prints what is.  In brief, what the table can
+switch on: joints 0/45, copper to edge, via to pad gap and the 45-degree link,
+copper shape, class width, thermals, plane layers, no-via classes, class
+layers, keep-outs, a via field (a BGA), ground beside, frozen copper.
 
-  plane_layers  [{"layer", "net", "source"}]  -- no track on a plane layer, and
-                a zone there must be the plane's net
-  class_vias    [{"class", "max_vias": 0, "except": {"NET": n}, "source"}] --
-                a net of the class may have at most max_vias vias on the
-                whole board (0: none); "except" gives named nets their own cap
-  class_layers  [{"class", "layers": [...], "except": [nets], "source"}] --
-                tracks of the class stay on those layers
-  field_vias    [{"ref", "pad", "drill", "on_lattice", "widths": [lo, hi],
-                  "margin", "outside_refused", "source"}] -- inside a
-                footprint's pad field (a BGA) a via is exactly pad/drill and,
-                with on_lattice, sits on a diagonal centre of the pad grid;
-                tracks there take a width in [lo, hi]; that via is refused
-                outside the field unless outside_refused is false
-  keepouts      [{"name", "rect" | "from_placement", "forbid_classes",
-                  "layers", "source"}] -- no track of those classes inside
-  class_width   {"source"} -- a track's width is its class's width
-  edge          {"min", "source"} -- new copper this far from Edge.Cuts
-  angles        {"source"} -- every joint between two track segments is 0 or
-                45 degrees; a right-angle turn is two 45-degree joints with a
-                diagonal at least one track width long; no arcs; entries
-                into a pad or a via are free
-
-A plan may declare exceptions, each with a reason printed every run:
-"necks" (a width), "edge_ok" (an edge distance), "accept" (a DRC type).
-
-A plan is JSON:
-
-  {"group": "R1", "why": "...",
-   "tracks": [{"net": "+3V3", "layer": "F.Cu", "width": 0.4,
-               "pts": [[x, y], [x, y], ...]}],
-   "vias":   [{"net": "+3V3", "at": [x, y], "pad": 0.6, "drill": 0.3}],
-   "zones":  [{"net": "GND", "layer": "In1.Cu", "poly": [[x, y], ...]}],
-   "necks":  [{"net": "Net-(U2-FB)", "width": 0.15, "why": "0.5 mm between ..."}]}
-
-Net names are as KiCad holds them (hierarchical ones included); `status
---nets` prints them.  Run with tools/kpy (pcbnew).
+A plan may carry, besides tracks/vias/zones:
+  rips      [{"net", "layer", "pts": [[x, y], [x, y]], "width"?}]   segments to remove first
+  ripvias   [{"net", "at": [x, y]}]                                  vias to remove first
+  polyrips  [{"net", "layer", "at": [x0, y0]}]                      net-tied polygons to remove (first vertex)
+  polys     [{"net", "layer", "pts": [[x, y], ...]}]                 net-tied copper polygons to add
+  thermals  true                                                     type the guide's thermal policy, then refill
+`apply` lays them in that order, in one save, and the manifest records what
+was added (by UUID) and what was removed (a rip is undone from the backup).
 """
 
 import argparse
 from collections import defaultdict
 import json
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -92,6 +70,9 @@ import place as P  # noqa: E402  (die, quiet_stderr, Board, board_dir_arg)
 
 die, quiet_stderr, Board = P.die, P.quiet_stderr, P.Board
 boardsel = P.boardsel
+sys.path.insert(0, str(ROOT / "tools" / "route"))
+sys.path.insert(0, str(ROOT / "tools" / "copper"))
+import guide                                                # noqa: E402
 
 
 def group_of(plan_path, plan):
@@ -180,17 +161,17 @@ class RBoard(Board):
         return box, lattice
 
     def keepout_rect(self, k):
-        """A gates.json keep-out as absolute board mm.  "rect" is board-relative
+        """A guide keep-out as absolute board mm.  "rect" is board-relative
         (the outline's top-left is 0, 0; null = open on that side), like
         placement.json; "from_placement" names a placement.json keep-out."""
         r = k.get("rect")
         if r is None and k.get("from_placement"):
             r = next((q["rect"] for q in self.cfg.get("keepouts", []) if q["name"] == k["from_placement"]), None)
             if r is None:
-                die(f"gates.json keep-out {k.get('name')!r}: no placement.json keep-out named "
+                die(f"guide keep-out {k.get('name')!r}: no placement.json keep-out named "
                     f"{k['from_placement']!r}")
         if r is None:
-            die(f"gates.json keep-out {k.get('name')!r} has neither \"rect\" nor \"from_placement\"")
+            die(f"guide keep-out {k.get('name')!r} has neither \"rect\" nor \"from_placement\"")
         o = self.outline
         return (o[0] + r[0] if r[0] is not None else -1e9, o[1] + r[1] if r[1] is not None else -1e9,
                 o[0] + r[2] if r[2] is not None else 1e9, o[1] + r[3] if r[3] is not None else 1e9)
@@ -269,9 +250,58 @@ class RBoard(Board):
             filler = self.pn.ZONE_FILLER(self.b)
             filler.Fill(self.b.Zones())
 
+    def rip_plan(self, plan):
+        """The plan's rips, ripvias and polyrips, removed from the in-memory board.
+        Returns {"rips": n, "ripvias": n, "polyrips": n}; a listed item that is
+        not on the board stops the plan (it was written against another board)."""
+        import poly as POLY
+        mm = self.pn.ToMM
+        n = {"rips": 0, "ripvias": 0, "polyrips": 0}
+        for r in plan.get("rips", []):
+            (x1, y1), (x2, y2) = r["pts"]
+            want = sorted([(x1, y1), (x2, y2)])
+            hit = None
+            for t in self.b.GetTracks():
+                if t.Type() == self.pn.PCB_VIA_T or t.GetLayerName() != r["layer"]:
+                    continue
+                if t.GetNetname() != r["net"] and short(t.GetNetname()) != r["net"]:
+                    continue
+                if "width" in r and abs(mm(t.GetWidth()) - r["width"]) > 0.001:
+                    continue
+                a_, e_ = t.GetStart(), t.GetEnd()
+                have = sorted([(mm(a_.x), mm(a_.y)), (mm(e_.x), mm(e_.y))])
+                if all(abs(have[i][j] - want[i][j]) < 0.01 for i in range(2) for j in range(2)):
+                    hit = t
+                    break
+            if hit is None:
+                die(f"plan rips a {r['net']} segment on {r['layer']} at {r['pts']} that is not on the board")
+            self.b.RemoveNative(hit)
+            n["rips"] += 1
+        for r in plan.get("ripvias", []):
+            hit = next((t for t in self.b.GetTracks() if t.Type() == self.pn.PCB_VIA_T
+                        and (t.GetNetname() == r["net"] or short(t.GetNetname()) == r["net"])
+                        and abs(mm(t.GetPosition().x) - r["at"][0]) < 0.01 and abs(mm(t.GetPosition().y) - r["at"][1]) < 0.01), None)
+            if hit is None:
+                die(f"plan rips a {r['net']} via at {r['at']} that is not on the board")
+            self.b.RemoveNative(hit)
+            n["ripvias"] += 1
+        for r in plan.get("polyrips", []):
+            hit = POLY.match(self.b, self.pn, r)
+            if hit is None:
+                die(f"plan rips a {r['net']} polygon on {r['layer']} at {r['at']} that is not on the board")
+            self.b.RemoveNative(hit)
+            n["polyrips"] += 1
+        return n
+
     def write_plan(self, plan):
-        """Everything the plan declares, onto this in-memory board. Returns the items."""
-        made = {"tracks": [], "vias": [], "zones": []}
+        """Everything the plan declares, onto this in-memory board, in order:
+        rips, then polygons, tracks, vias and zones, then the thermal policy,
+        then a refill.  Returns the items added (and the removal counts)."""
+        import poly as POLY
+        made = {"tracks": [], "vias": [], "zones": [], "polys": []}
+        made["removed"] = self.rip_plan(plan)
+        for q in plan.get("polys", []):
+            made["polys"].append(POLY.add(self.b, self.pn, q))
         for t in plan.get("tracks", []):
             pts = t["pts"]
             for a, b in zip(pts, pts[1:]):
@@ -287,7 +317,12 @@ class RBoard(Board):
                                                min_width=z.get("min_width"), priority=z.get("priority"),
                                                clearance=z.get("clearance"), holes=z.get("holes"),
                                                thermal_gap=z.get("thermal_gap"), spoke_width=z.get("spoke_width")))
-        if made["zones"] or any(True for _ in self.b.Zones()):
+        if plan.get("thermals"):
+            import thermals as TH
+            if not self.gates.get("thermals"):
+                die("the plan says \"thermals\": true but the guide has no 'thermals' row")
+            TH.apply(self.b, self.pn, self.gates)
+        if made["zones"] or made["polys"] or made["removed"]["rips"] or plan.get("thermals") or any(True for _ in self.b.Zones()):
             self.fill_zones()
         return made
 
@@ -359,41 +394,10 @@ def open_count(rep):
 # rule gates
 # ---------------------------------------------------------------------------
 
-GATE_KEYS = ("plane_layers", "class_vias", "class_layers", "field_vias", "keepouts",
-             "class_width", "edge", "angles")
-GATE_NEEDS = {"plane_layers": ("layer", "net"), "class_vias": ("class",),
-              "class_layers": ("class", "layers"), "field_vias": ("ref", "pad", "drill"),
-              "keepouts": ("name",), "edge": ("min",)}
-
-
 def load_gates(board_dir):
-    """<board>/routing/gates.json, validated.  Absent file: no rule gates at all
-    (DRC still runs).  Every entry must cite the handoff line it came from."""
-    p = Path(board_dir) / "routing" / "gates.json"
-    if not p.exists():
-        return {}
-    try:
-        g = json.loads(p.read_text())
-    except json.JSONDecodeError as e:
-        die(f"{p}: not JSON ({e})")
-    unknown = [k for k in g if not k.startswith("_") and k not in GATE_KEYS]
-    if unknown:
-        die(f"{p}: unknown gate(s) {unknown}; known: {', '.join(GATE_KEYS)} (tools/route/README.md)")
-    for k in GATE_KEYS:
-        if k not in g or g[k] is None:
-            g.pop(k, None)
-            continue
-        entries = g[k] if isinstance(g[k], list) else [g[k]]
-        for e in entries:
-            if not isinstance(e, dict) or not str(e.get("source", "")).strip():
-                die(f"{p}: a {k!r} entry has no \"source\" -- cite the handoff line it was "
-                    f"transcribed from (14_fab.md, 10_layout.md #N)")
-            lack = [q for q in GATE_NEEDS.get(k, ()) if q not in e]
-            if lack:
-                die(f"{p}: a {k!r} entry lacks {lack} (schema: tools/route/README.md)")
-        if isinstance(g[k], list) and not g[k]:
-            g.pop(k)
-    return g
+    """The rules of <board>/general_routing_guide.md (tools/route/guide.py).
+    No guide, or an empty table: KiCad's DRC alone judges a plan."""
+    return guide.load(board_dir)
 
 
 def short(net):
@@ -411,7 +415,7 @@ def _seg_hits_rect(a, b, r):
 
 
 def rule_gates(B, plan):
-    """The rules KiCad's DRC cannot express, from gates.json. Returns failures."""
+    """The rules KiCad's DRC cannot express, from the guide. Returns failures."""
     G = B.gates
     bad = []
     necks = {(n["net"], round(float(n["width"]), 4)) for n in plan.get("necks", [])}
@@ -524,11 +528,11 @@ def rule_gates(B, plan):
 # ---------------------------------------------------------------------------
 
 def edge_min(B):
-    """(minimum, where it came from): gates.json "edge", else Board Setup."""
+    """(minimum, where it came from): the guide's "copper to edge", else Board Setup."""
     e = B.gates.get("edge")
     if e:
         return float(e["min"]), e["source"]
-    return B.edge_clr, "Board Setup copper-to-edge (no \"edge\" gate in gates.json)"
+    return B.edge_clr, "Board Setup copper-to-edge (the guide has no 'copper to edge' row)"
 
 
 def _pt_seg(p, a, b):
@@ -585,7 +589,7 @@ def edge_gate(B, plan):
 
 
 # ---------------------------------------------------------------------------
-# the angle gate -- tracks turn by 45 degrees only (gates.json "angles")
+# the angle gate -- tracks turn by 45 degrees only (the guide's "joints" row)
 # ---------------------------------------------------------------------------
 
 ANGLE_TOL = 0.5          # degrees
@@ -774,8 +778,8 @@ def cmd_angles(a):
                 print(f"        {v['kind']:8s} {short(v['net']):22s} {v['layer']:7s} "
                       f"({v['at'][0]:.3f}, {v['at'][1]:.3f})  {v['why']}")
     if "angles" not in B.gates:
-        print("ANGLES not gated: gates.json has no \"angles\" entry, so this is a report, "
-              "not a rule (a gate comes from the handoff, never from a habit)")
+        print("ANGLES not gated: the guide has no 'joints' row, so this is a report, "
+              "not a rule (a rule comes from the handoff, never from a habit)")
         return 0
     print("ANGLES", "PASS" if not viol else "FAIL")
     return 0 if not viol else 1
@@ -857,6 +861,10 @@ def cmd_check(a, quiet=False):
     B = RBoard(a.board)
     plan = json.loads(Path(a.plan).read_text())
     group = group_of(a.plan, plan)
+    for k in plan:
+        if k not in ("group", "why", "tracks", "vias", "zones", "necks", "accept", "edge_ok",
+                     "rips", "ripvias", "polyrips", "polys", "thermals", "marks", "guides"):
+            die(f"plan: unknown key {k!r}")
     bad = rule_gates(B, plan) + edge_gate(B, plan)
     base = drc_report(B.pcb)
     base_keys = dict()
@@ -876,14 +884,16 @@ def cmd_check(a, quiet=False):
         if getattr(a, "force", False) and man.exists():
             # judged as `apply --force` will lay it: in place of the group's own copper
             old = json.loads(man.read_text())
-            gone = set(old.get("tracks", []) + old.get("vias", []) + old.get("zones", []))
-            for item in list(S.b.GetTracks()) + list(S.b.Zones()):
+            gone = set(old.get("tracks", []) + old.get("vias", []) + old.get("zones", []) + old.get("polys", []))
+            for item in list(S.b.GetTracks()) + list(S.b.Zones()) + list(S.b.GetDrawings()):
                 if str(item.m_Uuid.AsString()) in gone:
                     S.b.RemoveNative(item)
         made = S.write_plan(plan)
         bad += ["short: " + m for m in S.save(scratch)]
+        copper_notes, cbad = copper_gates(B, S)
+        bad += cbad
         rep = drc_report(scratch)
-        angle_note = "angles: no \"angles\" gate in gates.json, not checked"
+        angle_note = "angles: the guide has no 'joints' row, not checked"
         if "angles" in B.gates:
             # whatever this plan adds to the corners already on the board
             src = B.gates["angles"]["source"]
@@ -910,8 +920,12 @@ def cmd_check(a, quiet=False):
         else:
             new.append(k)
     nseg = len(made["tracks"])
+    rm = made["removed"]
     if not quiet:
-        print(f"{group}: {nseg} segments, {len(made['vias'])} vias, {len(made['zones'])} zones")
+        print(f"{group}: {nseg} segments, {len(made['vias'])} vias, {len(made['zones'])} zones, "
+              f"{len(made['polys'])} polygons" + (f"; removes {rm['rips']} segments, {rm['ripvias']} vias, "
+                                                  f"{rm['polyrips']} polygons" if any(rm.values()) else "")
+              + ("; thermals re-typed" if plan.get("thermals") else ""))
         print(f"open connections {open_count(base)} -> {open_count(rep)} "
               f"({open_count(base) - open_count(rep)} closed)")
         for n in plan.get("necks", []):
@@ -919,6 +933,8 @@ def cmd_check(a, quiet=False):
         for e in plan.get("edge_ok", []):
             print(f"   edge_ok {e['net']} to {e['min']} mm: {e.get('why') or 'NO REASON GIVEN'}")
         print(f"   {angle_note}")
+        for n_ in copper_notes:
+            print(f"   {n_}")
     # A plan may ACCEPT a violation type, with a written reason -- a fanout
     # group ends every escape in free board on purpose, and "track has an
     # unconnected end" is what that looks like to DRC.  It is never a way to wave away a real
@@ -964,16 +980,17 @@ def cmd_apply(a):
         # --force REPLACES the group: laying the plan on top of its own copper
         # doubles every segment, and DRC does not flag same-net duplicates.
         old = json.loads(man.read_text())
-        gone = set(old.get("tracks", []) + old.get("vias", []) + old.get("zones", []))
+        gone = set(old.get("tracks", []) + old.get("vias", []) + old.get("zones", []) + old.get("polys", []))
         backup = B.pcb.with_suffix(f".kicad_pcb.{group}-force-bak")
         n = 0
-        for item in list(B.b.GetTracks()) + list(B.b.Zones()):
+        for item in list(B.b.GetTracks()) + list(B.b.Zones()) + list(B.b.GetDrawings()):
             if str(item.m_Uuid.AsString()) in gone:
                 B.b.RemoveNative(item)
                 n += 1
         print(f"--force: removed the {n} items of the previous {group} first")
     shutil.copy2(B.pcb, backup)
     made = B.write_plan(plan)
+    removed = made.pop("removed")
     uuids = {k: [str(i.m_Uuid.AsString()) for i in v] for k, v in made.items()}
     moved = B.save()
     if moved:
@@ -981,7 +998,7 @@ def cmd_apply(a):
         die("copper changed net when saved; board restored:\n  " + "\n  ".join(moved), 4)
     # read back: every uuid must be on the saved board
     C = RBoard(a.board)
-    have = {str(i.m_Uuid.AsString()) for i in list(C.b.GetTracks()) + list(C.b.Zones())}
+    have = {str(i.m_Uuid.AsString()) for i in list(C.b.GetTracks()) + list(C.b.Zones()) + list(C.b.GetDrawings())}
     missing = [u for v in uuids.values() for u in v if u not in have]
     if missing:
         shutil.copy2(backup, B.pcb)
@@ -991,7 +1008,7 @@ def cmd_apply(a):
            "applied": time.strftime("%Y-%m-%d %H:%M"),
            "plan": str(Path(a.plan).resolve().relative_to(ROOT)
                        if str(Path(a.plan).resolve()).startswith(str(ROOT)) else Path(a.plan).name),
-           "open_before": before, "open_after": None, **uuids}
+           "open_before": before, "open_after": None, "removed": removed, **uuids}
     # The manifest FIRST: copper without one cannot be ripped, and the DRC
     # below can fail for reasons that have nothing to do with the copper.
     man.write_text(json.dumps(rec, indent=1) + "\n")
@@ -999,7 +1016,9 @@ def cmd_apply(a):
     rec["open_after"] = open_count(after_rep)
     man.write_text(json.dumps(rec, indent=1) + "\n")
     print(f"applied {group}: {len(uuids['tracks'])} segments, {len(uuids['vias'])} vias, "
-          f"{len(uuids['zones'])} zones (read back and matched)")
+          f"{len(uuids['zones'])} zones, {len(uuids['polys'])} polygons (read back and matched)"
+          + (f"; removed {removed['rips']} segments, {removed['ripvias']} vias, {removed['polyrips']} polygons"
+             if any(removed.values()) else ""))
     print(f"open connections {before} -> {open_count(after_rep)}")
     print(f"manifest {man.relative_to(a.board)}; backup {backup.name}")
     return 0
@@ -1013,10 +1032,15 @@ def cmd_rip(a):
     if not man.exists():
         die(f"no manifest for {a.plan} ({man})")
     j = json.loads(man.read_text())
-    want = set(j["tracks"] + j["vias"] + j.get("zones", []))
+    want = set(j["tracks"] + j["vias"] + j.get("zones", []) + j.get("polys", []))
+    rm = j.get("removed") or {}
+    if any(rm.values()):
+        print(f"note: {a.plan} also REMOVED {rm.get('rips', 0)} segments, {rm.get('ripvias', 0)} vias and "
+              f"{rm.get('polyrips', 0)} polygons when it was applied; rip takes back only what it added -- "
+              f"the removed copper is in the backup {B.pcb.name}.{a.plan}-bak")
     shutil.copy2(B.pcb, B.pcb.with_suffix(f".kicad_pcb.{a.plan}-rip-bak"))
     n = 0
-    for item in list(B.b.GetTracks()) + list(B.b.Zones()):
+    for item in list(B.b.GetTracks()) + list(B.b.Zones()) + list(B.b.GetDrawings()):
         if str(item.m_Uuid.AsString()) in want:
             B.b.RemoveNative(item)
             n += 1
@@ -1111,29 +1135,139 @@ def _raster(pdf, png, box, scale):
     p.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=fitz.Rect(x0, y0, x1, y1)).save(png)
 
 
-def cmd_gates(a):
-    """Print what gates.json declares, each gate with its source."""
-    B = RBoard(a.board)
+def copper_gates(B, S):
+    """The guide's copper rules on a plan: (notes, failures).  B is the board
+    as it is, S the scratch copy with the plan laid.  A plan may not add a
+    copper-shape site, and may not add a live via-link site or raise the count."""
+    notes, bad = [], []
     G = B.gates
-    p = Path(a.board) / "routing" / "gates.json"
-    if not G:
-        print(f"no rule gates ({p} is {'empty' if p.exists() else 'absent'}): `check` runs KiCad's DRC only")
+    if not (G.get("shape") or G.get("via_link")):
+        return notes, bad
+    import common as CC
+    import shape as SHAPE
+    import vialink as VL
+    CC.settings(B.dir, B.dir)
+    CC.G = G
+    fields = guide.field_boxes(B.b, G, B.pn)
+    if G.get("shape"):
+        s0 = SHAPE.audit(B.b, B.pn, FIELDS=fields)
+        s1 = SHAPE.audit(S.b, S.pn, FIELDS=fields)
+        near = lambda x, L: any(t["kind"] == x["kind"] and t["net"] == x["net"] and t["layer"] == x["layer"]
+                                and abs(t["at"][0] - x["at"][0]) <= 0.3 and abs(t["at"][1] - x["at"][1]) <= 0.3 for t in L)
+        new = [x for x in s1 if not near(x, s0)]
+        gone = [x for x in s0 if not near(x, s1)]
+        notes.append(f"shape: {len(s0)} sites before, {len(s1)} with this plan ({len(new)} new, {len(gone)} gone) "
+                     f"({G['shape']['source']})")
+        bad += [f"shape: new {x['kind']} on {x['net']} {x['layer']} at {x['at']} size {x['size']}" for x in new]
+    if G.get("via_link"):
+        _, l0, _ = VL.run(B.b, G, B.dir)
+        _, l1, _ = VL.run(S.b, G, B.dir)
+        key = lambda x: (x["kind"], x["net"], round(x["via"][0], 2), round(x["via"][1], 2))
+        k0 = {key(x) for x in l0}
+        new = [x for x in l1 if key(x) not in k0]
+        notes.append(f"vialink: {len(l0)} live sites before, {len(l1)} with this plan ({len(new)} new) "
+                     f"({G['via_link']['source']})")
+        bad += [f"vialink: new {x['kind']} on {x['net']} via {x['via']} pad {x['pad']}" for x in new]
+    return notes, bad
+
+
+def cmd_rules(a):
+    """What the guide's table switches on, each with its source."""
+    B = RBoard(a.board)
+    p = Path(a.board) / guide.FILE
+    if not p.exists():
+        print(f"no {guide.FILE} in {Path(a.board).name}/: `check` runs KiCad's DRC only")
         return 0
-    for k in GATE_KEYS:
-        if k not in G:
-            print(f"  {k:13s} -- not run")
-            continue
-        for e in (G[k] if isinstance(G[k], list) else [G[k]]):
-            body = {q: v for q, v in e.items() if q != "source"}
-            print(f"  {k:13s} {json.dumps(body)}\n  {'':13s}   source: {e['source']}")
+    print("\n".join(guide.describe(B.gates)))
     lo, src = edge_min(B)
     print(f"  copper-to-edge used by `edge`: {lo} mm ({src})")
     return 0
 
 
+def cmd_audit(a):
+    """Every rule of the guide on the board as it is: one line per gate."""
+    B = RBoard(a.board)
+    G = B.gates
+    rows = []
+
+    def gate(name, ok, detail):
+        rows.append((name, ok, detail))
+        print(f"  {name:13s} {'PASS' if ok else 'FAIL'}  {detail}")
+
+    d = subprocess.run([sys.executable, str(ROOT / "tools" / "place" / "place.py"), "drc", "--board", str(a.board)],
+                       capture_output=True, text=True)
+    lines = [ln for ln in d.stdout.splitlines() if ln.strip()]
+    viol = next((ln for ln in lines if ln.startswith("violations:")), "violations: ?")
+    unc = next((ln for ln in lines if ln.startswith("unconnected:")), "unconnected: ?")
+    par = next((ln for ln in lines if ln.startswith("schematic parity:")), "")
+    gate("drc", d.returncode == 0 and viol.strip() == "violations: none" and unc.strip() == "unconnected: 0",
+         f"{viol}; {unc}; {par}" if d.returncode != 4 else (d.stderr.strip().splitlines() or ["drc did not run"])[-1])
+    checked, viol_a = angle_gate(B.b, B.pn)
+    if "angles" in G:
+        gate("angles", not viol_a, f"{checked} joints, {len(viol_a)} not at 0/45 ({G['angles']['source']})")
+    else:
+        print(f"  {'angles':13s} ----  not in the guide ({len(viol_a)} joints not at 0/45, for information)")
+    lo, src = edge_min(B)
+    edges = B.edge_segs()
+    n_edge = 0
+    for t in B.b.GetTracks():
+        if t.Type() == B.pn.PCB_VIA_T:
+            c = edge_clearance(edges, (B.pn.ToMM(t.GetPosition().x), B.pn.ToMM(t.GetPosition().y)), None, B.pn.ToMM(t.GetWidth(B.pn.F_Cu)) / 2)
+        else:
+            c = edge_clearance(edges, (B.pn.ToMM(t.GetStart().x), B.pn.ToMM(t.GetStart().y)),
+                               (B.pn.ToMM(t.GetEnd().x), B.pn.ToMM(t.GetEnd().y)), B.pn.ToMM(t.GetWidth()) / 2)
+        if c < lo - 1e-6:
+            n_edge += 1
+    gate("edge", n_edge == 0, f"{n_edge} item(s) under {lo} mm ({src})")
+    if G.get("shape") or G.get("via_link") or G.get("ground_beside"):
+        import common as CC
+        CC.settings(B.dir, B.dir); CC.G = G
+        fields = guide.field_boxes(B.b, G, B.pn)
+    if G.get("shape"):
+        import shape as SHAPE
+        sites = SHAPE.audit(B.b, B.pn, FIELDS=fields)
+        out = Path(a.board) / "routing" / "shape_sites.json"
+        out.parent.mkdir(exist_ok=True)
+        out.write_text(json.dumps(sites, indent=1))
+        kinds = defaultdict(int)
+        for x in sites:
+            kinds[x["kind"]] += 1
+        gate("shape", not sites, f"{len(sites)} site(s)" + (": " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) if sites else "")
+             + f" -> {out.relative_to(a.board)} ({G['shape']['source']})")
+    if G.get("via_link"):
+        import vialink as VL
+        sites, lv, st = VL.run(B.b, G, B.dir)
+        out = Path(a.board) / "routing" / "vialink_sites.json"
+        out.write_text(json.dumps(sites, indent=1))
+        kinds = defaultdict(int)
+        for x in lv:
+            kinds[x["kind"]] += 1
+        ndecl = sum(1 for x in sites if "declared" in x)
+        gate("vialink", not lv, f"{len(lv)} live site(s)" + (": " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) if lv else "")
+             + f", {ndecl} declared; {st['nvia']} vias judged -> {out.relative_to(a.board)} ({G['via_link']['source']})")
+    if G.get("ground_beside"):
+        import fastside as FS
+        rule = G["ground_beside"]
+        fast, fill = FS.load(B.pcb, B.pn, G)
+        t = FS.tally(fast, fill, rule["within"], B.pn)
+        bare = sum(v[2] for v in t.values()); one = sum(v[1] for v in t.values()); two = sum(v[0] for v in t.values())
+        gate("ground beside", bare < 0.05, f"{rule['class']} mm with {rule['net']} on 2/1/0 sides: {two:.1f} / {one:.1f} / {bare:.1f} "
+             f"({rule['source']})")
+    pours = [z for z in B.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]
+    if pours:
+        r = subprocess.run([sys.executable, str(ROOT / "tools" / "route" / "pour.py"), "--board", str(a.board)],
+                           capture_output=True, text=True)
+        isl = [ln.strip() for ln in r.stdout.splitlines() if "island" in ln]
+        many = [ln for ln in isl if not re.search(r"\b1 island", ln)]
+        gate("pours", not many, f"{len(isl)} pour(s)" + (f"; {len(many)} in more than one island -- every island must be tied (pour.py)" if many else ", each one island"))
+    bad = [n for n, ok, _ in rows if not ok]
+    print("AUDIT " + ("PASS" if not bad else f"FAIL ({', '.join(bad)})"))
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["status", "check", "apply", "rip", "render", "angles", "edge", "gates"])
+    ap.add_argument("command", choices=["status", "check", "apply", "rip", "render", "angles", "edge", "audit", "rules"])
     ap.add_argument("plan", nargs="?", help="check/apply: plan JSON; rip/render: group name")
     ap.add_argument("--board", help="boardN, the folder name or a path (default: the folder you "
                     "are in, else this session's board)")
@@ -1153,7 +1287,7 @@ def main():
         die("rip needs a group name")
     sys.exit({"status": cmd_status, "check": cmd_check, "apply": cmd_apply,
               "rip": cmd_rip, "render": cmd_render, "angles": cmd_angles,
-              "edge": cmd_edge, "gates": cmd_gates}[a.command](a))
+              "edge": cmd_edge, "audit": cmd_audit, "rules": cmd_rules}[a.command](a))
 
 
 if __name__ == "__main__":

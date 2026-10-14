@@ -157,7 +157,7 @@ def main():
         print("WARNING: kicad_project/tools/board_scaffold/ is missing; the board "
               "folder gets only lib/ and no QUESTIONS.md")
         os.makedirs(os.path.join(dst, "lib"))
-    for f in ("QUESTIONS.md", "REVIEW.md", "ROUTING_PLAN.md"):
+    for f in ("QUESTIONS.md", "REVIEW.md", "ROUTING_PLAN.md", "general_routing_guide.md"):
         p = os.path.join(dst, f)
         if os.path.exists(p):
             t = open(p).read()

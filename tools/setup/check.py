@@ -26,7 +26,8 @@ API_KEYS = ["NEXAR_CLIENT_ID", "NEXAR_CLIENT_SECRET", "DIGIKEY_CLIENT_ID",
 KONNECT_SKILLS = ["konnect", "kicad-schematic", "kicad-pcb", "kicad-manufacture",
                   "kicad-review", "kicad-library"]
 KONNECT_AGENTS = ["kicad-design-review-agent.md", "kicad-schematic-build-agent.md"]
-PROJECT_SKILLS_BOARD = ["schematic", "board-setup", "footprint", "placement", "routing", "render"]
+PROJECT_SKILLS_BOARD = ["schematic", "board-setup", "footprint", "placement", "routing", "render",
+                        "copper-shape", "via-links"]
 # the same list tools/parts/datasheet.py and kicad_project/tools/fp/fp.py search
 CHROMES = [c for c in (os.environ.get("CHROME_BIN"), "google-chrome-stable", "google-chrome",
                        "chromium", "chromium-browser",
@@ -149,10 +150,10 @@ def venvs():
     add("ok" if rc == 0 else "FAIL", "concept venv (.venv)", "numpy, scipy, matplotlib"
         if rc == 0 else out.splitlines()[-1], "./setup.sh install")
     py = KP / "tools" / ".venv" / "bin" / "python"
-    rc, out = run([str(py), "-c", "import fitz, easyeda2kicad, PIL; print('ok')"]) \
+    rc, out = run([str(py), "-c", "import fitz, easyeda2kicad, PIL, matplotlib; print('ok')"]) \
         if py.exists() else (1, "missing")
     add("ok" if rc == 0 else "FAIL", "board venv (kicad_project/tools/.venv)",
-        "easyeda2kicad, PyMuPDF, Pillow" if rc == 0 else out.splitlines()[-1], "./setup.sh install")
+        "easyeda2kicad, PyMuPDF, Pillow, matplotlib" if rc == 0 else out.splitlines()[-1], "./setup.sh install")
 
 
 def optional():

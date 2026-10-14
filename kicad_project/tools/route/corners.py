@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The angle rule for polylines: every joint 0 or 45 degrees (gates.json "angles").
+"""The angle rule for polylines: every joint 0 or 45 degrees (the guide's `joints` row).
 
     from corners import fix45, joints, straighten
 

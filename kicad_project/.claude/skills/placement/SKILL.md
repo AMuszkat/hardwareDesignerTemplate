@@ -97,6 +97,12 @@ flips the part; only `place.py apply` can do that.
 --box` to search): it prints the nearest legal via site per pad, on every
 layer. A cap whose pads cannot drop to their planes decouples nothing.
 
+**Leave the via sites in the decoupling placement from the start.** Between
+two rows of capacitors allow the via pad + two via-to-pad gaps (the guide's
+`via to pad gap`) + the clearance; tighter, and the via rule cannot be met
+there without moving parts after the copper is laid — a placement decision
+the user makes, never an exception the routing session declares.
+
 ## 2. Spacing
 
 - Courtyards are IPC nominal, 0.25 mm beyond pads or body (`fp.py tidy

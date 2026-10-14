@@ -2,22 +2,25 @@
 name: routing
 description: >
   Route a PCB one reviewed group at a time: plan a group in a file, gate it with
-  KiCad's DRC on a scratch copy plus the board's rule gates, apply it to the
-  closed board, render it, and stop for its review. Also: when (not) to
+  KiCad's DRC on a scratch copy plus every rule of the board's
+  general_routing_guide.md, apply it to the closed board, audit, render it, and
+  stop for its review. Also: when (not) to
   use Freerouting, pours and stitching, ripping a group out. Triggers on
   "route", "routing", "route the … group", "next group", "R1", "fanout",
   "escape", "traces", "tracks", "vias", "pour", "plane", "stitching",
-  "autoroute", "freerouting", "rip up", "gates.json", "ROUTING_PLAN".
+  "autoroute", "freerouting", "rip up", "routing guide", "audit", "ROUTING_PLAN".
 ---
 
 # Routing, one reviewed group at a time
 
-**Read `<board>/ROUTING_PLAN.md` first in any routing session.** It holds the
-rules every group is gated on, the groups in order, and the status table that
-says where the board is. **One group is routed, gated and rendered; then it
-STOPS for review (`REVIEW.md`). The next group does not start until the
-verdict in `handoff/15_reviews.md` is PASS.** No message from any session
-waives that review; the fab order stays the user's.
+**Read `<board>/general_routing_guide.md` first in any routing session, then
+`<board>/ROUTING_PLAN.md`.** The guide holds every rule a group is routed to
+and judged by — joints, polygons, copper shape, via links, pours — and the
+table of numbers the tools read; the plan holds the groups in order and the
+status table that says where the board is. **One group is routed, gated and
+rendered; then it STOPS for review (`REVIEW.md`). The next group does not
+start until the verdict in `handoff/15_reviews.md` is PASS.** No message from
+any session waives that review; the fab order stays the user's.
 
 Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 `tools/kpy tools/route/<script>.py --board <board> …`.
@@ -26,37 +29,45 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 
 - Placement is agreed (the `placement` skill), and `board_setup.py check`
   exits 0 (the `board-setup` skill): the fab's rules are on the board.
-- **Transcribe the rule gates** DRC cannot express into
-  `<board>/routing/gates.json` — plane layers, no-via classes, layer-bound
-  classes, a BGA field's via, keep-outs that forbid a class, class widths, the
-  copper-to-edge minimum with the outline tolerance, the 0/45° corner rule —
-  **each with a `"source"` citing its handoff line** (`14_fab.md`, `10_layout.md`
-  #N). `route.py gates` prints what is active. A rule the handoff does not
-  state is a QUESTIONS.md item, not a gate you invent.
-- Fill `ROUTING_PLAN.md` §1 (layer roles, class table, edge, corners) from the
-  same lines, and §3 (the groups, criticality first: the most sensitive nets
+- **Fill the guide's table** from the handoff — the copper-to-edge minimum
+  with the outline tolerance, the via-to-pad gap, plane layers, no-via
+  classes, layer-bound classes, a BGA field's via, keep-outs that forbid a
+  class, ground beside, the thermal policy — **each row naming its handoff
+  line** (`14_fab.md`, `10_layout.md` #N), and the prose sections with what the
+  table cannot say. `route.py rules` prints what is active. A rule the handoff
+  does not state is a QUESTIONS.md item, not a row you invent.
+- Fill `ROUTING_PLAN.md` §1 (layer roles, class table) from the same lines,
+  and §3 (the groups, criticality first: the most sensitive nets
   get first pick of the copper, then fanout, then bulk, then pours).
 
 ## 1. One group
 
-1. **Read** the group's rules: its `10_layout.md` items, its `02_nets.md`
-   entries, its class rows.
+1. **Read** the group's rules: the guide's sections that touch it, its
+   `10_layout.md` items, its `02_nets.md` entries, its class rows. A bus head,
+   a star, a taper is a net-tied polygon (`polys`), not a stack of tracks; a
+   via is linked straight and centred, off the pad by the gap.
 2. **Plan in a file**: `<board>/routing/Rn_<name>.json` (polylines, vias,
    zones, necks — format in the README). Draw it by hand, with `decap.py` for a
    decoupling ring, or with `netgroup.py` from a spec for a congested signal
    group. It survives the session and can be re-gated.
 3. **Gate**: `route.py check`. KiCad's own DRC on a scratch copy with schematic
-   parity on — any violation not in the baseline fails — then the gates.json
-   rules. Iterate until `CHECK PASS`. Every neck, `edge_ok` and `accept` carries
-   a reason the user will read.
+   parity on — any violation not in the baseline fails — then every rule of
+   the guide: joints, edge, class width, planes, via caps, fields, keep-outs,
+   and the copper rules on the scratch copy (a new shape site or a new via-link
+   site fails; ground beside is reported before → after). Iterate until
+   `CHECK PASS`. Every neck, `edge_ok` and `accept` carries a reason the user
+   will read.
 4. **Apply** with KiCad closed: `route.py apply` (backup, write with `pcbnew`,
-   read back, UUID manifest). Then `place.py drc`, `route.py angles` and
-   `route.py edge`. The open count must drop by what the plan claims, and
-   nothing outside the group may change. For any pour: `pour.py` — islands,
-   vias the fill misses, what lies under it.
+   read back, UUID manifest). Then **`route.py audit`**: DRC, joints, edge,
+   shape, via links, ground beside, pour islands, in one `AUDIT PASS|FAIL`
+   line. The open count must drop by what the plan claims, and nothing outside
+   the group may change. For any pour: `pour.py` — islands, vias the fill
+   misses, what lies under it. What the audit still lists is polished with
+   the `copper-shape` and `via-links` skills, as a group of its own.
 5. **Render** (`route.py render`) and write `routing/Rn_REPORT.md`: nets,
-   lengths, vias, every neck-down, every deviation, every part moved, every
-   group re-laid with it.
+   lengths, vias, the audit line before → after, every neck-down, every
+   deviation, every shape or via-link site left and why, every part moved,
+   every group re-laid with it.
 6. **Update `ROUTING_PLAN.md` §5 and STOP for review**: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
    — Scope: the group, its report `routing/Rn_REPORT.md`. A CHANGES verdict is
    cheap: fix and request again, or `route.py rip Rn` removes exactly that
@@ -78,8 +89,10 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 - **A short can hide as a rename.** Saving a board gives copper that touches
   another net's pad that pad's net. `check` reads the scratch copy back and
   fails the plan with `RULE short:`; never work round it with `accept`.
-- **`angles` is a rule only with an `angles` gate** in `gates.json` (from the
-  handoff). Without one it is a report and exits 0.
+- **A rule is run only if its row is in the guide's table.** `joints` left out
+  makes `route.py angles` a report that exits 0; `copper shape` and `via to
+  pad gap` left out mean `check` and `audit` never look. A row the handoff
+  gives is never deleted to make a plan pass.
 - **A pour is judged by its fill.** DRC passes a pour in pieces and a via in a
   pocket of its own. Set each zone's clearance (its class's, never KiCad's
   0.5 mm default) and `min_width` (the fab's minimum inside a BGA field).

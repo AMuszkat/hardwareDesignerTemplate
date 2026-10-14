@@ -20,7 +20,7 @@ surfaces mid-task as a tool that silently cannot do its step.
 | 9 | **Claude in Chrome** extension, connected to the same Claude account | login-walled datasheets and CAD downloads (SnapEDA, Ultra Librarian, vendor portals) | https://claude.ai/chrome — the launchers start sessions with `--chrome` |
 | 10 | **Inkscape** | `tools/diagrams/check_diagrams.py` (rendered text bounds) | Debian/Ubuntu `sudo apt install -y inkscape` · macOS `brew install --cask inkscape` |
 | 11 | **Distributor API keys**: DigiKey, Mouser, element14, Nexar | `tools/parts/` (price, stock, lead time, datasheet URLs, catalogue search) | section 4 |
-| 12 | Python packages | concept `.venv` (numpy, scipy, matplotlib); board `kicad_project/tools/.venv` (easyeda2kicad, PyMuPDF, Pillow) | `./setup.sh install` |
+| 12 | Python packages | concept `.venv` (numpy, scipy, matplotlib); board `kicad_project/tools/.venv` (easyeda2kicad, PyMuPDF, Pillow, matplotlib) | `./setup.sh install` |
 | 13 | *optional:* **Blender ≥ 4.2** | 3D renders with `render.py --engine blender` only — the user picks the engine per render, and the KiCad engine needs nothing extra | `./setup.sh install-blender` downloads Blender 4.5 LTS (Linux x86-64, sha256-verified, ~1.2 GB) into `~/.local/share/hwdesign/blender/`; `--amd-gpu` adds AMD's HIP runtime (Debian/Ubuntu, unpacked, no root). Elsewhere: install from blender.org and set `BLENDER_BIN` |
 
 ## 2. Install
@@ -53,7 +53,7 @@ command instead.
   `tools/handoff/boards/boardN.py`, its value bus
   `studies/components_boardN.py`, its answers file, and
   `kicad_project/boardN_<slug>/` with `QUESTIONS.md`, `ROUTING_PLAN.md`,
-  `placement.json`, `routing/gates.json` — and publishes handoff rev 1. The
+  `placement.json`, `general_routing_guide.md` — and publishes handoff rev 1. The
   KiCad project itself is created by the board session (through Konnect),
   named after the folder.
 - **Fab profiles** live in `tools/handoff/fabs/`. `example_standard` is an
