@@ -36,3 +36,10 @@ The worktree is outside the project's folders, so the project's walls do not
 apply there: a board session, which cannot edit the project's
 `kicad_project/.claude/skills/`, edits the template's copy in the worktree
 and the merge brings the skill home.
+
+**One worktree per session**: `<tmp>/<repo>.template-worktree.<HW_BOARD or
+concept>`. With one shared path, a board session's `push` once reused the
+concept session's open worktree, committed its half-done files under the
+board's message, pushed them and removed the worktree. `push` now refuses
+while your own worktree holds edits from an earlier `open` (finish or abort
+it), and `status` lists every session's open worktree.

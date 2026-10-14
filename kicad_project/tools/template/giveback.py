@@ -10,6 +10,9 @@ only). It is the mechanism behind "Giving it back" in SELF_IMPROVEMENT.md:
                                        project tree; prints its path. Edit there
                                        what carries project fills (CLAUDE.md,
                                        README.md) instead of copying it.
+                                       One worktree PER SESSION (named after
+                                       HW_BOARD, or "concept"): two sessions
+                                       giving back at once never share one.
     giveback.py push PATH... -m MSG    open, copy those project files into the
                                        worktree at the same paths, finish
     giveback.py finish -m MSG          commit in the worktree, push to the
@@ -81,8 +84,24 @@ def identity(repo):
     return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
 
 
-def worktree_path(repo):
-    return os.path.join(tempfile.gettempdir(), os.path.basename(repo) + ".template-worktree")
+def owner():
+    """Whose worktree: a board session's (bin/board exports HW_BOARD) or concept's.
+    One fixed path for every session once let a board session's `push` commit the
+    concept session's half-done edits under its own message, and delete them."""
+    return os.environ.get("HW_BOARD") or "concept"
+
+
+def worktree_path(repo, who=None):
+    return os.path.join(tempfile.gettempdir(),
+                        f"{os.path.basename(repo)}.template-worktree.{who or owner()}")
+
+
+def open_worktrees(repo):
+    """Every giveback worktree of this repository, any session's."""
+    pre = os.path.join(tempfile.gettempdir(), os.path.basename(repo) + ".template-worktree")
+    listing = git("worktree", "list", "--porcelain", cwd=repo).stdout
+    return [ln[len("worktree "):] for ln in listing.splitlines()
+            if ln.startswith("worktree " + pre)]
 
 
 def current_worktree(repo):
@@ -115,9 +134,10 @@ def cmd_status(repo, _a):
         print(f"  {p:<52} {why}")
     for p in sorted(set(new)):
         print(f"  {p:<52} not in the template -- new; `push` it or it stays private")
-    wt = current_worktree(repo)
-    if wt:
-        print(f"  worktree open at {wt} -- `finish -m MSG` or `abort`")
+    for wt in open_worktrees(repo):
+        mine = wt == worktree_path(repo)
+        print(f"  worktree open at {wt} -- " + ("yours: `finish -m MSG` or `abort`" if mine
+                                               else "another session's: leave it alone"))
     if not drift and not new:
         print("TEMPLATE: nothing to give back")
     return 1 if drift or new else 0
@@ -140,6 +160,10 @@ def cmd_open(repo, _a, say=True):
 def cmd_push(repo, a):
     if not a.message:
         sys.exit("push needs -m MSG")
+    wt = current_worktree(repo)
+    if wt and git("status", "--porcelain", cwd=wt).stdout.strip():
+        sys.exit(f"your worktree at {wt} holds edits from an earlier `open`: `finish -m MSG` "
+                 "or `abort` it first -- `push` would commit them under this message")
     wt = cmd_open(repo, a, say=False)
     tree = template_tree(repo)
     for p in a.paths:
