@@ -25,9 +25,10 @@ its `REVIEW.md` and `handoff/15_reviews.md`
    with schematic parity), `board_setup.py check`, `fp.py check`,
    `route.py status` / `edge`. Each gate's whole output is `gates/<name>.txt`.
 3. **Exports what a reviewer reads, as files it reads without a shell**:
-   `netlist.xml`, `bom.csv` (Value, Footprint, MPN, the DNP field and KiCad's
-   DNP flag), `schematic.pdf`; `pins.csv` (every placed part's every pin:
-   name, type, no-connect flag, net) and `nets.csv`; every sheet whole
+   `netlist.xml`, `bom.csv` (Value, Footprint, MPN, DNP, excluded, quantity;
+   a missing column fails the row), `schematic.pdf`; `parts.csv` (every
+   placed part: KiCad's DNP flag and a DNP field apart, the exclude flags),
+   `pins.csv` (every pin: name, type, no-connect flag, net) and `nets.csv`; every sheet whole
    (`sheets/sheet-N.png`) and in overlapping 300 dpi tiles
    (`sheets/tiles/`, indexed by `tiles.md` — which parts each tile shows —
    and `words.csv` — where every text is); for a PCB, `pcb/top.png`,
@@ -62,3 +63,9 @@ poppler-utils (`pdftoppm`, `pdftotext`, `pdfinfo`); without them the row says
   in `/tmp`, where every read stops for the user's approval (board 2's RV1,
   2026-10-14). So every image here is at most 1280 × 896 px and the detail
   comes as tiles; the agents are told to work only in `tmpWork/`.
+- **The BOM cannot tell KiCad's DNP flag from a field named DNP**: kicad-cli
+  merges the field into its own `${DNP}` column, so asking for both writes
+  one column, and either fills it with "DNP". Board 2's RV1 first lost the
+  column silently, then needed the `.kicad_sch` to prove the flag missing.
+  `parts.csv` reads both from the netlist, where the flag is
+  `<property name="dnp"/>` and the field a `<field name="DNP">`.

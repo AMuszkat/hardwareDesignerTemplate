@@ -25,8 +25,10 @@ datasheet agrees. **Find what is wrong; do not fix anything.**
 - the snapshot directory `out/reviews/<board>/<id>-schematic/`:
   `SUMMARY.md` (the gates and their results), `gates/*.txt` (each gate's whole
   output), `erc.json`, `netlist.xml`, `bom.csv`, `schematic.pdf`;
-  - `pins.csv` — every placed part's every pin: number, name, type,
-    no-connect flag, net, value, sheet; `nets.csv` — every net and its pins;
+  - `parts.csv` — every placed part: value, footprint, MPN, KiCad's DNP flag
+    and a DNP field apart, the exclude flags; `pins.csv` — every pin: number,
+    name, type, no-connect flag, net, value, sheet; `nets.csv` — every net
+    and its pins;
   - `sheets/sheet-N.png` — each page whole; `sheets/tiles/pN-rRcC.png` — the
     same pages at 300 dpi in overlapping tiles you see at full resolution;
     `sheets/tiles.md` — which parts each tile shows; `sheets/words.csv` —
@@ -85,7 +87,8 @@ datasheet agrees. **Find what is wrong; do not fix anything.**
    - footprints against the package each line names (0402 is not 0201; the
      datasheet's package for an IC);
    - DNP: every part the handoff calls DNP / not fitted carries KiCad's own
-     DNP flag (`bom.csv`'s *DNP flag*) — a text field alone is not the flag;
+     DNP flag (`parts.csv`'s `dnp_flag`) — a text field alone is not the flag,
+     and `bom.csv` shows the two the same way;
    - pins the handoff makes no-connect carry a no-connect flag; a pin it marks
      OPEN or UNKNOWN does NOT (`08_pin_accounting.md`);
    - net names: a rail drawn as a label, a handoff net under another name,

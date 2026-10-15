@@ -28,8 +28,9 @@ session's own tools, run exactly as its skills run them:
 and, for the reader, everything as FILES it can read without a shell: every
 page and PCB view cut into overlapping tiles small enough to be seen at full
 resolution (tiles.md says which parts each shows, words.csv where every text
-is), and pins.csv / nets.csv -- every placed part's every pin with its name,
-type, no-connect flag and net. tmpWork/ is the reviewer's only scratch folder:
+is), parts.csv (KiCad's DNP flag and a DNP field, apart), and pins.csv /
+nets.csv -- every placed part's every pin with its name, type, no-connect flag
+and net. tmpWork/ is the reviewer's only scratch folder:
 temporary, emptied with every retake.
 
 Writes SUMMARY.md (one row per gate) beside the outputs. Exit 0 = every gate
@@ -292,10 +293,39 @@ def pictures(out_dir, what, sources, dpi, parts, crop):
     return total
 
 
+def columns(f):
+    """A CSV's header, [] when there is none."""
+    try:
+        with open(f, newline="") as h:
+            return next(csv.reader(h), [])
+    except OSError:
+        return []
+
+
+def parts_table(root, out):
+    """parts.csv: every placed part with KiCad's own DNP / exclude flags and a DNP *field*, apart
+    -- the BOM export shows a field named DNP and the flag the same way."""
+    rows = []
+    for c in root.iter("comp"):
+        props = {p.get("name"): p.get("value") for p in c.iter("property")}
+        fields = {f.get("name"): (f.text or "") for f in c.iter("field")}
+        rows.append((c.get("ref"), c.findtext("value") or "", c.findtext("footprint") or "",
+                     fields.get("MPN", ""), "yes" if "dnp" in props else "",
+                     fields.get("DNP", props.get("DNP", "")) or "",
+                     "yes" if "exclude_from_bom" in props else "",
+                     "yes" if "exclude_from_board" in props else "", props.get("Sheetfile", "")))
+    rows.sort(key=lambda r: natural(r[0]))
+    with open(out / "parts.csv", "w", newline="") as f:
+        csv.writer(f).writerows([("ref", "value", "footprint", "mpn", "dnp_flag", "dnp_field",
+                                  "exclude_from_bom", "exclude_from_board", "sheet")] + rows)
+    return sum(1 for r in rows if r[4])
+
+
 def pin_table(out):
     """pins.csv (every placed part's every pin: name, type, no-connect flag, net) and nets.csv
     (every net and its pins), from netlist.xml -- what a reviewer otherwise parses by hand."""
     root = ET.parse(out / "netlist.xml").getroot()
+    n_dnp = parts_table(root, out)
     lib = {(p.get("lib"), p.get("part")): [(q.get("num"), q.get("name"), q.get("type")) for q in p.iter("pin")]
            for p in root.iter("libpart")}
     at, nets = {}, []
@@ -326,16 +356,16 @@ def pin_table(out):
     with open(out / "nets.csv", "w", newline="") as f:
         csv.writer(f).writerows([("net", "class", "pins", "nodes")] +
                                 [(n, k, len(p.split()), p) for n, k, p in sorted(nets, key=lambda t: natural(t[0]))])
-    return refs, len(rows), len(nets)
+    return refs, len(rows), len(nets), n_dnp
 
 
 def reader(run, out, kind):
     """Everything the reviewer reads as a file, so it never needs a shell or a folder outside this one."""
     refs = set()
     if (out / "netlist.xml").exists():
-        refs, n_pins, n_nets = pin_table(out)
-        run.rows.append(("pins", "done", f"{n_pins} pins of {len(refs)} parts, {n_nets} nets",
-                         "pins.csv, nets.csv"))
+        refs, n_pins, n_nets, n_dnp = pin_table(out)
+        run.rows.append(("pins", "done", f"{len(refs)} parts ({n_dnp} with KiCad's DNP flag), "
+                         f"{n_pins} pins, {n_nets} nets", "parts.csv, pins.csv, nets.csv"))
     if not (shutil.which("pdftoppm") and shutil.which("pdftotext") and shutil.which("pdfinfo")):
         run.skip("sheet-tiles", "poppler-utils (pdftoppm, pdftotext, pdfinfo) not installed")
         return
@@ -358,10 +388,14 @@ def exports(run, out, root_sch):
     """What the reviewer reads rather than gates: netlist, BOM, the sheets as pictures."""
     run.gate("netlist", ["kicad-cli", "sch", "export", "netlist", "--format", "kicadxml",
                          "-o", out / "netlist.xml", root_sch], note="netlist.xml")
+    # KiCad merges a field named DNP into its own ${DNP} column: the BOM cannot tell the flag
+    # from a text field, so parts.csv (from the netlist) carries both, separately.
+    labels = "Refs,Value,Footprint,MPN,DNP flag or field,Excluded,Qty"
     run.gate("bom", ["kicad-cli", "sch", "export", "bom", "-o", out / "bom.csv",
-                     "--fields", "Reference,Value,Footprint,MPN,DNP,${DNP},${EXCLUDE_FROM_BOM},${QUANTITY}",
-                     "--labels", "Refs,Value,Footprint,MPN,DNP field,DNP flag,Excluded,Qty",
-                     "--group-by", "Value,Footprint,MPN,DNP,${DNP}", root_sch], note="bom.csv")
+                     "--fields", "Reference,Value,Footprint,MPN,${DNP},${EXCLUDE_FROM_BOM},${QUANTITY}",
+                     "--labels", labels, "--group-by", "Value,Footprint,MPN,${DNP}", root_sch],
+             ok=lambda c, t: c == 0 and columns(out / "bom.csv") == labels.split(","),
+             note="bom.csv (a column missing fails)")
     pdf = out / "schematic.pdf"
     run.gate("sch-pdf", ["kicad-cli", "sch", "export", "pdf", "-o", pdf, root_sch], note="schematic.pdf")
     if pdf.exists() and shutil.which("pdftoppm"):
@@ -446,7 +480,8 @@ def main():
           "- `sheets/sheet-N.png` — each page whole; `sheets/tiles.md` — which tile "
           "(`sheets/tiles/pN-rRcC.png`) shows which part; `sheets/words.csv` — every text on a "
           "page, where it is and which tiles show it.",
-          "- `pins.csv` — every placed part's every pin: name, type, no-connect flag, net; "
+          "- `parts.csv` — every placed part: value, footprint, MPN, KiCad's DNP flag and a DNP "
+          "field apart, the exclude flags; `pins.csv` — every pin: name, type, no-connect flag, net; "
           "`nets.csv` — every net and its pins; `bom.csv`, `netlist.xml`, `erc.json`.",
           "- `snap/<board>/` — the frozen board and its `handoff/` (with `datasheets/`); "
           "`gates/*.txt` — each gate's whole output."]

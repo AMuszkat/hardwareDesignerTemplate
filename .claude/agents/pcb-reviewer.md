@@ -32,7 +32,9 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
     `pcb/tiles/<view>-rRcC.png` — the same views at 600 dpi in overlapping
     tiles you see at full resolution; `pcb/tiles.md` — which parts each tile
     shows; `pcb/words.csv` — every text in a view and which tiles show it;
-  - `pins.csv` — every part's every pin: name, type, no-connect flag, net;
+  - `parts.csv` — every part with KiCad's DNP and exclude flags (the BOM
+    cannot tell the DNP flag from a field); `pins.csv` — every pin: name,
+    type, no-connect flag, net;
     `nets.csv` — every net and its pins; `sheets/` — the schematic, tiled
     the same way;
   - `snap/<board>/` — the frozen board, `placement.json`, `ROUTING_PLAN.md`,
