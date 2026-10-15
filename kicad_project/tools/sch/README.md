@@ -16,6 +16,7 @@ The `schematic` skill is the workflow; this is the tool.
     python3 tools/sch/hw_sch.py                    # regenerates hw_sch.kicad_sym
     tools/.venv/bin/python tools/sch/symfields.py --board board1 SYMBOL ...    # fields above the top-left corner
     tools/.venv/bin/python tools/sch/symfields.py --board board1 --derive Device:R   # stock symbol in, Value beside
+    tools/.venv/bin/python tools/sch/symfields.py --board board1 --delete SYMBOL ... # out, to rebuild with Konnect
 
 Plain Python 3 and `kicad-cli` — no `pcbnew`, so not `tools/kpy`. `--board`
 works as everywhere in `tools/` (`boardsel.py`). `plan` writes under
@@ -146,8 +147,11 @@ corner — and sets the title block (Title, Date, Rev) on every sheet. It is
 the one exception to "nothing here writes a board's file", and a narrow one:
 it refuses unless every planned part already sits where the plan put it, it
 touches no electrical item, it exports the netlist before and after and
-fails if they differ, and `--remove` takes its frames out again (their UUIDs
-are kept in `plan.json`). Run it with KiCad's sheets saved and closed, or
+fails if they differ, and `--remove` takes its frames out again. Every text
+box on a planned sheet is a section frame (`check` reads it so), so `frame`
+replaces all of them, not only the ones `plan.json` recorded: a re-plan
+starts `plan.json` afresh, and the frames the earlier plan wrote would
+otherwise stay beside the new ones. Run it with KiCad's sheets saved and closed, or
 revert them afterwards, as with any `tools/` script.
 
 ### Power glyphs: `hw_sch`
@@ -234,6 +238,17 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   into the board's library with its fields beside the body -- for Device:R,
   whose Value sits inside the body, so a Value longer than the body ("33 1%
   (PROPOSED)") runs over the resistor's own wires in any orientation.
+- **Deleting or replacing a library symbol once KiCad has saved it.**
+  `delete_symbol` finds only symbols in Konnect's own two-space layout;
+  kicad-cli and KiCad's Symbol Editor save with tabs, so after one
+  `symfields.py` run every symbol in the library answers "not found". And
+  `create_symbol` on a name already there appends a second copy instead of
+  failing. A rebuild (a longer pin, a split unit) is therefore
+  `symfields.py --delete SYMBOL ...` (parsed tree, kicad-cli resave proven to
+  differ only by those symbols, backup), then `create_symbol`, then
+  `symfields.py SYMBOL` for the fields -- and a pin-by-pin comparison with the
+  backup (number, name, type, unit, side) before any sheet uses it. Prove it
+  first: `delete_symbol` on a scratch copy of the library says "not found".
 - **Library symbols a sheet already embeds.** Placing a part copies its
   definition into the sheet only if the sheet has none: a symbol rebuilt in the
   library keeps its old pins on every sheet that used it. After the parts of a

@@ -352,8 +352,15 @@ def frame(board, plan_dir, remove=False):
             p = off[0]
             raise SystemExit(f"sch: {name}: {p['ref']} unit {p['unit']} is not at ({p['x']}, {p['y']}) as planned "
                              f"({len(off)} part(s)) -- draw {Path(sh['file']).stem}.ops.json first")
+        # Every text box on a sheet is a section frame (model.Sheet.sections), so all of them are
+        # replaced -- not only those this plan.json recorded: a re-plan starts plan.json afresh, and the
+        # frames an earlier plan wrote would otherwise stay beside the new ones.
         old = set(written.get(name, []))
-        tree[:] = [c for c in tree if not (sexpr.is_node(c, "text_box") and str(sexpr.atom(c, "uuid", "")) in old)]
+        boxes = [str(sexpr.atom(c, "uuid", "")) for c in tree if sexpr.is_node(c, "text_box")]
+        stray = [u for u in boxes if u not in old]
+        if stray:
+            print(f"{name}: {len(stray)} frame(s) this plan did not write (an earlier plan's) removed")
+        tree[:] = [c for c in tree if not sexpr.is_node(c, "text_box")]
         if tb:
             node = sexpr.first(tree, "title_block")
             if node is None:

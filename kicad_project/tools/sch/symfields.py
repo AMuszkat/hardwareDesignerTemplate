@@ -2,10 +2,11 @@
 """Put a library symbol's Reference and Value where every unit can use them
 (tools/sch/README.md, "Symbols"). Konnect's create_symbol puts Value under
 unit 1's body and no Konnect call moves a library field; this does, and
-nothing else.
+nothing else -- but for the two library edits Konnect gets wrong below.
 
     tools/.venv/bin/python tools/sch/symfields.py --board board1 SYMBOL ... [--lib NICK] [--dry-run]
     tools/.venv/bin/python tools/sch/symfields.py --board board1 --derive Device:R [--dry-run]
+    tools/.venv/bin/python tools/sch/symfields.py --board board1 --delete SYMBOL ... [--dry-run]
 
 Corner (the default): Reference 3.81 mm and Value 1.27 mm above the unit
 bodies' shared top-left corner, left- and bottom-justified. A multi-unit
@@ -18,6 +19,13 @@ Reference right of it and Value left of it, both along the body (the way
 Device:R already carries its Reference). For a two-pin part whose stock Value
 sits inside its body (Device:R), where any Value longer than the body runs
 over the part's own wires.
+
+--delete removes whole symbols, for a rebuild (Konnect create_symbol again,
+e.g. with longer pins). Konnect's delete_symbol cannot do it once this tool
+has written the library: it finds only symbols in its own two-space layout,
+and kicad-cli (like KiCad's Symbol Editor) saves with tabs -- "not found".
+And create_symbol on a name already there appends a second copy instead of
+failing. A symbol another one `extends` is refused.
 
 How the file is written (the parsed tree, as fp.py does for footprints):
 kicad-cli resaves the library once as it stands (A) and once with the edit
@@ -164,16 +172,48 @@ def stock_symbol(lib_id, tmp):
     return symbols(resave(tmp / "s_in.kicad_sym", tmp / "s.kicad_sym"))[name]
 
 
+def delete(a, board, nick, path, tmp, A):
+    names = list(dict.fromkeys(a.symbols))
+    syms = symbols(A)
+    for name in names:
+        if name not in syms:
+            die(f"{name} is not in {path}")
+        heirs = [n for n, s in syms.items() if str(sexpr.atom(s, "extends") or "") == name and n not in names]
+        if heirs:
+            die(f"{name} is extended by {', '.join(heirs)} -- delete those too, or keep it")
+    edited = without(A, set(names))
+    (tmp / "b_in.kicad_sym").write_text(sexpr.dump(edited) + "\n")
+    B = resave(tmp / "b_in.kicad_sym", tmp / "b.kicad_sym")
+    if B != edited:
+        die(f"the resaved library differs beyond the deleted symbols -- nothing written (scratch: {tmp})")
+    for name in names:
+        pins = sum(len(list(sexpr.every(u, "pin"))) for u in sexpr.every(syms[name], "symbol"))
+        print(f"{name:28} deleted ({pins} pins)")
+    if a.dry_run:
+        print(f"dry run: proven, nothing written (scratch: {tmp})")
+        return
+    bak = board / ".sch_backups" / time.strftime("%Y%m%d-%H%M%S")
+    bak.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, bak / path.name)
+    shutil.copy2(tmp / "b.kicad_sym", path)
+    if sexpr.load(path) != B:
+        die(f"read-back differs -- restore {bak / path.name}")
+    print(f"wrote {path} (backup {bak / path.name}); {len(names)} symbol(s) deleted, nothing else changed")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("symbols", nargs="*")
     ap.add_argument("--board")
     ap.add_argument("--lib", help="library nickname in the board's sym-lib-table (default: the board's stem)")
     ap.add_argument("--derive", metavar="LIB:NAME", help="copy KiCad's stock symbol in, fields beside its body")
+    ap.add_argument("--delete", action="store_true", help="remove the named symbols (to rebuild them with Konnect)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     if bool(a.symbols) == bool(a.derive):
         die("name the board's symbols, or --derive one stock symbol")
+    if a.delete and a.derive:
+        die("--delete takes the board's symbols by name, not --derive")
     board = Path(boardsel.resolve(a.board))
     nick = a.lib or board.name.split("_")[0]
     path = lib_path(board, nick)
@@ -185,9 +225,11 @@ def main():
         stock = stock_symbol(a.derive, tmp)
         name = str(stock[1])
         if name in symbols(A):
-            die(f"{nick}:{name} already exists -- delete it first (Konnect delete_symbol) to derive it again")
+            die(f"{nick}:{name} already exists -- delete it first (--delete) to derive it again")
         edited.append(copy.deepcopy(stock))
         names, spots_of = [name], beside_spots
+    elif a.delete:
+        return delete(a, board, nick, path, tmp, A)
     else:
         names, spots_of = a.symbols, corner_spots
     syms = symbols(edited)

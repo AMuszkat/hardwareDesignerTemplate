@@ -51,7 +51,11 @@ wins where they disagree.
 
 - **A pin number of three characters (`100`, `A10`) needs a 3.81 mm pin**
   (`length` in `create_symbol`): on a 2.54 mm pin it is wider than the pin
-  and crosses the body outline (`text-graphic`).
+  and crosses the body outline (`text-graphic`). A symbol drawn without it
+  is rebuilt, not patched (no Konnect call changes a pin's length):
+  `symfields.py --delete` it, `create_symbol` with the same pins and 3.81 mm
+  on every pin of that side (connection point one grid step out), then
+  `symfields.py` for its fields, and compare it pin by pin with the backup.
 - **At most 40 pin rows on a side of a unit** (`pins-side`). Split a big IC
   into units by function — each bank's signals, each power domain, the
   grounds in their own unit — the way the datasheet's ball map groups them.
@@ -78,7 +82,9 @@ names, centred on what you asked, so the body rarely lands where the pins
 say. Two passes, no guessing: create with left pins at x = −2.54 and the
 first row at y = −2.54 (the top edge is then exactly 0); read the response's
 resolved left-pin x `lx`; the body's left edge is `lx + 2.54`; if that is
-not 0, `delete_symbol` and create again with every pin's x shifted by
+not 0, `delete_symbol` (it finds only a symbol Konnect wrote and nothing has
+resaved since — after `symfields.py`, `symfields.py --delete`; `create_symbol`
+on a name already there adds a second copy) and create again with every pin's x shifted by
 −(lx + 2.54). Then:
 
 ```
