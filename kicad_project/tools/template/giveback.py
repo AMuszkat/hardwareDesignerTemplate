@@ -54,8 +54,8 @@ NOT_MECHANISM = ("kicad_project/.claude/konnect", "kicad_project/.claude/agents/
                  "kicad_project/.claude/skills/kicad-")   # Konnect's generated files
 
 
-def git(*args, cwd=None, check=True):
-    r = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True)
+def git(*args, cwd=None, check=True, env=None):
+    r = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True, env=env)
     if check and r.returncode:
         sys.exit(f"git {' '.join(args)} failed:\n{r.stderr.strip() or r.stdout.strip()}")
     return r
@@ -78,11 +78,20 @@ def template_tree(repo):
 
 
 def identity(repo):
-    """-c flags for a commit when git has no identity: the author of the last commit."""
-    if subprocess.run(["git", "var", "GIT_AUTHOR_IDENT"], cwd=repo, capture_output=True).returncode == 0:
-        return []
-    name, email = git("log", "-1", "--format=%an%n%ae", cwd=repo).stdout.split("\n")[:2]
-    return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
+    """The environment a template commit is made in.  The template is public:
+    unless this repository's git identity already uses a GitHub noreply
+    address, the commit carries the identity of the template's own last commit
+    -- a project's global user.email (a private address) must never reach it."""
+    r = subprocess.run(["git", "config", "user.email"], cwd=repo, text=True, capture_output=True)
+    mail = r.stdout.strip()
+    env = dict(os.environ)
+    if mail.lower().endswith("@users.noreply.github.com"):
+        return env
+    name, email = git("log", "-1", "--format=%an%n%ae", f"{REMOTE}/{BRANCH}", cwd=repo).stdout.split("\n")[:2]
+    env.update(GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email, GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email)
+    print(f"committing as {name} <{email}> (the template's identity; this repository's user.email is "
+          f"{mail or 'unset'})")
+    return env
 
 
 def owner():
@@ -197,10 +206,19 @@ def cmd_finish(repo, a):
     git("add", "-A", cwd=wt)
     if not git("status", "--porcelain", cwd=wt).stdout.strip():
         sys.exit("nothing to give back: the worktree equals template/main")
-    ident = identity(repo)
-    git(*ident, "commit", "--quiet", "-m", a.message, cwd=wt)
+    env = identity(repo)
+    git("commit", "--quiet", "-m", a.message, cwd=wt, env=env)
     sha = git("rev-parse", "--short", "HEAD", cwd=wt).stdout.strip()
     files = git("diff", "--name-only", "HEAD~1", "HEAD", cwd=wt).stdout.split()
+    # the template's own privacy check, on what this commit would publish: the
+    # worktree's files and the commit's identity -- a FAIL leaves the commit
+    # undone, the files staged, and nothing pushed
+    chk = os.path.join(wt, "tools", "setup", "check_public.py")
+    r = subprocess.run([sys.executable, chk, "--rev", "HEAD"], cwd=wt, env=env, text=True, capture_output=True)
+    if r.returncode:
+        git("reset", "--quiet", "--soft", "HEAD~1", cwd=wt)
+        sys.exit(f"check-public refuses this commit; nothing pushed, the files stay staged in {wt}:\n"
+                 + "\n".join(ln for ln in r.stdout.splitlines() if ln.startswith(("FAIL", "WARN")) or "FAIL" in ln))
     git("push", "--quiet", REMOTE, f"HEAD:{BRANCH}", cwd=wt)
     print(f"template {sha} pushed to {REMOTE}/{BRANCH}: {len(files)} file(s)")
     git("worktree", "remove", "--force", wt, cwd=repo)
@@ -228,8 +246,8 @@ def cmd_finish(repo, a):
         git("stash", "push", "--quiet", "-m", "giveback: before the template merge", "--", *tracked_dirty, cwd=repo)
         stashed = True
     subject = a.message.splitlines()[0]
-    r = git(*ident, "merge", "--no-ff", "--quiet", "-m", f"Merge template: {subject}",
-            f"{REMOTE}/{BRANCH}", cwd=repo, check=False)
+    r = git("merge", "--no-ff", "--quiet", "-m", f"Merge template: {subject}",
+            f"{REMOTE}/{BRANCH}", cwd=repo, check=False, env=env)
     if r.returncode:
         git("merge", "--abort", cwd=repo, check=False)
         if stashed:

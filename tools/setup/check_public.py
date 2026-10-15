@@ -7,6 +7,7 @@ Before a repository goes public: is there anything in it that should not be?
     ./setup.sh check-public --install-hook   # run it (with --history) before every git push
     ./setup.sh check-public --words "Acme,Project Falcon"   # extra private words
     ./setup.sh check-public --secrets-file ~/.config/other/api.env
+    python3 tools/setup/check_public.py --rev HEAD   # from a worktree: this commit and its ancestry only
 
 It reads exactly the files git would publish -- tracked, plus untracked files
 that .gitignore does not exclude -- and reports:
@@ -22,9 +23,13 @@ that .gitignore does not exclude -- and reports:
         (customers, codenames, your own name: one per line, kept OUTSIDE the repo).
   FAIL  files that are never published: key files, *.env, the per-machine
         settings (settings.local.json, local.json, relay.json), venvs.
-  FAIL  your git identity: commits carry user.email.  Use the address GitHub
-        gives you (<id>+<login>@users.noreply.github.com) for this repository
-        unless you mean to publish yours (--allow-email).
+  FAIL  your git identity: commits carry user.email (GIT_COMMITTER_EMAIL in
+        the environment first, as git itself).  Use the address GitHub gives
+        you (<id>+<login>@users.noreply.github.com) for this repository unless
+        you mean to publish yours (--allow-email).  The history scanned is the
+        local branches and tags -- what a push can publish -- never the
+        remote-tracking refs or a filter-branch backup, so a rewrite that
+        removes an address is accepted before it is pushed.
   WARN  third-party documents (vendor datasheet PDFs, distributor API caches):
         usually copyrighted or under terms of use that forbid redistribution.
   WARN  binaries and files over 1 MB; Claude session links.
@@ -111,6 +116,8 @@ def key_values(paths):
 def personal(words_arg):
     rc, name = git("config", "user.name")
     rc, mail = git("config", "user.email")
+    name = os.environ.get("GIT_COMMITTER_NAME") or name          # git's own precedence
+    mail = os.environ.get("GIT_COMMITTER_EMAIL") or mail
     words = {w.strip() for w in (words_arg or "").split(",")}
     if WORDS_FILE.is_file():
         words |= {w.strip() for w in WORDS_FILE.read_text().splitlines() if not w.startswith("#")}
@@ -135,6 +142,8 @@ def main():
     ap.add_argument("--words", help="comma-separated private words, in addition to private_words.txt")
     ap.add_argument("--secrets-file", action="append", default=[], help="another KEY=value file whose values must not appear")
     ap.add_argument("--allow-email", action="store_true", help="your git user.email may be published")
+    ap.add_argument("--rev", help="scan the history of this revision only (giveback.py, from a worktree), "
+                                  "not every local branch")
     ap.add_argument("--strict", action="store_true", help="WARN fails too")
     ap.add_argument("--install-hook", action="store_true", help="install a git pre-push hook that runs this")
     a = ap.parse_args()
@@ -217,13 +226,14 @@ def main():
                      "(GitHub -> Settings -> Emails), or pass --allow-email")
     print(f"note: commits will carry the name '{gname or getpass.getuser()}' and the address "
           f"'{mail or '(unset)'}'" + ("" if gname else " (git user.name is unset: git uses your account name)"))
-    rc, authors = git("log", "--all", "--format=%ae%n%ce")
+    hist = [a.rev] if a.rev else ["--branches", "--tags"]
+    rc, authors = git("log", *hist, "--format=%ae%n%ce")
     for e in sorted(set(authors.split())):
         if not EMAIL_OK.search(e) and not (a.allow_email and e.lower() == mail.lower()):
             fails.append(f"history: a commit carries the address {e} (rewriting history is the only fix)")
 
     if a.history:
-        rc, log = git("log", "--all", "-p", "--no-color", "--format=commit %h")
+        rc, log = git("log", *hist, "-p", "--no-color", "--format=commit %h")
         commit = "?"
         cur = "?"
         for line in log.splitlines():
