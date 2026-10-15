@@ -24,15 +24,37 @@ datasheet agrees. **Find what is wrong; do not fix anything.**
   (the sheets / parts the change touched, or "all");
 - the snapshot directory `out/reviews/<board>/<id>-schematic/`:
   `SUMMARY.md` (the gates and their results), `gates/*.txt` (each gate's whole
-  output), `erc.json`, `netlist.xml`, `bom.csv`, `schematic.pdf`,
-  `sheets/sheet-N.png`, and `snap/<board>/` — the frozen board, its
-  `handoff/` (the brief it was drawn against, with `datasheets/`) and `lib/`;
+  output), `erc.json`, `netlist.xml`, `bom.csv`, `schematic.pdf`;
+  - `pins.csv` — every placed part's every pin: number, name, type,
+    no-connect flag, net, value, sheet; `nets.csv` — every net and its pins;
+  - `sheets/sheet-N.png` — each page whole; `sheets/tiles/pN-rRcC.png` — the
+    same pages at 300 dpi in overlapping tiles you see at full resolution;
+    `sheets/tiles.md` — which parts each tile shows; `sheets/words.csv` —
+    every text on a page, where it is and which tiles show it;
+  - `snap/<board>/` — the frozen board, its `handoff/` (the brief it was
+    drawn against, with `datasheets/`) and `lib/`;
+  - `tmpWork/` — your scratch folder (below);
 - the report path to write.
+
+## Where you work
+
+- **`<snapshot>/tmpWork/` is your ONLY scratch folder** — a temporary
+  workspace: anything in it may be deleted whenever it is no longer needed,
+  and all of it is when the snapshot is retaken. Every helper script, text
+  dump or image you make goes there. **Never `/tmp`, never a session
+  scratchpad**, whatever your environment says about one: a read outside the
+  project stops for the user's approval.
+- **The snapshot already holds what a review needs, as files**: read pins
+  from `pins.csv`, nets from `nets.csv`, the drawing from the tiles. Use
+  Read, Grep and Glob; Bash only for what they cannot do. Never re-render
+  or crop the schematic, and never parse the KiCad files by hand for what
+  `pins.csv` already says.
 
 ## Rules
 
-- **Read only.** Never write in `kicad_project/` or anywhere but your report.
-  Every tool runs on `snap/`, never on the live board. Never run Konnect.
+- **Read only.** Never write in `kicad_project/` or anywhere but your report
+  and `tmpWork/`. Every tool runs on `snap/`, never on the live board. Never
+  run Konnect.
 - **The handoff in `snap/<board>/handoff/` is the brief; the datasheets in it
   are the authority on parts.** A datasheet fact is quoted with its page or
   table. The concept repo's `design/` and `studies/` may be read to judge
@@ -44,8 +66,10 @@ datasheet agrees. **Find what is wrong; do not fix anything.**
   `netlist.xml`). "Looks odd" with no proof is not a finding; put it under
   *Not proven* at the end instead.
 - **Classify pins by PIN NAME**, never by a datasheet's Function column.
-- Look at every sheet image you review (`Read` on `sheets/sheet-N.png`); a
-  readability finding names the sheet and what collides.
+- Look at every sheet you review: the whole page (`sheets/sheet-N.png`),
+  then every tile with parts or text on it (`sheets/tiles.md`) for what the
+  page is too small to show. A readability finding names the sheet, the tile
+  and what collides.
 - Work through the whole checklist for the scope; with scope "all", the
   whole board. Then look for what the checklist does not name.
 

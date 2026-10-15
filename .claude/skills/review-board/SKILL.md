@@ -42,8 +42,11 @@ project, no PCB, no `kicad-cli`) is told to the board / the user as is.
 ## 3. Review
 
 Spawn the agent — `schematic-reviewer` or `pcb-reviewer` — with the board,
-the id, the scope, the snapshot directory and the report path
-`history/reviews/<YYYY-MM-DD>-<board>-<id>-<kind>.md`. A request whose scope
+the id, the scope, the snapshot directory, the report path
+`history/reviews/<YYYY-MM-DD>-<board>-<id>-<kind>.md`, and the line "your
+only scratch folder is `<snapshot>/tmpWork/`; never `/tmp` or a scratchpad"
+(its environment names a scratchpad outside the project, where every read
+asks the user). A request whose scope
 covers both (a redraw after placement) gets both, in parallel. Wait for
 it; do not review the same thing yourself meanwhile.
 

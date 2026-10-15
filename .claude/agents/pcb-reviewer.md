@@ -26,16 +26,38 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   RVk", "fab release", or "all");
 - the snapshot directory `out/reviews/<board>/<id>-pcb/`: `SUMMARY.md`,
   `gates/*.txt` (DRC with schematic parity, Board Setup against `14_fab.md`,
-  footprint signatures, routing status, copper-to-edge), `pcb/*.png` (top,
-  bottom, inner copper), `netlist.xml`, `bom.csv`, `schematic.pdf`, and
-  `snap/<board>/` — the frozen board, `placement.json`, `ROUTING_PLAN.md`,
-  `routing/` (plans, `gates.json`), `lib/` and its `handoff/`;
+  footprint signatures, routing status, copper-to-edge), `netlist.xml`,
+  `bom.csv`, `schematic.pdf`;
+  - `pcb/top.png`, `bottom.png`, `inner.png` — each view whole;
+    `pcb/tiles/<view>-rRcC.png` — the same views at 600 dpi in overlapping
+    tiles you see at full resolution; `pcb/tiles.md` — which parts each tile
+    shows; `pcb/words.csv` — every text in a view and which tiles show it;
+  - `pins.csv` — every part's every pin: name, type, no-connect flag, net;
+    `nets.csv` — every net and its pins; `sheets/` — the schematic, tiled
+    the same way;
+  - `snap/<board>/` — the frozen board, `placement.json`, `ROUTING_PLAN.md`,
+    `routing/` (plans, `gates.json`), `lib/` and its `handoff/`;
+  - `tmpWork/` — your scratch folder (below);
 - the report path to write.
+
+## Where you work
+
+- **`<snapshot>/tmpWork/` is your ONLY scratch folder** — a temporary
+  workspace: anything in it may be deleted whenever it is no longer needed,
+  and all of it is when the snapshot is retaken. Every helper script, text
+  dump or image you make goes there. **Never `/tmp`, never a session
+  scratchpad**, whatever your environment says about one: a read outside the
+  project stops for the user's approval.
+- **The snapshot already holds what a review needs, as files**: pins and
+  nets from `pins.csv` / `nets.csv`, the copper from the tiles. Use Read,
+  Grep and Glob; Bash for measuring the board (below) and for what they
+  cannot do. Never re-render or crop a view.
 
 ## Rules
 
-- **Read only.** Never write in `kicad_project/` or anywhere but your report.
-  Every tool runs on `snap/`. Never run Konnect, never open KiCad's GUI.
+- **Read only.** Never write in `kicad_project/` or anywhere but your report
+  and `tmpWork/`. Every tool runs on `snap/`. Never run Konnect, never open
+  KiCad's GUI.
 - To measure the board, read it with KiCad's own module on the snapshot:
   `kicad_project/tools/kpy - <<'EOF'` … `import pcbnew;
   b = pcbnew.LoadBoard("<snap>/<board>/<board>.kicad_pcb")` … — positions,
@@ -47,8 +69,9 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   cites only what the board can read.
 - **Evidence or nothing**: a coordinate, a measured length, a gate line, a
   render region. Suspicions go under *Not proven*.
-- Look at the renders (`Read` on `pcb/*.png`) for what numbers miss: a pour
-  cut in two, a split return path, a part outside its group, silk on pads.
+- Look at the views for what numbers miss: a pour cut in two, a split
+  return path, a part outside its group, silk on pads — each whole
+  (`pcb/*.png`), then the tiles (`pcb/tiles.md`) for the detail.
 
 ## The checklist
 
