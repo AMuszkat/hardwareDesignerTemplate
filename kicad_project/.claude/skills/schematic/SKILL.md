@@ -18,18 +18,24 @@ wins where they disagree.
 
 ## The standard
 
-- **A sheet is a set of titled sections.** Every functional block sits in a
-  frame with its title in the corner — `U1 — MIMX8MM6CVTKZAA`, `U1
-  decoupling`, `U1 pull-ups and pull-downs`, `U1: Y1 24MHz`, `Power sources`
-  — so a reader sees at a glance what each group is and whose it is. Nothing
-  is drawn outside a frame, frames never overlap, and no wire crosses one:
-  sections talk through labels and power symbols (`section`,
-  `section-title`, `section-wire`). An IC's sections stand together as one
-  cluster (`home`). The plan titles a satellite by what its parts *are*
-  (pull-ups, capacitors, headers); where that is not what they are *for* —
-  an I2C pull-up pair, a USB-C CC Rd pair, LED resistors, a USB ID cap —
-  name it: `"section": "J5 CC pull-downs (Rd)"` on each of its parts in
-  `<board>/schematic.json`. A reviewer reads the title as a claim.
+- **A sheet is a set of functional groups, one frame each.** A frame holds
+  one function — `USB-C`, `Module connector`, `Debug console`, `Ethernet`,
+  `Power sources` — the main part(s) with every block that serves them
+  (decoupling, ESD, pull-downs, buttons) inside it; not a frame per part
+  and one per block. As many frames as functions you can name, and no
+  more. A title names the function, never a refdes: the board's `"group"`
+  on each part in `<board>/schematic.json` (the same name on J1, J2 and the
+  standoffs makes one frame; a multi-unit part may give `{"1": …}` per
+  unit), else the part's Value. A connector is a group of its own however
+  few pins it has (a strictly local header stays with its circuit by
+  `group`). Inside a frame a block is captioned — small plain text — only
+  where the board says what it is for: `"caption": "CC pull-downs (Rd)"`,
+  `I2C pull-ups`, `MagJack LED resistors`; the plan writes no caption of
+  its own. Nothing is drawn outside a frame, frames never overlap, and no
+  wire crosses one: groups talk through labels and power symbols
+  (`section`, `section-title`, `section-wire`); a small part stands in
+  the frame of the IC it serves (`home`). A reviewer reads a title and a
+  caption as claims.
 - **One function per section, wired inside.** The decoupling bank, the
   pull-ups, the crystal with its load capacitors, the feedback divider —
   each a block drawn with wires between its parts. A label joins sections;

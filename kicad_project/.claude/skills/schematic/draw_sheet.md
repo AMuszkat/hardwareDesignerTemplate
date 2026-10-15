@@ -21,7 +21,7 @@ holds `{"tool": NAME, "args": {...}}` in order; NAME maps to the MCP tool
 Rules (follow exactly):
 
 1. First load the tool schemas with ToolSearch:
-   `select:mcp__konnect__batch_delete,mcp__konnect__batch_delete_no_connect,mcp__konnect__set_schematic_page,mcp__konnect__batch_place_components,mcp__konnect__batch_edit_schematic_components,mcp__konnect__batch_add_wire,mcp__konnect__batch_add_junction,mcp__konnect__batch_add_no_connect,mcp__konnect__add_schematic_net_label,mcp__konnect__update_symbols_from_library,mcp__konnect__reset_schematic_field_positions,mcp__konnect__add_component_annotation`.
+   `select:mcp__konnect__batch_delete,mcp__konnect__batch_delete_no_connect,mcp__konnect__set_schematic_page,mcp__konnect__batch_place_components,mcp__konnect__batch_edit_schematic_components,mcp__konnect__batch_add_wire,mcp__konnect__batch_add_junction,mcp__konnect__batch_add_no_connect,mcp__konnect__add_schematic_net_label,mcp__konnect__add_schematic_text,mcp__konnect__update_symbols_from_library,mcp__konnect__reset_schematic_field_positions,mcp__konnect__add_component_annotation`.
 2. Print the calls with Bash/python in chunks you can read, e.g.
    `python3 -c "import json;d=json.load(open('<BOARD_DIR>/sch_plan/<STEM>.ops.json'));[print(i,c['tool'],json.dumps(c['args'],separators=(',',':'))) for i,c in enumerate(d['calls'][A:B],A)]"`.
    Make every call in order, with the arguments EXACTLY as written: same
@@ -30,8 +30,9 @@ Rules (follow exactly):
    argument (wires, junctions, no-connect positions, components, uuids) may be
    split into consecutive calls of the same tool (about 100 elements each),
    every element passed exactly once.
-3. `add_schematic_net_label` calls may be sent up to 12 per message as
-   parallel tool calls; every other call one per message, in order.
+3. `add_schematic_net_label` and `add_schematic_text` calls may be sent up
+   to 12 per message as parallel tool calls; every other call one per
+   message, in order.
 4. A call blocked by a transient "classifier gave no verdict" error is retried
    once with the same arguments; any other error is reported verbatim.
 5. Touch ONLY this sheet file, through Konnect. Never call save_project, never

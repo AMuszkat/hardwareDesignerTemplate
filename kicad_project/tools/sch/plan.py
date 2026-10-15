@@ -10,10 +10,19 @@ into blocks drawn with wires inside: a decoupling bank per rail (caps between
 a rail wire and a ground wire), a pull bank per rail (resistors hanging from
 one rail wire, each ending in its signal's label), a series stack, and a
 ladder for anything else (a crystal with its load caps, a filter). A bank or
-pull block holds one role (decoupling, pull-ups, ESD, buttons, headers), so
-its section's title says what is in it. A block
-sits beside the anchor pins it serves, ordered as they are; banks go below.
-Groups are packed onto the smallest ISO paper that holds them.
+pull block holds one role (decoupling, pull-ups, ESD, buttons, headers). A
+block sits beside the anchor pins it serves, ordered as they are; banks go
+below.
+
+A section frame is a FUNCTIONAL GROUP: the anchor(s) it is named after and
+every block that serves them, inside one frame -- an anchor with its blocks
+beside it as a row, the rows of a group packed about square. The board names
+a group ("group" in schematic.json; the same name on two parts is one frame);
+a part's Value names it otherwise, so a title never carries a refdes. A block
+inside is captioned only where the board says what it is for ("caption").
+Parts no anchor claims are a group per lone connector or lead part, else
+"Other parts"; the PWR_FLAGs are "Power sources". Groups are packed onto the
+smallest ISO paper that holds them.
 
 Output, under <out>/:
   plan.json             the layout, every sheet
@@ -46,6 +55,8 @@ GAP = 2.54             # between two elements of a block
 BLOCK_GAP = 7.62       # between two blocks
 SIDE_GAP = 10.16       # between an anchor's label lane and its blocks
 GROUP_GAP = 10.16      # between two sections
+ROW_GAP = 15.24        # inside a group: an anchor's label lane to its blocks (what two frames kept apart)
+CAPTION_SIZE = 1.27    # a block's caption, plain text above it
 ROW_MIN = 10.16        # between two rows of a ladder
 BANK_MAX = 8           # elements per bank row before it wraps
 MARGIN = check.MARGIN + 2.54
@@ -88,11 +99,13 @@ def uid():
 # == the source ==============================================================
 
 class Part:
-    def __init__(self, ref, lib_id, lib, value, footprint, fields, units, dnp=False, home=None, section=None):
+    def __init__(self, ref, lib_id, lib, value, footprint, fields, units, dnp=False, home=None, caption=None,
+                 group=None):
         self.ref, self.lib_id, self.lib, self.value = ref, lib_id, lib, value
         self.footprint, self.fields, self.units, self.dnp = footprint, fields, units, dnp
         self.home = home           # the anchor a small part serves, when the board names it
-        self.section = section     # the title of the section it stands in, when the board names it
+        self.caption = caption     # what its block is for, when the board says it (drawn above the block)
+        self.group = group         # the title of the frame it stands in (a str, or {unit: str}), when named
 
     def pin_count(self, unit):
         return len({p.number for p in self.lib.unit_pins(unit)})
@@ -207,7 +220,8 @@ class Source:
             src.lib_nodes[p["lib_id"]], src.libs[p["lib_id"]] = node, lib
             src.parts[ref] = Part(ref, p["lib_id"], lib, p.get("value", ""), p.get("footprint", ""),
                                   p.get("fields", {}), {int(u): s for u, s in p["units"].items()},
-                                  p.get("dnp", False), p.get("home"), p.get("section"))
+                                  p.get("dnp", False), p.get("home"), p.get("caption", p.get("section")),
+                                  p.get("group"))
         src.nets = {n: [tuple(x) for x in nodes] for n, nodes in j["nets"].items()}
         src.rails = set(j.get("rails", []))
         src.nc = {tuple(x) for x in j.get("nc", [])}
@@ -256,7 +270,7 @@ class Source:
             value = sym.get("value") or re.split(r",| -- |;", hp["value"])[0].strip()
             src.parts[ref] = Part(ref, sym["lib_id"], lib, value, sym.get("footprint", ""),
                                   dict(sym.get("fields", {})), units, sym.get("dnp", False), sym.get("home"),
-                                  sym.get("section"))
+                                  sym.get("caption", sym.get("section")), sym.get("group"))
         src.nets = {n: [tuple(x) for x in nodes if x[0] in src.parts] for n, nodes in nl["nets"].items()}
         src.rails = set(nl.get("rails", []))
         src.nc = {tuple(x) for x in nl.get("nc", []) if x[0] in src.parts}
@@ -430,6 +444,7 @@ class Block:
         self.labels = []           # (kind, text, x, y, rot)
         self.power = []            # El of a power symbol
         self.extra = []            # boxes with no item (reserved room)
+        self.captions = []         # (text, x, y): plain text above a block, left-bottom justified
         self.title, self.frame = "", None     # a section: its title and frame box
         self.sections = []         # [[title, frame]] of the sections absorbed
 
@@ -439,6 +454,7 @@ class Block:
         bs += [label_box(*l) for l in self.labels]
         bs += [(x - 0.7, y - 0.7, x + 0.7, y + 0.7) for x, y in self.ncs]
         bs += self.extra
+        bs += [(x, y - CAPTION_SIZE, x + text_w(t, CAPTION_SIZE) * 1.1, y) for t, x, y in self.captions]
         bs += [self.frame] + [f for _, f in self.sections]
         return ubox(*bs) or (0, 0, 0, 0)
 
@@ -451,6 +467,7 @@ class Block:
         self.ncs = [(round(x + dx, 4), round(y + dy, 4)) for x, y in self.ncs]
         self.labels = [(k, t, round(x + dx, 4), round(y + dy, 4), r) for k, t, x, y, r in self.labels]
         self.extra = [mbox(b, dx, dy) for b in self.extra]
+        self.captions = [(t, round(x + dx, 4), round(y + dy, 4)) for t, x, y in self.captions]
         self.frame = mbox(self.frame, dx, dy)
         self.sections = [[t, mbox(f, dx, dy)] for t, f in self.sections]
 
@@ -462,6 +479,7 @@ class Block:
         self.labels += other.labels
         self.power += other.power
         self.extra += other.extra
+        self.captions += other.captions
         self.sections += ([[other.title, other.frame]] if other.frame else []) + other.sections
 
     def wire(self, a, b):
@@ -1087,119 +1105,182 @@ def plan_sheet(ctx, name):
         else:
             homes[k]["sats"].append(((kind, role_), hint, b))
 
-    # every anchor is a section of its own; its satellites are one section
-    # per kind and role beside it, sized to its height, so the sheet reads as
-    # titled blocks joined by labels and rails
+    # a frame is a functional group: the anchor unit(s) it is named after and
+    # every block that serves them -- each anchor with its blocks beside it as
+    # a row, the rows (and the board's loose blocks) of one group packed about
+    # square inside one frame. Groups are named by the board ("group") or by
+    # the anchor's Value, never by a refdes.
     order = sorted(homes, key=lambda k: (-src.parts[k[0]].pin_count(k[1]), nat(k[0]), k[1]))
     kinds = ("bank", "pull", "series", "cluster", "misc")
+    members = {}                   # title -> [Block]
+    titles = []                    # packing order: the anchors' groups biggest first, then the rest
+
+    def member(title, b, anchored=False):
+        members.setdefault(title, []).append(b)
+        if anchored and title not in titles:
+            titles.append(title)
+
     for (ref, u) in order:
         h = homes[(ref, u)]
-        part = src.parts[ref]
-        unit = f" unit {u}" if len(part.lib.units()) > 1 else ""
-        a = section(f"{ref}{unit} — {part.value}", [h["block"]])
+        title = group_title(src.parts[ref], u)
+        a = h["block"]
         ab = a.box()
         by_kind = defaultdict(list)
         for kr, hint, b in h["sats"]:
             by_kind[kr].append((hint, b))
-        home = [a]
+        subs = []
         for kind, role_ in sorted(by_kind, key=lambda kr: (kinds.index(kr[0]), kr[1] or "")):
-            items = sorted(by_kind[(kind, role_)], key=lambda t: t[0])
+            bs = [b for _, b in sorted(by_kind[(kind, role_)], key=lambda t: t[0])]
             if kind == "cluster":
-                small_, big_ = [b for _, b in items if len(b.els) <= 2], [b for _, b in items if len(b.els) > 2]
-                for b in big_:
-                    home.append(section(cluster_title(ref, b), [b]))
-                if len(small_) == 1:
-                    home.append(section(cluster_title(ref, small_[0]), small_))
-                elif small_:
-                    refs = sorted({e.ref for b in small_ for e in b.els if e.ref}, key=nat)
-                    t = ", ".join(refs) if len(refs) <= 5 else f"{refs[0]} … {refs[-1]} ({len(refs)} parts)"
-                    home.append(balanced(f"{ref}: {t}", small_, ab[3] - ab[1]))
-                continue
-            bs = [b for _, b in items]
-            if kind == "bank" and role_ == "decoupling":
-                what = "output filters and decoupling" if any(re.match(r"(L|FB)\d", e.ref or "")
-                                                               for b in bs for e in b.els) else "decoupling"
-            elif kind in ("bank", "pull"):
-                what = role_
-            elif kind == "series":
-                what = "series parts"
+                small_, big_ = [b for b in bs if len(b.els) <= 2], [b for b in bs if len(b.els) > 2]
+                sets = [[b] for b in big_] + ([small_] if small_ else [])
             else:
-                refs = [e.ref for b in bs for e in b.els]
-                what = "test points" if all(r.startswith("TP") for r in refs) else "other parts"
-            home.append(balanced(f"{ref} {what}", bs, ab[3] - ab[1]))
-        home[1:] = sorted(home[1:], key=lambda g: (not g.title.endswith("decoupling"), -(g.box()[3] - g.box()[1])))
-        groups.append(home)
-    if loose:
-        # a homeless cluster led by an IC-like part (a small regulator, a
-        # transistor) is its own section, and so is a lone connector (an
-        # interface, titled like an anchor); the rest share one
-        rest = []
-        for b in loose:
-            parts_ = [e for e in b.els if e.ref]
-            if len(parts_) == 1 and re.match(r"(J|P|CN)[A-Z_]*\d", parts_[0].ref):
-                e = parts_[0]
-                groups.append([section(f"{e.ref} — {e.value}" if e.value else e.ref, [b])])
-                continue
-            lead = {e.ref for e in b.els if e.ref and not re.match(r"(R|C|L|FB|TP|H|FID|J)\d", e.ref)}
-            if len(lead) == 1 and len(b.els) > 1:
-                e = next(e for e in b.els if e.ref in lead)
-                groups.append([section(f"{e.ref} {(e.value or '').split()[0] if e.value else ''}".rstrip(), [b])])
-            else:
-                rest.append(b)
-        if rest:
-            groups.append([balanced("Other parts", rest, 120.0)])
+                sets = [bs]
+            for bs_ in sets:
+                b = captioned(fitted(bs_, ab[3] - ab[1]), board_caption(bs_))
+                gt = board_group(bs_) or lone_connector(bs_)
+                if gt and gt != title:
+                    member(gt, b)                  # the board's group, or a connector: an interface of its own
+                else:
+                    subs.append((role_ == "decoupling", b))
+        subs = [b for _, b in sorted(subs, key=lambda t: (not t[0], -(t[1].box()[3] - t[1].box()[1])))]
+        member(title, row(a, subs), anchored=True)
+    for b in loose:
+        # a homeless block: the group the board names; else a lone connector
+        # is an interface of its own (its Value), a cluster led by an IC-like
+        # part (a small regulator, a transistor) likewise; the rest share one
+        b = captioned(b, board_caption([b]))
+        gt = board_group([b]) or lone_connector([b])
+        if gt:
+            member(gt, b)
+            continue
+        lead = {e.ref for e in b.els if e.ref and not re.match(r"(R|C|L|FB|TP|H|FID|J)\d", e.ref)}
+        if len(lead) == 1 and len(b.els) > 1:
+            e = next(e for e in b.els if e.ref in lead)
+            member((e.value or "").split()[0] or e.ref, b)
+        else:
+            member("Other parts", b)
     flags = flag_block(ctx, name)
     if flags:
-        groups.append([section("Power sources", [flags])])
-    return pack(groups)
+        member("Power sources", flags)
+    aw = model.paper_size(ISO[-1])[0] - 2 * FRAME - 2 * MARGIN
+    secs = []
+    for title in titles + [t for t in members if t not in titles]:
+        bs = members[title]
+        th = max(b.box()[3] - b.box()[1] for b in bs)
+        # a group's loose single parts (standoffs, a lone header) stand together, not where each fits
+        singles = [b for b in bs if b.kind != "row" and len(b.els) <= 2]
+        if len(singles) > 1:
+            bs = [b for b in bs if b not in singles] + [fitted(singles, th)]
+        secs.append([section(title, [fitted(bs, th, aw)])])
+    return pack(secs)
 
 
-def cluster_title(home, blk):
-    """A wired cluster is named by the part that is not an R, C or L (a
-    crystal, a diode, a transistor) with its value's first word, else by its
-    parts. A lone connector is an interface of its own, titled like an anchor."""
-    refs = sorted({e.ref for e in blk.els if e.ref}, key=nat)
-    if len(refs) == 1 and re.match(r"(J|P|CN)[A-Z_]*\d", refs[0]):
-        e = next(e for e in blk.els if e.ref)
-        return f"{e.ref} — {e.value}" if e.value else e.ref
-    lead = [e for e in blk.els if e.ref and not re.match(r"(R|C|L|FB)\d", e.ref)]
-    if len({e.ref for e in lead}) == 1:
-        e = lead[0]
-        return f"{home}: {e.ref} {(e.value or '').split()[0] if e.value else ''}".rstrip()
-    return f"{home}: {', '.join(refs[:5])}{', …' if len(refs) > 5 else ''}"
+def group_title(part, unit):
+    """The frame a part's unit stands in: the board's "group" (a str, or
+    {unit: str} on a multi-unit part), else the part's Value."""
+    g = part.group
+    if isinstance(g, dict):
+        g = g.get(str(unit)) or g.get(unit)
+    return g or part.value or part.ref
 
 
-def board_title(blocks):
-    """The title the board gives a section's parts ("section" in
-    schematic.json), or None. A plan names a section by its parts' kind (R to
-    a rail: pull-ups); what they are for -- I2C pull-ups, CC Rd, LED
-    resistors -- is the board's to say. Every part in the section names the
-    same title, or none does."""
+def lone_connector(blocks):
+    """A block that is one connector and nothing else is an interface of its
+    own, titled by its Value -- however few pins it has, it is not a
+    satellite of the IC it wires to (a strictly local header is kept with
+    its circuit by "group"). None otherwise."""
+    parts = [e for b in blocks for e in b.els if e.ref]
+    if len(parts) == 1 and re.match(r"(J|P|CN)[A-Z_]*\d", parts[0].ref):
+        return parts[0].value or parts[0].ref
+    return None
+
+
+def _agreed(blocks, attr, what):
     parts = {e.part.ref: e.part for b in blocks for e in b.els if e.part is not None}
-    names = sorted({p.section for p in parts.values() if p.section})
+    names = sorted({getattr(p, attr) for p in parts.values() if isinstance(getattr(p, attr), str)})
     if not names:
         return None
-    bare = sorted((r for r, p in parts.items() if not p.section), key=nat)
+    bare = sorted((r for r, p in parts.items() if not getattr(p, attr)), key=nat)
     if len(names) > 1 or bare:
-        raise SystemExit(f"sch: one section holds {', '.join(sorted(parts, key=nat))}: they name "
+        raise SystemExit(f"sch: one block holds {', '.join(sorted(parts, key=nat))}: they name "
                          f"{' / '.join(repr(n) for n in names)}" + (f", and {', '.join(bare)} names none" if bare else "")
-                         + " -- give each the same \"section\" in schematic.json, or none")
+                         + f" -- give each the same \"{what}\" in schematic.json, or none")
     return names[0]
 
 
-def section(title, blocks, width=None):
+def board_caption(blocks):
+    """What a block is for, in the board's words ("caption" in
+    schematic.json) -- an I2C pull-up pair, a CC Rd pair, LED resistors --
+    or None: a plan knows what parts are, not what they are for. Every part
+    in the block names the same caption, or none does."""
+    return _agreed(blocks, "caption", "caption")
+
+
+def board_group(blocks):
+    """The frame the board puts a small part's block in ("group"), or None.
+    Every part in the block names the same group, or none does."""
+    return _agreed(blocks, "group", "group")
+
+
+def captioned(block, caption):
+    """The block with its caption above its top-left corner, room reserved."""
+    if caption:
+        x0, y0, _, _ = block.box()
+        block.captions.append((caption, round(x0, 4), round(y0 - CAPTION_SIZE, 4)))
+        block.extra.append((x0, y0 - 3 * CAPTION_SIZE, x0 + text_w(caption, CAPTION_SIZE) * 1.1, y0))
+    return block
+
+
+def row(anchor, subs):
+    """An anchor with its blocks beside it, fitted to its height, as one block."""
+    r = Block("row")
+    ab = anchor.box()
+    r.absorb(anchor)
+    if subs:
+        s = fitted(subs, ab[3] - ab[1])
+        sb = s.box()
+        s.move(snap(ab[2] + ROW_GAP - sb[0], G), snap(ab[1] - sb[1], G))
+        r.absorb(s)
+    return r
+
+
+def packed(blocks, width=None):
     """Blocks packed bottom-left, tallest first, into `width` (unbounded by
-    default), inside a titled frame: the frame clears the content by PAD,
-    the title band sits in its top-left corner, and the frame is wide
-    enough for the title. The board's own title wins (board_title)."""
-    title = board_title(blocks) or title
+    default), as one untitled block."""
     blocks = sorted(blocks, key=lambda b: -(b.box()[3] - b.box()[1]))
     boxes = [b.box() for b in blocks]
     pos, _ = skyline([(b[2] - b[0], b[3] - b[1]) for b in boxes], width or 1e9, BLOCK_GAP)
-    g = Block("section")
+    g = Block("packed")
     for b, bb, (x, y) in zip(blocks, boxes, pos):
         b.move(snap(x - bb[0], G), snap(y - bb[1], G))
         g.absorb(b)
+    return g
+
+
+def fitted(blocks, target_h, max_w=254.0):
+    """Blocks packed to a width that keeps them about `target_h` tall (or
+    about square when there is more than that), so an anchor's blocks stand
+    beside it and a group's rows make a block, not a strip."""
+    boxes = sorted([b.box() for b in blocks], key=lambda b: -(b[3] - b[1]))
+    items = [(b[2] - b[0], b[3] - b[1]) for b in boxes]
+    area = sum((w + BLOCK_GAP) * (h + BLOCK_GAP) for w, h in items)
+    target_h = max(target_h, math.sqrt(area))
+    w = max(w for w, _ in items)
+    while w < max_w:
+        _, used = skyline(items, w, BLOCK_GAP)
+        if used <= target_h * 1.15:
+            break
+        w += 12.7
+    return packed(blocks, w)
+
+
+def section(title, blocks, width=None):
+    """Blocks packed (`packed`) inside a titled frame: the frame clears the
+    content by PAD, the title band sits in its top-left corner, and the frame
+    is wide enough for the title."""
+    g = packed(blocks, width)
+    g.kind = "section"
     b = g.box()
     tw = text_w(title, TITLE_SIZE) * 1.1 + 2 * PAD + 2.54
     x0, y0 = b[0] - PAD, b[1] - PAD - TITLE_H
@@ -1209,23 +1290,6 @@ def section(title, blocks, width=None):
                math.ceil(x1 / 1.27) * 1.27, math.ceil(y1 / 1.27) * 1.27)
     g.frame = tuple(round(v, 4) for v in g.frame)
     return g
-
-
-def balanced(title, blocks, target_h):
-    """A section packed to a width that keeps it about `target_h` tall (or
-    about square when there is more than that), so a satellite section
-    stands beside its anchor instead of under it."""
-    boxes = sorted([b.box() for b in blocks], key=lambda b: -(b[3] - b[1]))
-    items = [(b[2] - b[0], b[3] - b[1]) for b in boxes]
-    area = sum((w + BLOCK_GAP) * (h + BLOCK_GAP) for w, h in items)
-    target_h = max(target_h, math.sqrt(area))
-    w = max(w for w, _ in items)
-    while w < 254.0:
-        _, used = skyline(items, w, BLOCK_GAP)
-        if used + 2 * PAD + TITLE_H <= target_h * 1.15:
-            break
-        w += 12.7
-    return section(title, blocks, w)
 
 
 def flag_block(ctx, name):
@@ -1325,34 +1389,50 @@ def skyline(items, aw, gap):
 
 def pack(groups):
     """`groups` is a list of homes, each a list of sections: the anchor first,
-    its satellites after it. The sections are packed bottom-left in that
-    order, a satellite next to a section of its own home whenever a spot
-    touches one, on the smallest ISO paper that holds them, the title
-    block's corner kept clear."""
+    its satellites after it. The sections are packed bottom-left, a satellite
+    next to a section of its own home whenever a spot touches one, on the
+    smallest ISO paper that holds them, the title block's corner kept clear.
+    Bottom-left packing is greedy, so a few orders are tried on each paper --
+    as given, tallest first, biggest first, widest first -- and the lowest
+    result taken."""
+    def dims(gs):
+        b = ubox(*(g.box() for g in gs))
+        return b[2] - b[0], b[3] - b[1]
+    orders = [list(groups)]
+    for key in (lambda gs: -dims(gs)[1], lambda gs: -(dims(gs)[0] * dims(gs)[1]), lambda gs: -dims(gs)[0]):
+        o = sorted(groups, key=key)
+        if o not in orders:
+            orders.append(o)
     for paper in ISO:
         pw, ph = model.paper_size(paper)
         aw, ah = pw - 2 * FRAME - 2 * MARGIN, ph - 2 * FRAME - 2 * MARGIN - TITLE_BLOCK[1]
-        sky = Skyline(aw, GROUP_GAP)
-        pos, ok = [], True
-        for gs in groups:
-            placed = []
-            for g in gs:
-                b = g.box()
-                w, h = b[2] - b[0], b[3] - b[1]
-                at = sky.place(w, h, placed)
-                if at is None:
-                    ok = False
+        best = None
+        for order in orders:
+            sky = Skyline(aw, GROUP_GAP)
+            pos, ok = [], True
+            for gs in order:
+                placed = []
+                for g in gs:
+                    b = g.box()
+                    w, h = b[2] - b[0], b[3] - b[1]
+                    at = sky.place(w, h, placed)
+                    if at is None:
+                        ok = False
+                        break
+                    placed.append((at[0], at[1], at[0] + w, at[1] + h))
+                    pos.append((g, b, at))
+                if not ok:
                     break
-                placed.append((at[0], at[1], at[0] + w, at[1] + h))
-                pos.append((g, b, at))
-            if not ok:
-                break
-        if not ok:
+            if ok and (best is None or sky.used() < best[0]):
+                best = (sky.used(), pos)
+        if os.environ.get("SCH_PACK_DEBUG"):
+            print(f"pack: {paper} strip {aw:.0f}x{ah:.0f}, best used {best[0] if best else None:.0f}")
+        if best is None:
             continue
-        if sky.used() <= ah or paper == ISO[-1]:
+        if best[0] <= ah or paper == ISO[-1]:
             ox, oy = FRAME + MARGIN, FRAME + MARGIN
             sheet = Block("sheet")
-            for g, b, (x, y) in pos:
+            for g, b, (x, y) in best[1]:
                 g.move(snap(ox + x - b[0] + 1.27, G), snap(oy + y - b[1] + 1.27, G))
                 sheet.absorb(g)
             return paper, sheet

@@ -49,7 +49,7 @@ a number.
 | `section` | below the root, every symbol, wire and label sits inside a titled section frame (a KiCad text box, or a rectangle with a text in its top-left corner); frames never overlap; no section is empty | — |
 | `section-title` | every frame has a title, and no two frames on a sheet share one | — |
 | `section-wire` | no wire crosses a frame: sections connect through labels and power symbols | — |
-| `home` | a small part's section stands with the sections of an IC on its nets, as one cluster no more than 25.4 mm apart (a sheet without sections: the part itself within 101.6 mm of the IC) | 25.4 / 101.6 mm |
+| `home` | a small part's section stands with the sections of an IC on its nets, as one cluster no more than 25.4 mm apart (a sheet without sections: the part itself within 101.6 mm of the IC). A part whose only nets are rails counts only if it is decoupling (C, L, a bead); a connector never counts — it is an interface, not a satellite, however few pins it has | 25.4 / 101.6 mm |
 | `pins-side` | at most 40 pin rows on one side of one unit | 40 |
 | `field-far` | a symbol's visible Reference and Value sit within 12.7 mm of its body | 12.7 mm |
 
@@ -87,26 +87,34 @@ Per sheet:
   a row per net two parts share, each part a column between its rows, the
   column order searched to keep bodies off rows (a crystal with its load
   capacitors and feedback resistor comes out as one wired block).
-- **Sections.** Every anchor unit is a section of its own (`U1 unit 7 —
-  MIMX8MM6CVTKZAA`); its blocks become one section per kind — `U1
-  decoupling` (or `output filters and decoupling` when an inductor feeds a
-  rail), `U1 pull-ups and pull-downs`, `U1 series parts`, `U1 test points`,
-  a wired cluster by its lead part (`U1: Y1 24MHz`) or its parts — sized to
-  stand beside the anchor. A bank or pull block holds one *role*, read from
-  the refdes prefix (and the symbol, for a diode), so its title does not lie:
-  a button or an ESD diode from a signal to ground is drawn like a pull-down
-  but titled `U1 buttons` / `U1 ESD protection`, a capacitor to ground `U1
-  capacitors`, and a two-pin part between two rails that is not a capacitor
-  or an inductor says its rail — `J1 ESD protection on +5V`, `J4 headers on
-  +5V` (`role()` in `plan.py`). That names what the parts *are*, not what
-  they are *for*: the board says that with `"section"` on each part
-  (`J_MAIN1 I2C pull-ups`, `J5 CC pull-downs (Rd)`, `J6 MagJack LED
-  resistors` — below). Parts no anchor on the sheet claims are
-  `Other parts` (a cluster led by a regulator or transistor gets its own,
-  and so does a lone connector, titled like an anchor); the
-  PWR_FLAGs are `Power sources`. Sections are packed bottom-left, the
-  biggest IC first and each satellite next to a section of its own IC, onto
-  the smallest ISO paper (A4 up) that holds them.
+- **Sections are functional groups.** A frame holds one function: the
+  anchor unit(s) it is named after and every block that serves them — the
+  connector with its decoupling, its ESD diodes, its pull-downs, its
+  buttons; one frame, not one per part and one per block. Inside, each
+  anchor stands with its blocks beside it as a row (decoupling first, then
+  tallest first, fitted to the anchor's height); the rows of a group, and
+  the loose blocks the board puts in it, are packed about square. The title
+  is the board's — `"group": "Module connector"` on each part, the same
+  name on two parts making one frame (J1 + J2 + the standoffs) — else the
+  anchor's Value (`USB-C`, `AMP LINK`); a title never carries a refdes. All
+  units of a part share a frame unless `group` is `{"1": "…", "2": "…"}`.
+  A connector is an interface of its own whatever its pin count (a 3-pin
+  console header is a group, not a satellite of the IC it wires to); a
+  strictly local header is kept with its circuit by `group`. A block inside
+  a frame is captioned — plain text above it — only where the board says
+  what it is for: `"caption": "CC pull-downs (Rd)"` on each of its parts
+  (`I2C pull-ups`, `MagJack LED resistors`, `USB ID`); a plan knows what
+  parts *are* (`role()`: decoupling, pull-ups, ESD protection, buttons,
+  headers — it keeps a block to one role so a caption never lies), not what
+  they are *for*, and writes no caption of its own. Parts no anchor on the
+  sheet claims are the group the board names, else a lone connector is a
+  group titled by its Value, a cluster led by a regulator or transistor by
+  its lead's Value, and the rest share `Other parts`; the PWR_FLAGs are
+  `Power sources`. Groups are packed bottom-left, the biggest anchor's
+  first, onto the smallest ISO paper (A4 up) that holds them — a few
+  orders tried per paper (as given, tallest, biggest, widest first), since
+  bottom-left packing is greedy (`SCH_PACK_DEBUG=1` prints each paper's
+  best).
 - The **root** gets a sheet symbol per sheet, a pin per hierarchical label,
   grouped by the sheet it goes to.
 
@@ -195,11 +203,16 @@ given as data). Two uses:
   goes to the first anchor by refdes, so on a sheet where two connectors share
   a rail or a bus the decoupling the handoff puts "at J4" can land beside J1.
   `"home": "J4"` on that part's entry (the handoff's own words decide it)
-  puts its block with J4's sections; `plan` stops if J4 has no pin on the
-  part's nets. `fields` adds MPN and the like. `"section": "J5 CC pull-downs
-  (Rd)"` titles the section the part stands in by what it is for; every part
-  in that section names the same title, or none does (`plan` stops
-  otherwise). `dnp: true` marks it DNP: the preview carries KiCad's flag, and
+  puts its block in J4's row; `plan` stops if J4 has no pin on the
+  part's nets. `"group": "USB-C"` titles the frame a part stands in — on an
+  anchor its frame (two anchors naming one group share it; a multi-unit
+  part may give `{"1": "…", "2": "…"}`), on a small part the frame it
+  joins, wherever its nets would have put it (standoffs with the module
+  connector; a local header with its circuit). `"caption": "CC pull-downs
+  (Rd)"` is drawn above the part's block, saying what it is for; every part
+  in a block names the same caption, or none does (`plan` stops otherwise;
+  the old key `section` is still read as `caption`). `fields` adds MPN and
+  the like. `dnp: true` marks it DNP: the preview carries KiCad's flag, and
   `drawn`, `parity` and `parity --handoff` (a part whose handoff line says
   DNP) each fail until the drawn part carries it too. A *field* named DNP is
   not the flag — the BOM shows both the same way — so the plan writes none.

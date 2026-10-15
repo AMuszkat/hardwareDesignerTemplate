@@ -6,8 +6,8 @@ runs after EACH sheet is drawn, before the next one starts.
 Two comparisons per sheet, both as sets so order and UUIDs do not matter:
 
   items   every symbol (reference, unit, position, rotation, lib_id, Value),
-          wire, label, junction and no-connect -- the drawing is the plan's
-          preview, item for item, or the sheet is not done;
+          wire, label, junction, no-connect and caption text -- the drawing
+          is the plan's preview, item for item, or the sheet is not done;
   fields  every field the sheet's ops.json asked for (Footprint, Datasheet,
           MPN ...) is on the drawn symbol with that value -- Konnect's
           batch edit silently skips a field the symbol does not have yet,
@@ -52,6 +52,9 @@ def items(path):
     for n in sexpr.every(t, "no_connect"):
         at = sexpr.value(n, "at")
         out.add(("no_connect", R(at[0]), R(at[1])))
+    for n in sexpr.every(t, "text"):
+        at = sexpr.value(n, "at")
+        out.add(("text", str(n[1]), R(at[0]), R(at[1])))
     for sh in sexpr.every(t, "sheet"):
         name = {str(p[1]): str(p[2]) for p in sexpr.every(sh, "property")}.get("Sheetname", "")
         at, size = sexpr.value(sh, "at"), sexpr.value(sh, "size")

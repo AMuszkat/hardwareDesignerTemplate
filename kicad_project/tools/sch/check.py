@@ -9,6 +9,7 @@ A finding is (rule, sheet, key, message). `key` is what a waiver in
 """
 import itertools
 import math
+import re
 import tempfile
 from collections import defaultdict, Counter
 
@@ -389,11 +390,14 @@ def run(design, waivers=(), with_svg=True):
         for s in sh.parts:
             ps = s.pins()
             if len(ps) > SMALL_PINS or len(ps) < (1 if frames_here else 2) or s in anchors \
-                    or (s.lib and len(s.lib.units()) > 1):
-                continue
+                    or (s.lib and len(s.lib.units()) > 1) or re.match(r"(J|P|CN)[A-Z_]*\d", s.ref):
+                continue                # a connector is an interface, not a satellite, whatever its pin count
             mine = [(base(net_of.get((s.ref, p.number))), e) for p, e, _ in ps]
             sig = [(n, e) for n, e in mine if n and n not in rails and not n.startswith("unconnected")]
-            cands = sig or [(n, e) for n, e in mine if n in rails and not GROUND_RE.match(n)]
+            # a part whose only nets are rails serves the IC on that rail if it is decoupling (C, L, a
+            # bead); a header, a diode or a switch between two rails is a group of its own, anywhere
+            cands = sig or ([(n, e) for n, e in mine if n in rails and not GROUND_RE.match(n)]
+                            if re.match(r"(C|L|FB)\d", s.ref) else [])
             sf = frame_of(s)
             best, mine_anchors = None, {}
             for n, e in cands:
@@ -411,14 +415,12 @@ def run(design, waivers=(), with_svg=True):
                 part_homes[s.ref] = (sf, mine_anchors)
             elif best[0] > HOME_NEAR:
                 find("home", sh, s.ref, f"{s.ref} sits {best[0]:.0f} mm from {best[1]} ({best[2]})")
-        # a home's sections: one cluster, grown from the anchor's frame; a
-        # part is at home when it is in the cluster of any IC on its nets
-        titled = defaultdict(list)
-        for t, f, _, _ in sh.sections():
-            titled[t.split(" ")[0].rstrip(":")].append(f)
+        # a home's sections: one cluster, grown from the anchor's units (a
+        # frame holding the anchor is 0 mm from it); a part is at home when
+        # it is in the cluster of any IC on its nets
         apart = {}
         for r, secs in home_secs.items():
-            have = list(home_frame[r]) + list(titled.get(r, []))
+            have = list(home_frame[r])
             left = set(secs) - set(have)
             grown = True
             while grown:

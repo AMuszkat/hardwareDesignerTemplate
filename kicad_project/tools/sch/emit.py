@@ -15,6 +15,7 @@ from plan import uid, nat
 from sexpr import esc
 
 FONT = "(effects (font (size 1.27 1.27))"
+CAPTION_SIZE = 1.27     # a block's caption (plan.py's; kept here so emit does not import the planner)
 
 
 def junctions(items):
@@ -46,7 +47,7 @@ def items_of(block):
             pin_ends.append(e.end(num))
         (parts if e.part else power).append(e)
     return dict(parts=parts, power=power, wires=block.wires, ncs=block.ncs, labels=block.labels,
-                pin_ends=pin_ends, sections=list(block.sections))
+                pin_ends=pin_ends, sections=list(block.sections), texts=list(block.captions))
 
 
 def text_box(title, box, uuid):
@@ -70,7 +71,7 @@ def ops_for(src, name, file, paper, items, sch_path, existing, page):
     if existing is not None:
         refs = sorted({s.ref for s in existing.symbols}, key=nat)
         uuids = [w[2] for w in existing.wires] + [l.uuid for l in existing.labels] + \
-                [j[2] for j in existing.junctions]
+                [j[2] for j in existing.junctions] + [t[3] for t in existing.texts]
         if refs or uuids:
             calls.append(dict(tool="batch_delete", args=dict(schematic=sch_path, references=refs, uuids=uuids)))
         if existing.no_connects:
@@ -125,6 +126,9 @@ def ops_for(src, name, file, paper, items, sch_path, existing, page):
             schematic=sch_path, net=text, x=x, y=y, rotation=rot,
             label_type="hierarchical_label" if kind == "hier" else "net_label",
             **({"shape": "bidirectional"} if kind == "hier" else {}))))
+    for text, x, y in items.get("texts", []):
+        calls.append(dict(tool="add_schematic_text", args=dict(
+            schematic=sch_path, text=text, x=x, y=y, size=CAPTION_SIZE, justify="left bottom")))
     return calls
 
 
@@ -211,6 +215,9 @@ def sheet_text(src, paper, items, lib_ids, path, file_uuid, proj, sheets=(), roo
         out.append(f"\t(no_connect (at {x:g} {y:g}) (uuid {esc(uid())}))\n")
     for title, box in items.get("sections", []):
         out.append(text_box(title, box, uid()))
+    for text, x, y in items.get("texts", []):
+        out.append(f"\t(text {esc(text)} (exclude_from_sim no) (at {x:g} {y:g} 0) (effects (font (size "
+                   f"{CAPTION_SIZE:g} {CAPTION_SIZE:g})) (justify left bottom)) (uuid {esc(uid())}))\n")
     for kind, text, x, y, rot in items["labels"]:
         if kind == "hier":
             j = "left" if rot in (0, 90) else "right"
