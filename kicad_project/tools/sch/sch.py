@@ -11,7 +11,8 @@
 
   check   the saved schematic against the standard (tools/sch/README.md, the
           `schematic` skill): paper, frame, title block, text collisions
-          (from kicad-cli's own SVG), wires through text and bodies, rails
+          (from kicad-cli's own SVG), wires through text and bodies, text
+          into a body's or a power glyph's lines, rails
           drawn as labels, global labels below the root, unconnected root
           sheet pins, label-stitched pieces, small parts far from the IC pin
           they serve, pins per side. Exit 1 on any finding not waived in
@@ -26,15 +27,17 @@
           complete, with the board's symbols from <board>/schematic.json.
   drawn   after EACH sheet: the drawn sheet against the plan's preview, item
           for item (symbols, wires, labels, junctions, no-connects, sheet
-          pins) and field for field (what ops.json asked for). Exit 1 on a
+          pins), field for field (what ops.json asked for) and KiCad's DNP
+          flag (no Konnect call sets it: ticked in eeschema). Exit 1 on a
           difference, listing what to make or delete.
   parity  after drawing: the board's netlist, as KiCad exports it now, against
           the netlist the plan was made from (<plan>/netlist.json) -- the same
-          connections, pin for pin, whatever the net names. Exit 1 on a
-          difference. --handoff instead checks the drawing against the
-          handoff's own netlist.json: every part there and no placeholder,
-          every pin the handoff fixes on its net BY NAME, every no-connect
-          and OPEN pin unconnected.
+          connections, pin for pin, whatever the net names, and the same parts
+          DNP. Exit 1 on a difference. --handoff instead checks the drawing
+          against the handoff's own netlist.json: every part there and no
+          placeholder, every pin the handoff fixes on its net BY NAME, every
+          no-connect and OPEN pin unconnected, every part its line calls DNP
+          carrying KiCad's flag.
   rules   the rules and their numbers.
 
 Read-only on the board's KiCad files except `frame`: plan writes under <out>
@@ -42,6 +45,7 @@ only (default <board>/sch_plan/). Konnect draws.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -169,6 +173,9 @@ def handoff_parity(board):
             out.append(("missing", r, f"{r} ({p['function']}) is in the handoff and not drawn"))
     for r in sorted(real - set(parts)):
         out.append(("extra", r, f"{r} is drawn and has no line in the handoff's components"))
+    # the handoff says DNP in the part's line; the drawing says it with KiCad's own flag
+    want = {r for r, p in parts.items() if not p["placeholder"] and re.search(r"\bDNP\b", p.get("value", ""))}
+    out += [("dnp", r, msg) for r, msg in dnp_diff(board, want, "the handoff's line")]
     checked = 0
     hn = {(r, p): n for n, pins in nl["nets"].items() for r, p in pins}
     swapped, via_swap = set(), {}
@@ -255,9 +262,35 @@ def cmd_parity(a):
         print("  in the plan, not drawn:", sorted(g)[:8])
     for g in sorted(extra, key=sorted)[:20]:
         print("  drawn, not in the plan:", sorted(g)[:8])
-    print("PARITY OK" if not missing and not extra else
-          f"PARITY FAIL: {len(missing)} net(s) not drawn as planned, {len(extra)} drawn otherwise")
-    sys.exit(0 if not missing and not extra else 1)
+    dnp = dnp_diff(board, set(ref.get("dnp", [])), "the plan")
+    for _, msg in dnp:
+        print(f"  dnp         {msg}")
+    print("PARITY OK" if not missing and not extra and not dnp else
+          f"PARITY FAIL: {len(missing)} net(s) not drawn as planned, {len(extra)} drawn otherwise, "
+          f"{len(dnp)} DNP flag(s) not as planned")
+    sys.exit(0 if not missing and not extra and not dnp else 1)
+
+
+def dnp_flags(board):
+    """{reference: KiCad's own DNP flag} for every drawn part (a field named DNP is not the flag)."""
+    out = {}
+    for sh in model.Design(board).sheets:
+        for s in sh.parts:
+            out[s.ref] = out.get(s.ref, False) or s.dnp
+    return out
+
+
+def dnp_diff(board, want, whose):
+    """[(ref, message)] for the parts whose DNP flag differs from `want` (the refs that are DNP)."""
+    have = dnp_flags(board)
+    out = []
+    for r in sorted(want):
+        if r in have and not have[r]:
+            out.append((r, f"{r} is DNP in {whose}; KiCad's flag is not set (eeschema: Symbol Properties -> "
+                           "'Do not populate'; no Konnect call sets it)"))
+    for r in sorted(r for r, v in have.items() if v and r not in want):
+        out.append((r, f"{r} has KiCad's DNP flag; {whose} fits it"))
+    return out
 
 
 def cmd_rules(_):

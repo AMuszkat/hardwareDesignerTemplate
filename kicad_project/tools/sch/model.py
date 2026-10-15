@@ -90,7 +90,7 @@ class LibSym:
             self.fields[str(p[1])] = dict(value=str(p[2]), x=fnum(at[0]), y=fnum(at[1]),
                                           angle=fnum(at[2]) if len(at) > 2 else 0.0,
                                           justify=list(just), hide=hide)
-        self.pins, self.boxes = {}, {}
+        self.pins, self.boxes, self.strokes = {}, {}, {}
         base = self.lib_id.split(":")[-1]
         for sub in every(node, "symbol"):
             m = re.fullmatch(re.escape(base) + r"_(\d+)_(\d+)", str(sub[1]))
@@ -122,6 +122,7 @@ class LibSym:
                     r = fnum(atom(g, "radius"))
                     pts = [(cx - r, cy - r), (cx + r, cy + r)]
                 pts = [(fnum(a), fnum(b)) for a, b in pts if a is not None]
+                self.strokes.setdefault(unit, []).extend(lines(g[0], pts))
                 if pts:
                     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
                     b = self.boxes.get(unit)
@@ -132,6 +133,10 @@ class LibSym:
     def unit_pins(self, unit):
         return self.pins.get(0, []) + self.pins.get(unit, [])
 
+    def unit_strokes(self, unit):
+        """The body's drawn lines as segments, library coordinates."""
+        return self.strokes.get(0, []) + self.strokes.get(unit, [])
+
     def unit_box(self, unit):
         """Body extent in library coordinates (y up), or None."""
         bs = [b for u, b in self.boxes.items() if u in (0, unit)]
@@ -141,6 +146,20 @@ class LibSym:
 
     def units(self):
         return sorted(u for u in self.pins if u) or [1]
+
+
+def lines(kind, pts):
+    """A graphic item -> straight segments: a rectangle's four edges, a
+    polyline's runs, an arc or a Bezier through its points, a circle as an
+    octagon."""
+    if kind == "rectangle" and len(pts) == 2:
+        (x0, y0), (x1, y1) = pts
+        pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)]
+    elif kind == "circle" and len(pts) == 2:
+        (x0, y0), (x1, y1) = pts
+        cx, cy, r = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2
+        pts = [(cx + r * math.cos(k * math.pi / 4), cy + r * math.sin(k * math.pi / 4)) for k in range(9)]
+    return list(zip(pts, pts[1:]))
 
 
 def lib_symbols(tree):
@@ -191,6 +210,16 @@ class Inst:
             ox, oy = xform(p.x, p.y, self.rot, self.mirror)
             d = xdir(p.angle, self.rot, self.mirror)
             out.append((p, (round(self.x + ox, 4), round(self.y + oy, 4)), d))
+        return out
+
+    def strokes(self):
+        """The body's drawn lines on the sheet: [((x, y), (x, y))]."""
+        if not self.lib:
+            return []
+        out = []
+        for a, b in self.lib.unit_strokes(self.unit):
+            pa, pb = xform(*a, self.rot, self.mirror), xform(*b, self.rot, self.mirror)
+            out.append(((self.x + pa[0], self.y + pa[1]), (self.x + pb[0], self.y + pb[1])))
         return out
 
     def body(self):

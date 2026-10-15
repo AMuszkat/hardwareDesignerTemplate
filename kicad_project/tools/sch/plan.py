@@ -88,10 +88,11 @@ def uid():
 # == the source ==============================================================
 
 class Part:
-    def __init__(self, ref, lib_id, lib, value, footprint, fields, units, dnp=False, home=None):
+    def __init__(self, ref, lib_id, lib, value, footprint, fields, units, dnp=False, home=None, section=None):
         self.ref, self.lib_id, self.lib, self.value = ref, lib_id, lib, value
         self.footprint, self.fields, self.units, self.dnp = footprint, fields, units, dnp
         self.home = home           # the anchor a small part serves, when the board names it
+        self.section = section     # the title of the section it stands in, when the board names it
 
     def pin_count(self, unit):
         return len({p.number for p in self.lib.unit_pins(unit)})
@@ -206,7 +207,7 @@ class Source:
             src.lib_nodes[p["lib_id"]], src.libs[p["lib_id"]] = node, lib
             src.parts[ref] = Part(ref, p["lib_id"], lib, p.get("value", ""), p.get("footprint", ""),
                                   p.get("fields", {}), {int(u): s for u, s in p["units"].items()},
-                                  p.get("dnp", False), p.get("home"))
+                                  p.get("dnp", False), p.get("home"), p.get("section"))
         src.nets = {n: [tuple(x) for x in nodes] for n, nodes in j["nets"].items()}
         src.rails = set(j.get("rails", []))
         src.nc = {tuple(x) for x in j.get("nc", [])}
@@ -254,7 +255,8 @@ class Source:
             units = {int(u): s for u, s in sym.get("units", {}).items()} or {1: sym["sheet"]}
             value = sym.get("value") or re.split(r",| -- |;", hp["value"])[0].strip()
             src.parts[ref] = Part(ref, sym["lib_id"], lib, value, sym.get("footprint", ""),
-                                  dict(sym.get("fields", {})), units, sym.get("dnp", False), sym.get("home"))
+                                  dict(sym.get("fields", {})), units, sym.get("dnp", False), sym.get("home"),
+                                  sym.get("section"))
         src.nets = {n: [tuple(x) for x in nodes if x[0] in src.parts] for n, nodes in nl["nets"].items()}
         src.rails = set(nl.get("rails", []))
         src.nc = {tuple(x) for x in nl.get("nc", []) if x[0] in src.parts}
@@ -516,14 +518,20 @@ class Ctx:
         e.rail = rail
         return e
 
-    def terminate(self, blk, net, at, outward, clear=None):
-        """Stub from `at` outward, then a power symbol or a label; with
-        `clear` (a box: the part and its own text), the stub first leaves it."""
-        n = STUB
-        if clear:
-            past = {(1, 0): clear[2] - at[0], (-1, 0): at[0] - clear[0],
-                    (0, 1): clear[3] - at[1], (0, -1): at[1] - clear[1]}[(round(outward[0]), round(outward[1]))]
-            n = max(STUB, snap(past + 1.27 + 1.26, 1.27))
+    @staticmethod
+    def stub(at, outward, clear=None):
+        """The stub's length: STUB, or with `clear` (a box: the part and its
+        own text) enough to leave it first."""
+        if not clear:
+            return STUB
+        past = {(1, 0): clear[2] - at[0], (-1, 0): at[0] - clear[0],
+                (0, 1): clear[3] - at[1], (0, -1): at[1] - clear[1]}[(round(outward[0]), round(outward[1]))]
+        return max(STUB, snap(past + 1.27 + 1.26, 1.27))
+
+    def terminate(self, blk, net, at, outward, clear=None, n=None):
+        """Stub from `at` outward (`n` long, or Ctx.stub's), then a power
+        symbol or a label."""
+        n = self.stub(at, outward, clear) if n is None else n
         end = (round(at[0] + outward[0] * n, 4), round(at[1] + outward[1] * n, 4))
         blk.wire(at, end)
         if self.is_rail(net):
@@ -531,6 +539,30 @@ class Ctx:
         else:
             blk.labels.append(("hier" if self.kind(net) == "hier" else "label", net, end[0], end[1],
                                label_rot(outward)))
+
+    def terminate_all(self, blk, ends, clear=None):
+        """terminate() for pins side by side, `ends` = [(net, at, outward)]:
+        the power glyphs first, then the labels. KiCad draws a label's text on
+        one side of its wire (above it; left of it when vertical), into the
+        next lane: where a power glyph stands there, the label starts past the
+        glyph and its name instead."""
+        glyphs = []
+        for net, at, o in ends:
+            if self.is_rail(net):
+                self.terminate(blk, net, at, o, clear)
+                glyphs.append(blk.power[-1].box())
+        for net, at, o in ends:
+            if self.is_rail(net):
+                continue
+            n = self.stub(at, o, clear)
+            end = (at[0] + o[0] * n, at[1] + o[1] * n)
+            lb = label_box("hier" if self.kind(net) == "hier" else "label", net, *end, label_rot(o))
+            for gb in glyphs:
+                if check.overlap(lb, gb):
+                    far = {(1, 0): gb[2] - at[0], (-1, 0): at[0] - gb[0],
+                           (0, 1): gb[3] - at[1], (0, -1): at[1] - gb[1]}[(round(o[0]), round(o[1]))]
+                    n = max(n, math.ceil((far + 1.27) / 1.27 - 1e-6) * 1.27)
+            self.terminate(blk, net, at, o, n=round(n, 4))
 
 
 HW_SCH = Path(__file__).resolve().parent / "hw_sch.kicad_sym"
@@ -617,8 +649,7 @@ def anchor_block(ctx, part, unit):
             r["at"] = ss[(len(ss) - 1) // 2]
         # every run: a stub and its terminator in the pin's own lane -- a label,
         # or a power glyph whose name reads horizontally like one
-        for r in runs:
-            ctx.terminate(blk, r["net"], r["at"], o)
+        ctx.terminate_all(blk, [(r["net"], r["at"], o) for r in runs])
     return blk, where
 
 
@@ -771,6 +802,7 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
         sub.els.append(el)
         mine_attach = []
         body = el.body() or (el.x - 1.27, el.y - 1.27, el.x + 1.27, el.y + 1.27)
+        ends = []
         for num, net in mine:
             e, o = el.end(num), el.out(num)
             if net is None:
@@ -778,7 +810,7 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
                     sub.ncs.append(e)
                 continue
             if net not in ri:
-                ctx.terminate(sub, net, e, o, el.box())
+                ends.append((net, e, o))
                 continue
             y = ry[net]
             if abs(e[1] - y) < 1e-6:
@@ -800,6 +832,7 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
                 sub.wire(s1, s2)
                 sub.wire(s2, (xd, y))
                 mine_attach.append((net, xd))
+        ctx.terminate_all(sub, ends, el.box())
         b = sub.box()
         dx = snap(x - b[0], 1.27)
         if b[0] + dx < x - 1e-6:
@@ -861,6 +894,7 @@ def stack(ctx, parts, hint=0.0):
         el = El(p, u, orient(p, want))
         sub = Block()
         sub.els.append(el)
+        ends = []
         for num in nums:
             net = ctx.net(p.ref, num)
             e, o = el.end(num), el.out(num)
@@ -868,7 +902,8 @@ def stack(ctx, parts, hint=0.0):
                 if (p.ref, num) in ctx.src.nc:
                     sub.ncs.append(e)
                 continue
-            ctx.terminate(sub, net, e, o, el.box())
+            ends.append((net, e, o))
+        ctx.terminate_all(sub, ends, el.box())
         b = sub.box()
         sub.move(snap(-b[0], 1.27), snap(y - b[1] + 1.27, 1.27))
         blk.absorb(sub)
@@ -1134,11 +1169,30 @@ def cluster_title(home, blk):
     return f"{home}: {', '.join(refs[:5])}{', …' if len(refs) > 5 else ''}"
 
 
+def board_title(blocks):
+    """The title the board gives a section's parts ("section" in
+    schematic.json), or None. A plan names a section by its parts' kind (R to
+    a rail: pull-ups); what they are for -- I2C pull-ups, CC Rd, LED
+    resistors -- is the board's to say. Every part in the section names the
+    same title, or none does."""
+    parts = {e.part.ref: e.part for b in blocks for e in b.els if e.part is not None}
+    names = sorted({p.section for p in parts.values() if p.section})
+    if not names:
+        return None
+    bare = sorted((r for r, p in parts.items() if not p.section), key=nat)
+    if len(names) > 1 or bare:
+        raise SystemExit(f"sch: one section holds {', '.join(sorted(parts, key=nat))}: they name "
+                         f"{' / '.join(repr(n) for n in names)}" + (f", and {', '.join(bare)} names none" if bare else "")
+                         + " -- give each the same \"section\" in schematic.json, or none")
+    return names[0]
+
+
 def section(title, blocks, width=None):
     """Blocks packed bottom-left, tallest first, into `width` (unbounded by
     default), inside a titled frame: the frame clears the content by PAD,
     the title band sits in its top-left corner, and the frame is wide
-    enough for the title."""
+    enough for the title. The board's own title wins (board_title)."""
+    title = board_title(blocks) or title
     blocks = sorted(blocks, key=lambda b: -(b.box()[3] - b.box()[1]))
     boxes = [b.box() for b in blocks]
     pos, _ = skyline([(b[2] - b[0], b[3] - b[1]) for b in boxes], width or 1e9, BLOCK_GAP)

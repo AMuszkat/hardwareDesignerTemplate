@@ -304,7 +304,8 @@ def write_all(src, plans, root, out, only=None):
     plan_json["_title_block"] = dict(title=src.title, date=src.date, rev=src.rev)
     (out / "plan.json").write_text(json.dumps(plan_json, indent=1))
     (out / "netlist.json").write_text(json.dumps(
-        dict(nets={n: v for n, v in src.nets.items()}, nc=sorted(map(list, src.nc))), indent=1))
+        dict(nets={n: v for n, v in src.nets.items()}, nc=sorted(map(list, src.nc)),
+             dnp=sorted(r for r, p in src.parts.items() if p.dnp)), indent=1))
     print(f"{'sheet':40} {'paper':5} {'parts':>5} {'wires':>5} {'labels':>6} {'power':>5} {'sects':>5} {'calls':>5}")
     for name, paper, items, calls in summary:
         print(f"{name[:40]:40} {paper:5} {len(items['parts']):5} {len(items['wires']):5} "

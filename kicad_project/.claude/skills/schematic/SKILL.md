@@ -25,7 +25,11 @@ wins where they disagree.
   is drawn outside a frame, frames never overlap, and no wire crosses one:
   sections talk through labels and power symbols (`section`,
   `section-title`, `section-wire`). An IC's sections stand together as one
-  cluster (`home`).
+  cluster (`home`). The plan titles a satellite by what its parts *are*
+  (pull-ups, capacitors, headers); where that is not what they are *for* —
+  an I2C pull-up pair, a USB-C CC Rd pair, LED resistors, a USB ID cap —
+  name it: `"section": "J5 CC pull-downs (Rd)"` on each of its parts in
+  `<board>/schematic.json`. A reviewer reads the title as a claim.
 - **One function per section, wired inside.** The decoupling bank, the
   pull-ups, the crystal with its load capacitors, the feedback divider —
   each a block drawn with wires between its parts. A label joins sections;
@@ -36,12 +40,18 @@ wins where they disagree.
   sheet carries every sheet's interface as sheet pins (`global`, `sheet-pin`).
 - **The paper fits the drawing**: the smallest ISO size that holds it, A4 to
   A2; a sheet that needs more is two sheets (`paper`).
-- **Nothing collides**: no text on text, no wire through text or a body
-  (`text`, `text-wire`, `body`).
+- **Nothing collides**: no text on text, no wire through text or a body, no
+  text into a body outline or a power glyph (`text`, `text-wire`,
+  `text-graphic`, `body`). A ground glyph reaches into the next pin's lane,
+  where KiCad draws that pin's label text: the plan runs such a label on
+  past the glyph.
 - **The title block names the board, the revision and the date** (`title`).
 
 ### Symbols — yours, in `lib/`
 
+- **A pin number of three characters (`100`, `A10`) needs a 3.81 mm pin**
+  (`length` in `create_symbol`): on a 2.54 mm pin it is wider than the pin
+  and crosses the body outline (`text-graphic`).
 - **At most 40 pin rows on a side of a unit** (`pins-side`). Split a big IC
   into units by function — each bank's signals, each power domain, the
   grounds in their own unit — the way the datasheet's ball map groups them.
@@ -146,8 +156,8 @@ The plan already carries the three calls Konnect needs and does not do by
 itself (the README's "What Konnect cannot do" has the whole list):
 `update_symbols_from_library` + `reset_schematic_field_positions` right after
 the parts are placed (a sheet keeps its old copy of a rebuilt symbol),
-`add_component_annotation` for a field the symbol does not have yet (MPN,
-DNP), and `import_sheet_pins` + `edit_sheet_pin` for a root sheet's
+`add_component_annotation` for a field the symbol does not have yet (MPN),
+and `import_sheet_pins` + `edit_sheet_pin` for a root sheet's
 left-edge pins (`add_sheet_pin` makes every pin face right, and KiCad then
 shorts a left pin to the right-edge pin at its height).
 
@@ -181,9 +191,14 @@ with a `why`) is for a choice that is right, such as a connector kept as one
 ⚠ **A redraw gives every symbol a new UUID.** If the PCB already holds the
 parts, tell the user before any PCB work: Update PCB from Schematic with
 *Re-link footprints to schematic symbols based on their reference
-designators*. KiCad's own DNP / in_bom flags are not set by any Konnect
-call; they stay a task for the user in eeschema, and a redraw does not lose
-ones already set (check `(dnp yes)` counts before and after).
+designators*.
+
+⚠ **KiCad's own DNP flag is set by no Konnect call, and a redraw places
+every part again without it.** After the last redraw, before the review
+request, it is ticked in eeschema (Symbol Properties → *Do not populate*)
+by the user on every part the board marks `"dnp": true`. `drawn`, `parity` and `parity --handoff` fail,
+naming each part, until it is. A field named DNP is not the flag: the BOM
+shows both the same way, so write none.
 
 ## 5. Stop for review
 

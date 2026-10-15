@@ -9,9 +9,12 @@ Two comparisons per sheet, both as sets so order and UUIDs do not matter:
           wire, label, junction and no-connect -- the drawing is the plan's
           preview, item for item, or the sheet is not done;
   fields  every field the sheet's ops.json asked for (Footprint, Datasheet,
-          MPN, DNP ...) is on the drawn symbol with that value -- Konnect's
+          MPN ...) is on the drawn symbol with that value -- Konnect's
           batch edit silently skips a field the symbol does not have yet,
-          and no netlist check sees a missing MPN.
+          and no netlist check sees a missing MPN;
+  DNP     KiCad's own DNP flag on exactly the parts the preview has it on
+          (the board's "dnp": true). No Konnect call sets it, so it is the
+          one difference left after drawing until it is ticked in eeschema.
 
 Power symbols compare by kind (#PWR / #FLG), not number: Konnect numbers them
 as it goes. A missing item is listed with its planned values, ready to be
@@ -86,6 +89,12 @@ def drawn_fields(path):
     return have
 
 
+def dnp_refs(path):
+    """References whose KiCad DNP flag is set -- the flag, not a field named DNP."""
+    return {str({str(p[1]): str(p[2]) for p in sexpr.every(s, "property")}.get("Reference", ""))
+            for s in sexpr.every(sexpr.load(path), "symbol") if sexpr.flag(s, "dnp")}
+
+
 def run(board, plan_dir, sheets=None):
     """Prints a report per sheet; returns the number of sheets that differ."""
     board, plan_dir = Path(board), Path(plan_dir)
@@ -99,14 +108,22 @@ def run(board, plan_dir, sheets=None):
         have = drawn_fields(board / f)
         fields = [(r, k, v, sorted(have.get((r, k), []))) for (r, k), v in sorted(want.items())
                   if have.get((r, k)) != {v}]
+        # KiCad's own DNP flag: no Konnect call sets it, so the ops cannot carry it -- the plan's
+        # preview does, and a part the board marks DNP is not drawn until someone ticks it
+        dnp_want, dnp_have = dnp_refs(preview / f), dnp_refs(board / f)
         print(f"{f}: {len(drawn)} items drawn, {len(plan)} planned; {len(missing)} missing, {len(extra)} extra; "
-              f"{len(fields)} field(s) not as planned")
+              f"{len(fields)} field(s) not as planned; DNP flag on {len(dnp_have)} of {len(dnp_want)} planned")
         for x in missing[:20]:
             print("  planned, not drawn:", x)
         for x in extra[:20]:
             print("  drawn, not planned:", x)
         for r, k, v, got in fields[:20]:
             print(f"  field {r}.{k}: planned {v!r}, drawn {got}")
-        bad += bool(missing or extra or fields)
+        if dnp_want - dnp_have:
+            print(f"  DNP flag not set on {', '.join(sorted(dnp_want - dnp_have))} -- no Konnect call sets it: "
+                  "in eeschema, Symbol Properties -> 'Do not populate', after the last redraw")
+        if dnp_have - dnp_want:
+            print(f"  DNP flag set on {', '.join(sorted(dnp_have - dnp_want))}, which the plan fits")
+        bad += bool(missing or extra or fields or dnp_want != dnp_have)
     print("DRAWN AS PLANNED" if not bad else f"NOT AS PLANNED: {bad} sheet(s)")
     return bad

@@ -39,6 +39,7 @@ a number.
 | `title` | the title block names the board, its revision and the date | — |
 | `text` | no text overlaps another text (KiCad's own SVG gives every text's real extent) | — |
 | `text-wire` | no wire runs through a text | — |
+| `text-graphic` | no text runs into a symbol's drawn lines — a body outline, a power glyph. A ground glyph's triangle reaches 1.27 mm into the next lane, where KiCad draws the neighbouring label's text (above its wire); a pin number wider than its pin (`100`, `A10` on a 2.54 mm pin) crosses the body outline. `text` cannot see either: it compares texts with texts | — |
 | `body` | no wire crosses a symbol body (a wire leaving that part's own pin excepted); no two bodies overlap | — |
 | `rail-label` | a power net is drawn with power symbols, never a label — a local label named `+3V3` is a *sheet-local* net, not the rail | — |
 | `global` | below the root, a signal leaves its sheet through a hierarchical label (so the root shows every block's interface) | — |
@@ -72,6 +73,10 @@ Per sheet:
   power glyph for a rail, a no-connect flag for a decided no-connect.
   Adjacent pins of one net share a spine (a stub per pin first — a spine along
   the pin ends would cut through the pin numbers) and one terminator.
+  KiCad draws a label's text on one side of its wire (above it; left of it
+  when vertical) — into the next lane. Where a power glyph stands in that
+  lane the label's stub runs on past the glyph and its name
+  (`Ctx.terminate_all`), on an anchor and on a small connector alike.
 - **Small parts** (≤ 4 pins) are grouped by function into blocks drawn with
   wires: a **bank** per rail (capacitors between the rail's wire and the
   ground wire; an inductor or bead that feeds the rail joins it, so a buck
@@ -92,7 +97,10 @@ Per sheet:
   but titled `U1 buttons` / `U1 ESD protection`, a capacitor to ground `U1
   capacitors`, and a two-pin part between two rails that is not a capacitor
   or an inductor says its rail — `J1 ESD protection on +5V`, `J4 headers on
-  +5V` (`role()` in `plan.py`). Parts no anchor on the sheet claims are
+  +5V` (`role()` in `plan.py`). That names what the parts *are*, not what
+  they are *for*: the board says that with `"section"` on each part
+  (`J_MAIN1 I2C pull-ups`, `J5 CC pull-downs (Rd)`, `J6 MagJack LED
+  resistors` — below). Parts no anchor on the sheet claims are
   `Other parts` (a cluster led by a regulator or transistor gets its own,
   and so does a lone connector, titled like an anchor); the
   PWR_FLAGs are `Power sources`. Sections are packed bottom-left, the
@@ -118,8 +126,10 @@ drawn board with); `preview/`.
 After each sheet is drawn, before the next: the drawn sheet against the
 plan's preview as sets — every symbol (reference, unit, position, rotation,
 lib_id, Value), wire, label, junction, no-connect, sheet and sheet pin — and
-every field the sheet's ops.json asked for (Footprint, Datasheet, MPN, DNP)
-with its value. It prints what is planned and not drawn (make it with the
+every field the sheet's ops.json asked for (Footprint, Datasheet, MPN)
+with its value — and KiCad's own DNP flag on exactly the parts the plan
+marks DNP. No Konnect call sets that flag, so right after drawing it is the
+one difference left, by name, until it is ticked in eeschema. It prints what is planned and not drawn (make it with the
 same call) and what is drawn and not planned (delete it), and exits 1. A
 Konnect call that fails half-way, a list split with an element dropped, a
 field the batch edit silently skipped: this is where they show, one sheet at
@@ -182,7 +192,13 @@ given as data). Two uses:
   a rail or a bus the decoupling the handoff puts "at J4" can land beside J1.
   `"home": "J4"` on that part's entry (the handoff's own words decide it)
   puts its block with J4's sections; `plan` stops if J4 has no pin on the
-  part's nets. `fields` adds MPN and the like; `dnp: true` marks it DNP.
+  part's nets. `fields` adds MPN and the like. `"section": "J5 CC pull-downs
+  (Rd)"` titles the section the part stands in by what it is for; every part
+  in that section names the same title, or none does (`plan` stops
+  otherwise). `dnp: true` marks it DNP: the preview carries KiCad's flag, and
+  `drawn`, `parity` and `parity --handoff` (a part whose handoff line says
+  DNP) each fail until the drawn part carries it too. A *field* named DNP is
+  not the flag — the BOM shows both the same way — so the plan writes none.
 
 ### The netlist format (`--netlist`)
 
@@ -239,8 +255,11 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   already holds the parts, the PCB must be updated from the schematic with
   *Re-link footprints to schematic symbols based on their reference
   designators* — in KiCad, by the user — before any further PCB work.
-- **The DNP flag**, as before: a field carries it; KiCad's own flag is set by
-  hand.
+- **The DNP flag.** No call sets KiCad's own `(dnp yes)`; it is ticked by
+  hand in eeschema (Symbol Properties → *Do not populate*) after the last
+  redraw — a redraw places the parts again without it. `drawn`, `parity` and
+  `parity --handoff` name every part still missing it, so a sheet with the
+  flag unset never reaches review looking clean.
 
 ## Limits
 

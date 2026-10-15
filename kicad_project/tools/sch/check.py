@@ -31,6 +31,7 @@ RULES = {
     "title": "the title block names the board, its revision and the date",
     "text": "no text overlaps another text",
     "text-wire": "no wire runs through a text",
+    "text-graphic": "no text runs into a symbol's drawn lines (a body outline, a power glyph)",
     "body": "no wire crosses a symbol body, no two bodies overlap",
     "rail-label": "a power net is drawn with power symbols, never a label",
     "global": "below the root, a signal leaves its sheet through a hierarchical label",
@@ -270,6 +271,30 @@ def run(design, waivers=(), with_svg=True):
                 if seg_hits_box(a, b, bx):
                     find("text-wire", sh, f"{t}@{bx[0]:.1f},{bx[1]:.1f}",
                          f"a wire runs through '{t}' at ({bx[0]:.1f}, {bx[1]:.1f})")
+        # text into a symbol's own lines: a ground glyph's triangle in the lane of the label beside
+        # it, a pin number wider than its pin crossing the body outline -- text-on-text cannot see
+        # either, and neither can a box test (a pin name sits inside its body, clear of the lines)
+        cell, grid = 10.0, defaultdict(list)
+        for t, b in texts:
+            bx = shrink(b, 0.1)
+            for gx in range(int(bx[0] // cell), int(bx[2] // cell) + 1):
+                for gy in range(int(bx[1] // cell), int(bx[3] // cell) + 1):
+                    grid[(gx, gy)].append((t, bx))
+        hits = set()
+        for s in sh.symbols:
+            for a, b in s.strokes():
+                near = set()
+                for gx in range(int(min(a[0], b[0]) // cell), int(max(a[0], b[0]) // cell) + 1):
+                    for gy in range(int(min(a[1], b[1]) // cell), int(max(a[1], b[1]) // cell) + 1):
+                        near.update(grid.get((gx, gy), ()))
+                for t, bx in near:
+                    if seg_hits_box(a, b, bx):
+                        who = s.value if s.power else s.ref
+                        k = f"{t}|{who}@{bx[0]:.1f},{bx[1]:.1f}"
+                        if k not in hits:
+                            hits.add(k)
+                            find("text-graphic", sh, k, f"'{t}' runs into {who}'s "
+                                 f"{'glyph' if s.power else 'body'} at ({bx[0]:.1f}, {bx[1]:.1f})")
         bodies = [(s, shrink(s.body(), 0.1), {key(*e) for _, e, _ in s.pins()})
                   for s in sh.symbols if s.body() and not s.power]
         for a, b, _ in sh.wires:
