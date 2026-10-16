@@ -18,6 +18,9 @@ only). It is the mechanism behind "Giving it back" in SELF_IMPROVEMENT.md:
     giveback.py finish -m MSG          commit in the worktree, push to the
                                        template remote, remove the worktree,
                                        fetch, merge template/main into the project
+    giveback.py merge [-m MSG]         fetch, merge template/main into the project
+                                       (what `finish` ends with): how a project
+                                       takes template updates
     giveback.py abort                  remove the worktree, nothing pushed
 
 Mechanism = every path in the template's tree outside the DATA prefixes below,
@@ -26,10 +29,12 @@ have yet. Data (a board module, a study, a design page, a fab profile) never
 travels. A FILLED file carries project text and is refused by `push`: open the
 worktree and edit the template's copy.
 
-`finish` refuses to merge over uncommitted edits it cannot prove harmless: it
-stashes the project's dirty copies of the files the merge touches, merges, and
-drops the stash only when the merged tree equals them. A conflict aborts the
-merge and is reported; nothing is pushed twice.
+The merge (`finish`, `merge`) is computed before anything moves: a conflict
+is reported and changes nothing; an uncommitted edit to a file the merge
+changes must already equal the merged content, else it stops. After a rewrite
+of the template's history (same trees, new ids) it merges on the rewritten
+twin of the template commit the project last merged, not on the days-old
+commit git would pick. Nothing is pushed twice.
 """
 import argparse
 import os
@@ -80,14 +85,22 @@ def template_tree(repo):
 def identity(repo):
     """The environment a template commit is made in.  The template is public:
     unless this repository's git identity already uses a GitHub noreply
-    address, the commit carries the identity of the template's own last commit
-    -- a project's global user.email (a private address) must never reach it."""
+    address, the commit carries the newest noreply identity in the template's
+    history -- a project's global user.email (a private address) must never
+    reach it.  Never simply the last commit's: one made by an older giveback
+    carried a private address, and every later commit would have copied it."""
     r = subprocess.run(["git", "config", "user.email"], cwd=repo, text=True, capture_output=True)
     mail = r.stdout.strip()
     env = dict(os.environ)
     if mail.lower().endswith("@users.noreply.github.com"):
         return env
-    name, email = git("log", "-1", "--format=%an%n%ae", f"{REMOTE}/{BRANCH}", cwd=repo).stdout.split("\n")[:2]
+    found = git("log", "-1", "-i", "--format=%an%n%ae", r"--author=@users\.noreply\.github\.com>",
+                f"{REMOTE}/{BRANCH}", cwd=repo).stdout.strip()
+    if not found:
+        sys.exit(f"no commit in {REMOTE}/{BRANCH} has a GitHub noreply address to commit as, and this "
+                 f"repository's user.email is {mail or 'unset'}: set yours, "
+                 "`git config user.email <id>+<login>@users.noreply.github.com` (GitHub -> Settings -> Emails)")
+    name, email = found.split("\n")[:2]
     env.update(GIT_AUTHOR_NAME=name, GIT_AUTHOR_EMAIL=email, GIT_COMMITTER_NAME=name, GIT_COMMITTER_EMAIL=email)
     print(f"committing as {name} <{email}> (the template's identity; this repository's user.email is "
           f"{mail or 'unset'})")
@@ -223,43 +236,95 @@ def cmd_finish(repo, a):
     print(f"template {sha} pushed to {REMOTE}/{BRANCH}: {len(files)} file(s)")
     git("worktree", "remove", "--force", wt, cwd=repo)
     fetch(repo)
+    return merge_template(repo, env, a.message.splitlines()[0], pushed=sha)
 
-    # the project takes it back as a merge, over nothing it cannot prove harmless.
-    # Touched = what the template changed since the last merge -- NOT every file
-    # that differs from the template, which is the project's own data too
-    base = git("merge-base", "HEAD", f"{REMOTE}/{BRANCH}", cwd=repo).stdout.strip()
-    touched = set(git("diff", "--name-only", base, f"{REMOTE}/{BRANCH}", cwd=repo).stdout.split())
+
+def rewritten_base(repo, base):
+    """After a rewrite of the template's history (a privacy re-commit keeps
+    every tree, changes every id), git's merge base falls back to the last
+    commit the two histories still share -- days old -- and every template file
+    changed since conflicts.  The true base is the twin: the template commit
+    whose tree equals the newest template commit this project merged and the
+    template no longer holds.  None when there was no rewrite (or the twin is
+    older than git's own base)."""
+    target = f"{REMOTE}/{BRANCH}"
+    twins = {}
+    for ln in git("log", "--format=%H %T", target, cwd=repo).stdout.splitlines():
+        h, t = ln.split()
+        twins.setdefault(t, h)                      # newest first
+    for ln in git("log", "--topo-order", "--format=%H %T", "HEAD", f"^{target}", cwd=repo).stdout.splitlines():
+        h, t = ln.split()
+        if t in twins:
+            twin = twins[t]
+            if git("merge-base", "--is-ancestor", twin, base, cwd=repo, check=False).returncode == 0:
+                return None
+            print(f"the template's history was rewritten: merging on {twin[:7]}, the twin of {h[:7]} "
+                  "(identical tree), which this project merged last")
+            return twin
+    return None
+
+
+def merge_template(repo, env, subject, pushed=None):
+    """template/main into the project, as `Merge template: <subject>`, over
+    nothing it cannot prove harmless.  The merged tree is computed first
+    (`git merge-tree`), so a conflict never touches the working tree; an
+    uncommitted edit to a file the merge changes must already equal the merged
+    content -- it is set aside, the merge comes in, and the copy is dropped only
+    when it equals the merged file."""
+    target = f"{REMOTE}/{BRANCH}"
+    again = f"; template {pushed} is pushed" if pushed else ""
+    base = git("merge-base", "HEAD", target, cwd=repo).stdout.strip()
+    twin = rewritten_base(repo, base)
+    base = twin or base
+    r = git("merge-tree", "--write-tree", "--name-only", f"--merge-base={base}", "HEAD", target,
+            cwd=repo, check=False)
+    if r.returncode not in (0, 1):
+        sys.exit(f"git merge-tree failed (giveback.py needs git 2.40 or newer){again}:\n{r.stderr.strip()}")
+    out = r.stdout.split("\n\n")[0].splitlines()
+    tree = out[0]
+    if r.returncode == 1:
+        how = (f"`git merge {target}`" if not twin else
+               f"on {twin[:7]}, not git's own base: `git merge-tree --write-tree --merge-base={twin[:7]} "
+               f"HEAD {target}` writes the tree with the conflict markers")
+        sys.exit(f"the merge conflicts{again}; nothing changed. In both: " + ", ".join(dict.fromkeys(out[1:]))
+                 + f"\nmerge by hand, {how} (SETUP.md §8: keep the project's facts and the template's "
+                 "mechanism), then ./verify.sh")
+    touched = git("diff", "--name-only", "HEAD", tree, cwd=repo).stdout.split()
     dirty = {l[3:] for l in git("status", "--porcelain", "--untracked-files=all", cwd=repo).stdout.splitlines()}
-    tracked_dirty = [p for p in touched & dirty
-                     if git("ls-files", "--error-unmatch", p, cwd=repo, check=False).returncode == 0]
-    for p in touched & dirty:
-        if p in tracked_dirty:
-            continue
-        with open(os.path.join(repo, p), errors="replace") as f:
-            same = f.read() == git("show", f"{REMOTE}/{BRANCH}:{p}", cwd=repo).stdout
-        if not same:
-            sys.exit(f"{p}: untracked in the project and different from the template's -- move it aside, "
-                     f"then `git merge {REMOTE}/{BRANCH}` yourself")
-        os.remove(os.path.join(repo, p))
-    stashed = False
-    if tracked_dirty:
-        git("stash", "push", "--quiet", "-m", "giveback: before the template merge", "--", *tracked_dirty, cwd=repo)
-        stashed = True
-    subject = a.message.splitlines()[0]
-    r = git("merge", "--no-ff", "--quiet", "-m", f"Merge template: {subject}",
-            f"{REMOTE}/{BRANCH}", cwd=repo, check=False, env=env)
-    if r.returncode:
-        git("merge", "--abort", cwd=repo, check=False)
-        if stashed:
-            git("stash", "pop", "--quiet", cwd=repo, check=False)
-        sys.exit(f"the merge conflicts; template {sha} is pushed. Merge by hand:\n{r.stdout}{r.stderr}")
-    if stashed:
-        if git("diff", "--quiet", "stash@{0}", "HEAD", "--", *tracked_dirty, cwd=repo, check=False).returncode:
+    aside = []
+    for p in sorted(set(touched) & dirty):
+        merged = git("show", f"{tree}:{p}", cwd=repo, check=False)
+        path = os.path.join(repo, p)
+        if not os.path.isfile(path) or merged.returncode or open(path, errors="replace").read() != merged.stdout:
+            sys.exit(f"{p}: your uncommitted copy differs from what the merge brings{again}; nothing changed. "
+                     "Commit it or move it aside, then `giveback.py merge`")
+        aside.append(p)
+    tracked = [p for p in aside if git("ls-files", "--error-unmatch", p, cwd=repo, check=False).returncode == 0]
+    for p in aside:
+        if p not in tracked:
+            os.remove(os.path.join(repo, p))         # untracked, and equal to the merged file
+    if tracked:
+        git("stash", "push", "--quiet", "-m", "giveback: before the template merge", "--", *tracked, cwd=repo)
+    commit = git("commit-tree", tree, "-p", "HEAD", "-p", target, "-m", f"Merge template: {subject}",
+                 cwd=repo, env=env).stdout.strip()
+    git("merge", "--ff-only", "--quiet", commit, cwd=repo)
+    if tracked:
+        if git("diff", "--quiet", "stash@{0}", "HEAD", "--", *tracked, cwd=repo, check=False).returncode:
             sys.exit("merged, but the merged tree differs from your uncommitted edits to\n  "
-                     + "\n  ".join(tracked_dirty) + "\nthey are in `git stash list`; reconcile by hand")
+                     + "\n  ".join(tracked) + "\nthey are in `git stash list`; reconcile by hand")
         git("stash", "drop", "--quiet", cwd=repo)
-    print(f"project {git('rev-parse', '--short', 'HEAD', cwd=repo).stdout.strip()}: merged {REMOTE}/{BRANCH}")
+    print(f"project {git('rev-parse', '--short', 'HEAD', cwd=repo).stdout.strip()}: merged {target}")
     return 0
+
+
+def cmd_merge(repo, a):
+    fetch(repo)
+    target = f"{REMOTE}/{BRANCH}"
+    if git("merge-base", "--is-ancestor", target, "HEAD", cwd=repo, check=False).returncode == 0:
+        print(f"project: already holds {target}")
+        return 0
+    subject = a.message or git("log", "-1", "--format=%s", target, cwd=repo).stdout.strip()
+    return merge_template(repo, identity(repo), subject.splitlines()[0])
 
 
 def cmd_abort(repo, _a):
@@ -278,13 +343,14 @@ def main():
     sub.add_parser("open")
     p = sub.add_parser("push"); p.add_argument("paths", nargs="+"); p.add_argument("-m", "--message")
     p = sub.add_parser("finish"); p.add_argument("-m", "--message")
+    p = sub.add_parser("merge"); p.add_argument("-m", "--message")
     sub.add_parser("abort")
     a = ap.parse_args()
     repo = root()
     if not git("remote", "get-url", REMOTE, cwd=repo, check=False).stdout.strip():
         sys.exit(f"no `{REMOTE}` remote: git remote add {REMOTE} <the template's URL> (SETUP.md §8)")
     return {"status": cmd_status, "open": cmd_open, "push": cmd_push,
-            "finish": cmd_finish, "abort": cmd_abort}[a.cmd](repo, a)
+            "finish": cmd_finish, "merge": cmd_merge, "abort": cmd_abort}[a.cmd](repo, a)
 
 
 if __name__ == "__main__":

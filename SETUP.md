@@ -165,12 +165,16 @@ board contract, the publisher — improve over time; a project takes the
 improvements by merging, never by copying files:
 
 ```bash
-git fetch template
-git merge template/main            # commit your own work first
+python3 kicad_project/tools/template/giveback.py merge   # commit your own work first
 ```
 
-A conflict is in a file both sides changed: keep the project's facts and the
-template's mechanism, and run `./verify.sh` after.
+It fetches, computes the merge before anything moves, and refuses over an
+uncommitted edit it would lose. A conflict is in a file both sides changed:
+merge by hand (`git merge template/main`), keep the project's facts and the
+template's mechanism, and run `./verify.sh` after. After the template's
+history is rewritten (same trees, new ids: a privacy re-commit), a plain
+`git merge` takes a days-old base and conflicts everywhere; `giveback.py
+merge` merges on the rewritten twin of the commit the project last merged.
 
 The reverse direction is the rule, not a courtesy: **an improvement to a
 template-owned file (a board tool, a skill, a contract, `publish.py`) found
@@ -181,7 +185,7 @@ is `https://github.com/AMuszkat/hardwareDesignerTemplate` (`template` in a
 project's remotes). `kicad_project/SELF_IMPROVEMENT.md` says when such a fix
 is owed — the moment a second method works where the first failed — and where
 each kind of lesson goes; `kicad_project/tools/template/giveback.py` does the
-round trip (`status`, `push`, `open`, `finish`).
+round trip (`status`, `push`, `open`, `finish`, `merge`).
 
 ## 9. Publishing the repository
 
