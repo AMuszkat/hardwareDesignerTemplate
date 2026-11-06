@@ -214,7 +214,8 @@ given as data). Two uses:
   the old key `section` is still read as `caption`). `fields` adds MPN and
   the like. `dnp: true` marks it DNP: the preview carries KiCad's flag, and
   `drawn`, `parity` and `parity --handoff` (a part whose handoff line says
-  DNP) each fail until the drawn part carries it too. A *field* named DNP is
+  DNP; a line naming its parts -- "R39 fitted, R40 DNP" -- decides each part
+  by the word after its refdes) each fail until the drawn part carries it too. A *field* named DNP is
   not the flag — the BOM shows both the same way — so the plan writes none.
 
 ### The netlist format (`--netlist`)
@@ -262,6 +263,10 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   `symfields.py SYMBOL` for the fields -- and a pin-by-pin comparison with the
   backup (number, name, type, unit, side) before any sheet uses it. Prove it
   first: `delete_symbol` on a scratch copy of the library says "not found".
+  A longer pin is not a rebuild: `symfields.py --pin-length SYMBOL ...`
+  lengthens each side of each unit to hold its widest number (3 characters
+  3.81 mm, 4 characters 5.08 mm; `len x 1.27 x CHAR_W` on the 1.27 mm grid),
+  body ends, numbers, names and types unchanged and proven so.
 - **Library symbols a sheet already embeds.** Placing a part copies its
   definition into the sheet only if the sheet has none: a symbol rebuilt in the
   library keeps its old pins on every sheet that used it. After the parts of a

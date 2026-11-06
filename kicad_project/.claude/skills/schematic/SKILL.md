@@ -36,6 +36,13 @@ wins where they disagree.
   (`section`, `section-title`, `section-wire`); a small part stands in
   the frame of the IC it serves (`home`). A reviewer reads a title and a
   caption as claims.
+  The planner forms blocks itself (a rail's decoupling across ICs, a
+  rail's pull-ups across functions), and every part of a block must name
+  the same group or none (`plan` stops otherwise): **give `group` to
+  anchors (ICs, connectors) and to small parts that only serve one of them;
+  never to a decoupling capacitor or a pull-up on a shared rail** -- those
+  join their IC's frame by themselves. Iterate: plan, read the stop, drop
+  the group from the part it names.
 - **One function per section, wired inside.** The decoupling bank, the
   pull-ups, the crystal with its load capacitors, the feedback divider —
   each a block drawn with wires between its parts. A label joins sections;
@@ -55,13 +62,18 @@ wins where they disagree.
 
 ### Symbols — yours, in `lib/`
 
-- **A pin number of three characters (`100`, `A10`) needs a 3.81 mm pin**
-  (`length` in `create_symbol`): on a 2.54 mm pin it is wider than the pin
-  and crosses the body outline (`text-graphic`). A symbol drawn without it
-  is rebuilt, not patched (no Konnect call changes a pin's length):
-  `symfields.py --delete` it, `create_symbol` with the same pins and 3.81 mm
-  on every pin of that side (connection point one grid step out), then
-  `symfields.py` for its fields, and compare it pin by pin with the backup.
+- **A pin number wider than its pin crosses the body outline**
+  (`text-graphic`): three characters (`100`, `A10`) need 3.81 mm, four
+  (`AB10`, a big BGA's balls) 5.08 mm. No Konnect call changes a pin's
+  length, so lengthen it in the library:
+  `symfields.py --board <board> --pin-length SYMBOL ...` gives each side of
+  each unit the shortest pin that holds its widest number, moves the
+  connection points out and keeps the body ends, numbers, names and types
+  (proven against a kicad-cli resave; backup first). A sheet then needs the
+  plan's `update_symbols_from_library` (a redraw) -- every lengthened pin's
+  connection point moved. A new symbol: give `create_symbol` the length and
+  put left pins at x = -length (right pins at width + length) so the body
+  still lands at the origin.
 - **At most 40 pin rows on a side of a unit** (`pins-side`). Split a big IC
   into units by function — each bank's signals, each power domain, the
   grounds in their own unit — the way the datasheet's ball map groups them.

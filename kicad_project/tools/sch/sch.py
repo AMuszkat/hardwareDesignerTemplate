@@ -174,7 +174,7 @@ def handoff_parity(board):
     for r in sorted(real - set(parts)):
         out.append(("extra", r, f"{r} is drawn and has no line in the handoff's components"))
     # the handoff says DNP in the part's line; the drawing says it with KiCad's own flag
-    want = {r for r, p in parts.items() if not p["placeholder"] and re.search(r"\bDNP\b", p.get("value", ""))}
+    want = {r for r, p in parts.items() if not p["placeholder"] and handoff_dnp(r, p.get("value", ""))}
     out += [("dnp", r, msg) for r, msg in dnp_diff(board, want, "the handoff's line")]
     checked = 0
     hn = {(r, p): n for n, pins in nl["nets"].items() for r, p in pins}
@@ -269,6 +269,18 @@ def cmd_parity(a):
           f"PARITY FAIL: {len(missing)} net(s) not drawn as planned, {len(extra)} drawn otherwise, "
           f"{len(dnp)} DNP flag(s) not as planned")
     sys.exit(0 if not missing and not extra and not dnp else 1)
+
+
+def handoff_dnp(ref, value):
+    """Whether a handoff line makes this part DNP. A line that names its parts
+    ("0 ohm, 0402: R39 fitted, R40 DNP") decides each by the word after its
+    refdes; a line that names none ("4.7k, 0402, DNP") makes every part on it DNP."""
+    if not re.search(r"\bDNP\b", value):
+        return False
+    said = dict(re.findall(r"\b([A-Z]+\d+)\s+(fitted|DNP)\b", value))
+    if said:
+        return said.get(ref) == "DNP" if ref in said else not re.search(r"\bfitted\b", value)
+    return True
 
 
 def dnp_flags(board):

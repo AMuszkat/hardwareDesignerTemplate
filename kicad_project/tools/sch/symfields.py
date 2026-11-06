@@ -7,6 +7,7 @@ nothing else -- but for the two library edits Konnect gets wrong below.
     tools/.venv/bin/python tools/sch/symfields.py --board board1 SYMBOL ... [--lib NICK] [--dry-run]
     tools/.venv/bin/python tools/sch/symfields.py --board board1 --derive Device:R [--dry-run]
     tools/.venv/bin/python tools/sch/symfields.py --board board1 --delete SYMBOL ... [--dry-run]
+    tools/.venv/bin/python tools/sch/symfields.py --board board1 --pin-length SYMBOL ... [--dry-run]
 
 Corner (the default): Reference 3.81 mm and Value 1.27 mm above the unit
 bodies' shared top-left corner, left- and bottom-justified. A multi-unit
@@ -27,6 +28,19 @@ and kicad-cli (like KiCad's Symbol Editor) saves with tabs -- "not found".
 And create_symbol on a name already there appends a second copy instead of
 failing. A symbol another one `extends` is refused.
 
+--pin-length makes every pin long enough for its number (README, "Symbols":
+a number wider than its pin crosses the body outline, `text-graphic`). Each
+side of each unit -- the pins sharing one direction -- gets the shortest
+length on the 1.27 mm grid that holds the widest number
+on that side (len x 1.27 x CHAR_W: `100` -> 3.81, `AB10` -> 5.08; a pin is
+never shortened, and a symbol with hidden numbers is left alone), so the
+side's connection points stay in one column. The pin's body end stays where
+it is and the connection point moves out; number, name, type and the body
+are untouched. The rebuild Konnect would need (delete, create_symbol with
+every pin again) is where a ball silently changes type; this is not. A
+schematic then needs update_symbols_from_library (allow_pin_moves) or a
+redraw: every lengthened pin's connection point moved.
+
 How the file is written (the parsed tree, as fp.py does for footprints):
 kicad-cli resaves the library once as it stands (A) and once with the edit
 (B); B is installed only if A and B are identical apart from the fields this
@@ -37,6 +51,7 @@ picks the change up when its symbols are placed or updated from the library.
 """
 import argparse
 import copy
+import math
 import os
 import shutil
 import subprocess
@@ -50,6 +65,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 import boardsel                                     # noqa: E402
 import sexpr                                        # noqa: E402
+from model import CHAR_W                            # noqa: E402
 
 REF_DY, VAL_DY = 3.81, 1.27
 BESIDE = 1.016                     # body edge to the text's centre line, as Device:R's Reference sits
@@ -201,6 +217,111 @@ def delete(a, board, nick, path, tmp, A):
     print(f"wrote {path} (backup {bak / path.name}); {len(names)} symbol(s) deleted, nothing else changed")
 
 
+GRID, NUM_SIZE = 1.27, 1.27
+
+
+def need(number):
+    """The shortest pin on the grid that holds this number's text."""
+    w = len(number) * NUM_SIZE * CHAR_W
+    return round(-(-w // GRID) * GRID, 4)
+
+
+def pin_of(p):
+    at = sexpr.value(p, "at")
+    return [float(v) for v in at[:2]] + [float(at[2]) if len(at) > 2 else 0.0], \
+        float(sexpr.atom(p, "length", "2.54")), str(sexpr.atom(p, "number", ""))
+
+
+def lengthen(sym):
+    """In place: [(unit, angle, old lengths, new length, pins)] of the sides changed."""
+    pn = sexpr.first(sym, "pin_numbers")
+    if pn is not None and sexpr.flag(pn, "hide"):
+        return []                          # numbers not drawn: nothing to cross the body
+    sides = {}
+    for u in sexpr.every(sym, "symbol"):
+        for p in sexpr.every(u, "pin"):
+            (x, y, a), L, num = pin_of(p)
+            sides.setdefault((str(u[1]), round(a) % 360), []).append(p)
+    done = []
+    for (u, a), ps in sorted(sides.items()):
+        new = max(need(pin_of(p)[2]) for p in ps)
+        olds = {pin_of(p)[1] for p in ps}
+        if all(abs(o - new) < 1e-6 for o in olds) or max(olds) > new + 1e-6:
+            continue                       # long enough already (never shortened)
+        dx, dy = {0: (1, 0), 90: (0, 1), 180: (-1, 0), 270: (0, -1)}.get(a, (None, None))
+        if dx is None:
+            die(f"{sym[1]} unit {u}: a pin at {a} degrees")
+        for p in ps:
+            (x, y, ang), L, _ = pin_of(p)
+            d = new - L
+            at = sexpr.first(p, "at")
+            at[1:3] = [f"{round(x - dx * d, 4):g}", f"{round(y - dy * d, 4):g}"]
+            ln = sexpr.first(p, "length")
+            if ln is None:
+                p.insert(3, ["length", f"{new:g}"])
+            else:
+                ln[1:] = [f"{new:g}"]
+        done.append((u, a, sorted(olds), new, len(ps)))
+    return done
+
+
+def pins_flat(tree, names):
+    """{(symbol, unit, number): (name, type, body-end x, y, angle)} and the tree without pin at / length."""
+    t, out = copy.deepcopy(tree), {}
+    for name, s in symbols(t).items():
+        if name not in names:
+            continue
+        for u in sexpr.every(s, "symbol"):
+            for p in sexpr.every(u, "pin"):
+                (x, y, a), L, num = pin_of(p)
+                r = math.radians(a)
+                out[(name, str(u[1]), num, str(sexpr.atom(p, "name", "")), str(p[1]))] = \
+                    (round(x + L * math.cos(r), 3), round(y + L * math.sin(r), 3), round(a))
+                p[:] = [c for c in p if not (sexpr.is_node(c, "at") or sexpr.is_node(c, "length"))]
+    return out, t
+
+
+def pin_length(a, board, nick, path, tmp, A):
+    names = list(dict.fromkeys(a.symbols))
+    edited = copy.deepcopy(A)
+    syms = symbols(edited)
+    for name in names:
+        if name not in syms:
+            die(f"{name} is not in {path}")
+        ch = lengthen(syms[name])
+        for u, ang, olds, new, n in ch:
+            print(f"{name:28} {u:34} {ang:3} deg  {n:3} pins  {'/'.join(f'{o:g}' for o in olds)} -> {new:g} mm")
+        if not ch:
+            print(f"{name:28} every pin already holds its number")
+    (tmp / "b_in.kicad_sym").write_text(sexpr.dump(edited) + "\n")
+    B = resave(tmp / "b_in.kicad_sym", tmp / "b.kicad_sym")
+    pa, ta = pins_flat(A, set(names))
+    pb, tb = pins_flat(B, set(names))
+    if ta != tb:
+        die(f"the resaved library differs beyond pin positions and lengths -- nothing written (scratch: {tmp})")
+    if pa != pb:
+        bad = sorted(set(pa.items()) ^ set(pb.items()))[:5]
+        die(f"a pin's body end, number, name or type moved: {bad} -- nothing written (scratch: {tmp})")
+    for name in names:
+        for u in sexpr.every(symbols(B)[name], "symbol"):
+            for p in sexpr.every(u, "pin"):
+                _, L, num = pin_of(p)
+                pn = sexpr.first(symbols(B)[name], "pin_numbers")
+                if L + 1e-6 < need(num) and not (pn is not None and sexpr.flag(pn, "hide")):
+                    die(f"{name} pin {num}: {L:g} mm after the edit -- nothing written")
+    if a.dry_run:
+        print(f"dry run: proven, nothing written (scratch: {tmp})")
+        return
+    bak = board / ".sch_backups" / time.strftime("%Y%m%d-%H%M%S")
+    bak.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, bak / path.name)
+    shutil.copy2(tmp / "b.kicad_sym", path)
+    if sexpr.load(path) != B:
+        die(f"read-back differs -- restore {bak / path.name}")
+    print(f"wrote {path} (backup {bak / path.name}); pins lengthened on {len(names)} symbol(s), "
+          f"every number, name, type and body end unchanged")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("symbols", nargs="*")
@@ -208,12 +329,16 @@ def main():
     ap.add_argument("--lib", help="library nickname in the board's sym-lib-table (default: the board's stem)")
     ap.add_argument("--derive", metavar="LIB:NAME", help="copy KiCad's stock symbol in, fields beside its body")
     ap.add_argument("--delete", action="store_true", help="remove the named symbols (to rebuild them with Konnect)")
+    ap.add_argument("--pin-length", action="store_true",
+                    help="lengthen each side's pins to hold its widest number (body ends fixed)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     if bool(a.symbols) == bool(a.derive):
         die("name the board's symbols, or --derive one stock symbol")
-    if a.delete and a.derive:
-        die("--delete takes the board's symbols by name, not --derive")
+    if (a.delete or a.pin_length) and a.derive:
+        die("--delete / --pin-length take the board's symbols by name, not --derive")
+    if a.delete and a.pin_length:
+        die("--delete or --pin-length, not both")
     board = Path(boardsel.resolve(a.board))
     nick = a.lib or board.name.split("_")[0]
     path = lib_path(board, nick)
@@ -230,6 +355,8 @@ def main():
         names, spots_of = [name], beside_spots
     elif a.delete:
         return delete(a, board, nick, path, tmp, A)
+    elif a.pin_length:
+        return pin_length(a, board, nick, path, tmp, A)
     else:
         names, spots_of = a.symbols, corner_spots
     syms = symbols(edited)
