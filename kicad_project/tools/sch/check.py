@@ -35,6 +35,7 @@ RULES = {
     "text-wire": "no wire runs through a text",
     "text-graphic": "no text runs into a symbol's drawn lines (a body outline, a power glyph)",
     "body": "no wire crosses a symbol body, no two bodies overlap",
+    "junction": "a junction dot joins three or more wires / pins, and stands alone on its point",
     "rail-label": "a power net is drawn with power symbols, never a label",
     "global": "below the root, a signal leaves its sheet through a hierarchical label",
     "sheet-pin": "every sheet pin on the root is connected",
@@ -298,6 +299,25 @@ def run(design, waivers=(), with_svg=True):
                             hits.add(k)
                             find("text-graphic", sh, k, f"'{t}' runs into {who}'s "
                                  f"{'glyph' if s.power else 'body'} at ({bx[0]:.1f}, {bx[1]:.1f})")
+        # a junction dot where fewer than three things meet, or two dots on one point: what a hand
+        # reroute leaves behind (Konnect prunes a dot only when the wire it deletes justified it)
+        ends = defaultdict(int)
+        for a, b, _ in sh.wires:
+            ends[key(*a)] += 1
+            ends[key(*b)] += 1
+        for s in sh.symbols:
+            for _, e, _ in s.pins():
+                ends[key(*e)] += 1
+        dots = defaultdict(int)
+        for x, y, _ in sh.junctions:
+            k = key(x, y)
+            dots[k] += 1
+            n = ends[k] + sum(2 for a, b, _ in sh.wires
+                              if k not in (key(*a), key(*b)) and on_segment((x, y), a, b))
+            if dots[k] > 1:
+                find("junction", sh, f"dup@{x:.2f},{y:.2f}", f"two junction dots at ({x:.1f}, {y:.1f})")
+            elif n < 3:
+                find("junction", sh, f"{x:.2f},{y:.2f}", f"a junction dot at ({x:.1f}, {y:.1f}) joins {n} things")
         bodies = [(s, shrink(s.body(), 0.1), {key(*e) for _, e, _ in s.pins()})
                   for s in sh.symbols if s.body() and not s.power]
         for a, b, _ in sh.wires:

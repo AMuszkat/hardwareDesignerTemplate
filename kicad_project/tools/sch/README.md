@@ -39,6 +39,7 @@ a number.
 | `frame` | nothing outside the frame or under the title block | — |
 | `title` | the title block names the board, its revision and the date | — |
 | `text` | no text overlaps another text, nor touches the text above or below it (KiCad's own SVG gives every text's real extent; a hierarchical label is centred on its wire, a local label sits above its own, so one in the lane below the other touches it -- the planner runs the local label past it) | 0.3 mm |
+| `junction` | a junction dot joins three or more wire ends, pin ends or wire spans, and no point has two -- what a hand reroute leaves behind, since Konnect prunes a dot only when the wire it deletes justified it | 3 |
 | `text-wire` | no wire runs through a text | — |
 | `text-graphic` | no text runs into a symbol's drawn lines — a body outline, a power glyph. A ground glyph's triangle reaches 1.27 mm into the next lane, where KiCad draws the neighbouring label's text (above its wire); a pin number wider than its pin (`100`, `A10` on a 2.54 mm pin) crosses the body outline. `text` cannot see either: it compares texts with texts | — |
 | `body` | no wire crosses a symbol body (a wire leaving that part's own pin excepted); no two bodies overlap | — |
@@ -306,10 +307,8 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
 - **A junction left behind by a post-draw reroute.** `delete_schematic_wire`
   and `batch_delete_schematic_wire` prune a dot only when the wire they delete
   was what justified it; a dot between two collinear wires that remain, or a
-  second dot added on the same point, stays -- and `check` does not test
-  junctions. After rerouting by hand, list the sheet's junctions with the wire
-  ends at each (fewer than three connections, or two dots on one point) and
-  `batch_delete` the extra by uuid.
+  second dot added on the same point, stays. `check`'s `junction` rule now does: `batch_delete` each dot it
+  names, by uuid.
 - **A root sheet box's "File:" field.** `edit_sheet` moves the box and its
   name but leaves the file field where the old box ended -- on a neighbour.
   `frame` puts it under its own box.
