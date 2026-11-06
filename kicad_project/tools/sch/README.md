@@ -288,11 +288,16 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   already holds the parts, the PCB must be updated from the schematic with
   *Re-link footprints to schematic symbols based on their reference
   designators* — in KiCad, by the user — before any further PCB work.
-- **The DNP flag.** No call sets KiCad's own `(dnp yes)`; it is ticked by
-  hand in eeschema (Symbol Properties → *Do not populate*) after the last
-  redraw — a redraw places the parts again without it. `drawn`, `parity` and
-  `parity --handoff` name every part still missing it, so a sheet with the
-  flag unset never reaches review looking clean.
+- **The DNP and Exclude-from-BOM flags.** No call sets KiCad's own
+  `(dnp yes)` or `(in_bom no)`, and a redraw places the parts again without
+  them. `sch.py flags` writes them (parsed tree, only those two atoms, the
+  netlist exported before and after, the DNP flags read back, backup): DNP
+  from the plan, Exclude from BOM from `schematic.json` `"exclude_from_bom"`.
+  `drawn`, `parity` and `parity --handoff` name every part still missing
+  its DNP flag.
+- **A root sheet box's "File:" field.** `edit_sheet` moves the box and its
+  name but leaves the file field where the old box ended -- on a neighbour.
+  `frame` puts it under its own box.
 
 ## Limits
 

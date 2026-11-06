@@ -46,7 +46,15 @@ def items_of(block):
         for num in e.pins:
             pin_ends.append(e.end(num))
         (parts if e.part else power).append(e)
-    return dict(parts=parts, power=power, wires=block.wires, ncs=block.ncs, labels=block.labels,
+    # a wire the layout drew twice (two blocks' stubs meeting) is one wire: drawn twice it is an
+    # item too many, and its ends count twice towards a junction dot
+    seen, wires = set(), []
+    for a, b in block.wires:
+        k = tuple(sorted((check.key(*a), check.key(*b))))
+        if k not in seen:
+            seen.add(k)
+            wires.append((a, b))
+    return dict(parts=parts, power=power, wires=wires, ncs=block.ncs, labels=block.labels,
                 pin_ends=pin_ends, sections=list(block.sections), texts=list(block.captions))
 
 
@@ -341,6 +349,25 @@ def frame(board, plan_dir, remove=False):
     written = plan.setdefault("_frames", {})
     root = board / f"{board.name}.kicad_sch"
     before, _ = model.netlist(root)
+    # every sheet is checked before any is written: a refusal half way would leave some sheets framed
+    # by this plan and the rest by the last one
+    for name, sh in plan.items():
+        if name.startswith("_") or remove:
+            continue
+        f = board / sh["file"]
+        if not f.exists():
+            raise SystemExit(f"sch: {f} does not exist -- draw the plan first")
+        placed = {}
+        for s in sexpr.every(sexpr.load(f), "symbol"):
+            ref = next((str(p[2]) for p in sexpr.every(s, "property") if str(p[1]) == "Reference"), None)
+            at = sexpr.value(s, "at")
+            placed[(ref, int(sexpr.atom(s, "unit", "1")))] = (float(at[0]), float(at[1]))
+        off = [p for p in sh["parts"] if placed.get((p["ref"], p["unit"])) != (p["x"], p["y"])]
+        if off:
+            p = off[0]
+            raise SystemExit(f"sch: {name}: {p['ref']} unit {p['unit']} is not at ({p['x']}, {p['y']}) as planned "
+                             f"({len(off)} part(s)) -- nothing written. Draw {Path(sh['file']).stem}.ops.json first; "
+                             "run frame BEFORE any post-draw Konnect move")
     n = 0
     for name, sh in plan.items():
         if name.startswith("_"):
@@ -377,6 +404,14 @@ def frame(board, plan_dir, remove=False):
             for k in ("title", "date", "rev"):
                 node[:] = [c for c in node if not sexpr.is_node(c, k)]
                 node.append([k, sexpr.Q(tb[k])])
+        # a root sheet's sheet boxes: Konnect's edit_sheet moves a box and its name but leaves the
+        # "File:" field where the old box ended, on a neighbouring box -- put it just under its own box
+        for ss in sexpr.every(tree, "sheet"):
+            at, size = [float(v) for v in sexpr.value(ss, "at")[:2]], [float(v) for v in sexpr.value(ss, "size")[:2]]
+            for prop in sexpr.every(ss, "property"):
+                if str(prop[1]) == "Sheetfile":
+                    pa = sexpr.first(prop, "at")
+                    pa[1:3] = [f"{at[0]:g}", f"{round(at[1] + size[1] + 0.635, 4):g}"]
         ids = []
         if not remove:
             new = []

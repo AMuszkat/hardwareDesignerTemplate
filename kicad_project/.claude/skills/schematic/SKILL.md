@@ -195,6 +195,15 @@ tools/.venv/bin/python tools/sch/sch.py frame --board <board>
 
 KiCad must not have the sheets open with unsaved edits when `frame` runs;
 reopen the project (or File → Revert) afterwards so it reads the frames in.
+**Run `frame` before any post-draw Konnect fix** (§4): it refuses while a
+part is not where the plan put it, and a part moved to clear a finding is
+exactly that. It also puts each root sheet box's "File:" field under its own
+box (Konnect's `edit_sheet` leaves it where the old box ended).
+
+While a redraw is half done, the board's sheets are not one consistent
+netlist: a source re-read from them (`--from-sch`, a board build script)
+then has the wrong nets. Read it from the last plan's preview
+(`sch_plan/preview/<board>/`), which `plan` proved identical to its source.
 
 ## 4. Prove what was drawn
 
@@ -217,12 +226,19 @@ parts, tell the user before any PCB work: Update PCB from Schematic with
 *Re-link footprints to schematic symbols based on their reference
 designators*.
 
-⚠ **KiCad's own DNP flag is set by no Konnect call, and a redraw places
-every part again without it.** After the last redraw, before the review
-request, it is ticked in eeschema (Symbol Properties → *Do not populate*)
-by the user on every part the board marks `"dnp": true`. `drawn`, `parity` and `parity --handoff` fail,
-naming each part, until it is. A field named DNP is not the flag: the BOM
-shows both the same way, so write none.
+⚠ **KiCad's own DNP and Exclude-from-BOM flags are set by no Konnect call,
+and a redraw places every part again without them.** After the last redraw,
+before the review request:
+
+```
+tools/.venv/bin/python tools/sch/sch.py flags --board <board>     # KiCad closed
+```
+
+sets DNP on exactly the plan's DNP parts and Exclude from BOM on
+`schematic.json`'s `"exclude_from_bom"` globs (pad-only parts, fiducials,
+plated holes, test pads), parsed tree, netlist proven unchanged, read back.
+`drawn`, `parity` and `parity --handoff` fail, naming each part, until the
+DNP flags are right. A field named DNP is not the flag: write none.
 
 ## 5. Stop for review
 

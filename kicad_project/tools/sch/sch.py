@@ -38,9 +38,13 @@
           placeholder, every pin the handoff fixes on its net BY NAME, every
           no-connect and OPEN pin unconnected, every part its line calls DNP
           carrying KiCad's flag.
+  flags   after drawing: KiCad's own DNP flag on exactly the plan's DNP parts
+          and Exclude from BOM on schematic.json's "exclude_from_bom" globs --
+          the two booleans no Konnect call sets (parsed tree, netlist proven
+          unchanged, read back; flags.py).
   rules   the rules and their numbers.
 
-Read-only on the board's KiCad files except `frame`: plan writes under <out>
+Read-only on the board's KiCad files except `frame` and `flags`: plan writes under <out>
 only (default <board>/sch_plan/). Konnect draws.
 """
 import argparse
@@ -142,6 +146,13 @@ def cmd_frame(a):
     n = emit.frame(board, plan_dir, a.remove)
     print(f"{n} section frame(s) and the title block written -- netlist unchanged" if not a.remove
           else "frames removed; title block kept")
+
+
+def cmd_flags(a):
+    import flags
+    board = boardsel.resolve(a.board)
+    plan_dir = Path(a.plan) if a.plan else Path(board) / "sch_plan"
+    sys.exit(flags.run(board, plan_dir, a.dry_run))
 
 
 def handoff_parity(board):
@@ -336,6 +347,11 @@ def main():
     fr.add_argument("--plan")
     fr.add_argument("--remove", action="store_true")
     fr.set_defaults(fn=cmd_frame)
+    fl = sub.add_parser("flags", help="KiCad's DNP / exclude-from-BOM flags, as the plan and schematic.json say")
+    fl.add_argument("--board")
+    fl.add_argument("--plan")
+    fl.add_argument("--dry-run", action="store_true")
+    fl.set_defaults(fn=cmd_flags)
     q = sub.add_parser("parity")
     q.add_argument("--board")
     qg = q.add_mutually_exclusive_group()
