@@ -823,6 +823,13 @@ class Board:
             if len(_refset([c[0]])) > 1 and ";" in c[2]:
                 prob.append(f"{c[0]}: one line, several parts, several values ({c[2]}) -- "
                             f"which part takes which? Give each its own line")
+            # 'R39, R40' with '0 ohm: R39 fitted, R40 DNP': netlist.json gives
+            # both parts the whole text, so a DNP test on it marks both DNP.
+            named = _refset([c[0]]) & set(REFDES.findall(c[2]))
+            if len(_refset([c[0]])) > 1 and named:
+                prob.append(f"{c[0]}: one line, several parts, and the value names "
+                            f"{', '.join(sorted(named))} ({c[2]}) -- every part gets the "
+                            f"whole text; give each its own line")
         if rows:
             k = self._classify(rows)
             if k["unknown"]:
