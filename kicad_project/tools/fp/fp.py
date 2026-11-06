@@ -805,18 +805,22 @@ def _get(a, board, stage):
         if os.path.exists(sym):
             meta["symbol"] = os.path.relpath(sym, board.dir)
     elif a.url:
-        blob, why = http_get(a.url)
-        if not blob:
-            print(f"fp: {a.url}\n    {why}")
-            return fork(a.mpn, "the URL could not be fetched by a script or "
-                               "by the local headless Chrome -- if it needs "
-                               "a login or a click, open it with the Chrome "
-                               "MCP, save the file, and re-run with --file")
-        name = os.path.basename(a.url.split("?")[0]) or "download.bin"
-        if blob[:2] == b"PK" and not name.lower().endswith(".zip"):
-            name += ".zip"                    # .../download?id=... is still a zip
-        open(os.path.join(src, name), "wb").write(blob)
-        meta.update(source="url", url=a.url)
+        # Repeatable: a vendor that publishes the footprint and its STEP as
+        # separate files (a GitHub library) gives one --url for each, and
+        # both land in src/ where _harvest finds the model beside the land.
+        for url in a.url:
+            blob, why = http_get(url)
+            if not blob:
+                print(f"fp: {url}\n    {why}")
+                return fork(a.mpn, "the URL could not be fetched by a script or "
+                                   "by the local headless Chrome -- if it needs "
+                                   "a login or a click, open it with the Chrome "
+                                   "MCP, save the file, and re-run with --file")
+            name = os.path.basename(url.split("?")[0]) or "download.bin"
+            if blob[:2] == b"PK" and not name.lower().endswith(".zip"):
+                name += ".zip"                # .../download?id=... is still a zip
+            open(os.path.join(src, name), "wb").write(blob)
+        meta.update(source="url", url=a.url[0] if len(a.url) == 1 else a.url)
     else:
         p = os.path.expanduser(a.file)
         if not os.path.isfile(p):
@@ -1556,8 +1560,14 @@ def tidy_tree(tree, silk_keep=(), silk_dot=None, courtyard=None,
                         if not isinstance(g, list):
                             continue
                         loc = _pts(["fp_" + g[0][3:]] + g[1:])
-                        if g[0] == "gr_circle" and len(loc) == 2:
-                            pass                      # already a bbox
+                        # A primitive's copper is its outline PLUS half its
+                        # stroke: a ring pad is one gr_circle of width 1.15,
+                        # and _pts gives only the centreline's box.
+                        wk = rkid(g, "width")
+                        hw = (rnums(wk)[0] / 2) if wk else 0.0
+                        if hw:
+                            loc = [(x + dx, y + dy) for x, y in loc
+                                   for dx in (-hw, hw) for dy in (-hw, hw)]
                         for x, y in loc:
                             pts.append((at[0] + x * c + y * s,
                                         at[1] - x * s + y * c))
@@ -1861,7 +1871,10 @@ def main():
     g.add_argument("mpn")
     g.add_argument("--lcsc", help="LCSC id (C123456) -- ask Konnect's "
                                   "search_jlcpcb_parts for it")
-    g.add_argument("--url", help="direct URL to a .kicad_mod, or a .zip holding one")
+    g.add_argument("--url", action="append",
+                   help="direct URL to a .kicad_mod, or a .zip holding one; "
+                        "repeat it for a 3D model published as its own file "
+                        "(.step / .wrl)")
     g.add_argument("--file", help="a file you already saved")
     g.add_argument("--origin", help="where a --file came from (recorded)")
     g.add_argument("--pick", help="which .kicad_mod, when a zip holds several")

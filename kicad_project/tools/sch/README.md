@@ -295,6 +295,14 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   from the plan, Exclude from BOM from `schematic.json` `"exclude_from_bom"`.
   `drawn`, `parity` and `parity --handoff` name every part still missing
   its DNP flag.
+- **The Footprint field after footprint work.** Footprints are finished
+  after the sheet is drawn, and a redraw only to fill one field per part
+  costs every UUID. `sch.py footprints` writes each placed symbol's
+  Footprint from `schematic.json` (`"footprint"`, matched per refdes as
+  `plan` matches it; parsed tree, only those values, nets exported before
+  and after, read back, backup). It refuses a library id the board's
+  `fp-lib-table` (or KiCad's stock libraries) cannot resolve. Plan again
+  afterwards so the next `drawn` checks the field.
 - **A junction left behind by a post-draw reroute.** `delete_schematic_wire`
   and `batch_delete_schematic_wire` prune a dot only when the wire they delete
   was what justified it; a dot between two collinear wires that remain, or a

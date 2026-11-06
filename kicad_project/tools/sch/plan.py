@@ -133,7 +133,10 @@ class Source:
         self.date = datetime.date.today().isoformat()
         ho = self.board / "handoff"
         try:
-            self.rev = f"handoff rev {json.loads((ho / 'MANIFEST.json').read_text())['rev']}"
+            # KiCad's title-block Rev cell holds about five characters: "handoff
+            # rev 14" ran over its border (board2 review RV2.1). "h14" is the
+            # handoff revision the drawing was made against.
+            self.rev = f"h{json.loads((ho / 'MANIFEST.json').read_text())['rev']}"
             first = (ho / "00_READ_FIRST.md").read_text().splitlines()[0]
             m = re.search(r"—\s*(.+?)\s+handoff", first)
             if m:

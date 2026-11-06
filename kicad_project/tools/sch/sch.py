@@ -155,6 +155,11 @@ def cmd_flags(a):
     sys.exit(flags.run(board, plan_dir, a.dry_run))
 
 
+def cmd_footprints(a):
+    import footprints
+    sys.exit(footprints.run(boardsel.resolve(a.board), a.dry_run))
+
+
 def handoff_parity(board):
     """The drawing against handoff/netlist.json. Returns the findings."""
     f = Path(board) / "handoff" / "netlist.json"
@@ -352,6 +357,10 @@ def main():
     fl.add_argument("--plan")
     fl.add_argument("--dry-run", action="store_true")
     fl.set_defaults(fn=cmd_flags)
+    fpp = sub.add_parser("footprints", help="each placed symbol's Footprint field, as schematic.json says")
+    fpp.add_argument("--board")
+    fpp.add_argument("--dry-run", action="store_true")
+    fpp.set_defaults(fn=cmd_footprints)
     q = sub.add_parser("parity")
     q.add_argument("--board")
     qg = q.add_mutually_exclusive_group()

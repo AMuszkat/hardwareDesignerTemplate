@@ -41,6 +41,15 @@ it. `--anyway` overrides the refusal when the measurement is a false match.
 | 4 | `--file` | something you saved yourself: a login-walled portal (SnapEDA, Ultra Librarian, SamacSys) opened with the Chrome MCP, or a file the user hands you. `--origin` records where it came from |
 | 5 | nothing | `get` prints the fork and exits 2 — **ask the user**: author it here with Konnect's `library` toolset, or they draw it. `adopt` files the result with the same record |
 
+**A vendor that publishes the footprint and its STEP as separate files**
+(Würth's `WurthElektronik/KiCad-Library` on GitHub — its default branch is
+`master`, so a `raw.githubusercontent.com/.../main/...` URL returns a 404
+page that `get` reports as "not a KiCad footprint"): give `--url` once for
+each file. Both land in `src/`, the model is copied beside the land and the
+footprint is re-pointed at it; with the `.kicad_mod` alone, `verify` FAILs on
+a missing `${WE_3DMODEL_DIR}` model. Proof: `verify` prints a
+`${KIPRJMOD}/lib/...` model and "no automatic complaints".
+
 `--lcsc` is the one lookup this cannot do for you: LCSC and EasyEDA both
 answer a script with 403 and headless Chrome with an empty page. Ask
 Konnect's integration toolset (`search_jlcpcb_parts`) for the C-number.
