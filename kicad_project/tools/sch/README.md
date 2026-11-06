@@ -295,6 +295,13 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   from the plan, Exclude from BOM from `schematic.json` `"exclude_from_bom"`.
   `drawn`, `parity` and `parity --handoff` name every part still missing
   its DNP flag.
+- **A junction left behind by a post-draw reroute.** `delete_schematic_wire`
+  and `batch_delete_schematic_wire` prune a dot only when the wire they delete
+  was what justified it; a dot between two collinear wires that remain, or a
+  second dot added on the same point, stays -- and `check` does not test
+  junctions. After rerouting by hand, list the sheet's junctions with the wire
+  ends at each (fewer than three connections, or two dots on one point) and
+  `batch_delete` the extra by uuid.
 - **A root sheet box's "File:" field.** `edit_sheet` moves the box and its
   name but leaves the file field where the old box ended -- on a neighbour.
   `frame` puts it under its own box.
