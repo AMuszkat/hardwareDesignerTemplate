@@ -40,7 +40,7 @@ a number.
 | `title` | the title block names the board, its revision and the date | — |
 | `text` | no text overlaps another text, nor touches the text above or below it (KiCad's own SVG gives every text's real extent; a hierarchical label is centred on its wire, a local label sits above its own, so one in the lane below the other touches it -- the planner runs the local label past it) | 0.3 mm |
 | `junction` | a junction dot joins three or more wire ends, pin ends or wire spans, and no point has two -- what a hand reroute leaves behind, since Konnect prunes a dot only when the wire it deletes justified it | 3 |
-| `text-wire` | no wire runs through a text | — |
+| `text-wire` | no wire runs through or along a text: its strokes' extent grown by half a stroke and half a wire (a wire on the cap line of a reference touches it) | 0.1 mm |
 | `text-graphic` | no text runs into a symbol's drawn lines — a body outline, a power glyph. A ground glyph's triangle reaches 1.27 mm into the next lane, where KiCad draws the neighbouring label's text (above its wire); a pin number wider than its pin (`100`, `A10` on a 2.54 mm pin) crosses the body outline. `text` cannot see either: it compares texts with texts | — |
 | `body` | no wire crosses a symbol body (a wire leaving that part's own pin excepted); no two bodies overlap | — |
 | `rail-label` | a power net is drawn with power symbols, never a label — a local label named `+3V3` is a *sheet-local* net, not the rail | — |

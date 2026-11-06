@@ -24,6 +24,7 @@ MARGIN = 5.0           # content keeps this clear of the frame
 SMALL_PINS = 4         # a part with at most this many pins is a "small part"
 FIELD_NEAR = 12.7      # a visible Reference / Value this close to its own body
 TITLE_SIZE = 2.0       # a section title's text size (bold)
+INK = 0.1             # a text's strokes and a wire are drawn this much past their centre lines (half a stroke + half a wire)
 TEXT_GAP = 0.3        # two texts one above the other keep at least this between their strokes
 TITLE_BAND = 8.0       # a rectangle's title is a text this far inside its top-left corner
 
@@ -32,7 +33,7 @@ RULES = {
     "frame": "nothing outside the frame or under the title block",
     "title": "the title block names the board, its revision and the date",
     "text": "no text overlaps another text, nor comes within TEXT_GAP of the text above or below it",
-    "text-wire": "no wire runs through a text",
+    "text-wire": "no wire runs through a text, or along its edge (INK)",
     "text-graphic": "no text runs into a symbol's drawn lines (a body outline, a power glyph)",
     "body": "no wire crosses a symbol body, no two bodies overlap",
     "junction": "a junction dot joins three or more wires / pins, and stands alone on its point",
@@ -269,7 +270,7 @@ def run(design, waivers=(), with_svg=True):
                  f"'{a[0]}' overlaps '{b[0]}' at ({a[1][0]:.1f}, {a[1][1]:.1f})")
 
         # wire through text, wire through body, body on body
-        tboxes = [(t, shrink(b, 0.2)) for t, b in texts]
+        tboxes = [(t, shrink(b, -INK)) for t, b in texts]
         for a, b, _ in sh.wires:
             for t, bx in tboxes:
                 if seg_hits_box(a, b, bx):
