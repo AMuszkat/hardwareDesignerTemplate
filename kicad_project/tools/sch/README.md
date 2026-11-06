@@ -307,8 +307,8 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
 - **A junction left behind by a post-draw reroute.** `delete_schematic_wire`
   and `batch_delete_schematic_wire` prune a dot only when the wire they delete
   was what justified it; a dot between two collinear wires that remain, or a
-  second dot added on the same point, stays. `check`'s `junction` rule names each one; `batch_delete` it
-  names, by uuid.
+  second dot added on the same point, stays. `check`'s `junction` rule names each
+  one; `batch_delete` it by uuid.
 - **A root sheet box's "File:" field.** `edit_sheet` moves the box and its
   name but leaves the file field where the old box ended -- on a neighbour.
   `frame` puts it under its own box.
