@@ -32,7 +32,9 @@ failing. A symbol another one `extends` is refused.
 a number wider than its pin crosses the body outline, `text-graphic`). Each
 side of each unit -- the pins sharing one direction -- gets the shortest
 length on the 1.27 mm grid that holds the widest number
-on that side (len x 1.27 x CHAR_W: `100` -> 3.81, `AB10` -> 5.08; a pin is
+on that side, with a 1.27 mm margin so the number clears both the body line
+and a no-connect cross on the pin's end (len x 1.27 x CHAR_W + 1.27: `10`
+-> 3.81, `100` / `M10` -> 5.08, `AB10` -> 6.35; a pin is
 never shortened, and a symbol with hidden numbers is left alone), so the
 side's connection points stay in one column. The pin's body end stays where
 it is and the connection point moves out; number, name, type and the body
@@ -218,11 +220,12 @@ def delete(a, board, nick, path, tmp, A):
 
 
 GRID, NUM_SIZE = 1.27, 1.27
+NUM_MARGIN = 1.27     # the number clears the body line at one end and a no-connect cross at the other
 
 
 def need(number):
     """The shortest pin on the grid that holds this number's text."""
-    w = len(number) * NUM_SIZE * CHAR_W
+    w = len(number) * NUM_SIZE * CHAR_W + NUM_MARGIN
     return round(-(-w // GRID) * GRID, 4)
 
 

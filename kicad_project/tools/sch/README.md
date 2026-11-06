@@ -38,7 +38,7 @@ a number.
 | `paper` | the paper is the smallest ISO size the content fits; more than A2 means split the sheet | A4 … A2 |
 | `frame` | nothing outside the frame or under the title block | — |
 | `title` | the title block names the board, its revision and the date | — |
-| `text` | no text overlaps another text (KiCad's own SVG gives every text's real extent) | — |
+| `text` | no text overlaps another text, nor touches the text above or below it (KiCad's own SVG gives every text's real extent; a hierarchical label is centred on its wire, a local label sits above its own, so one in the lane below the other touches it -- the planner runs the local label past it) | 0.3 mm |
 | `text-wire` | no wire runs through a text | — |
 | `text-graphic` | no text runs into a symbol's drawn lines — a body outline, a power glyph. A ground glyph's triangle reaches 1.27 mm into the next lane, where KiCad draws the neighbouring label's text (above its wire); a pin number wider than its pin (`100`, `A10` on a 2.54 mm pin) crosses the body outline. `text` cannot see either: it compares texts with texts | — |
 | `body` | no wire crosses a symbol body (a wire leaving that part's own pin excepted); no two bodies overlap | — |

@@ -24,13 +24,14 @@ MARGIN = 5.0           # content keeps this clear of the frame
 SMALL_PINS = 4         # a part with at most this many pins is a "small part"
 FIELD_NEAR = 12.7      # a visible Reference / Value this close to its own body
 TITLE_SIZE = 2.0       # a section title's text size (bold)
+TEXT_GAP = 0.3        # two texts one above the other keep at least this between their strokes
 TITLE_BAND = 8.0       # a rectangle's title is a text this far inside its top-left corner
 
 RULES = {
     "paper": "the paper is the smallest ISO size the content fits, and never above A2",
     "frame": "nothing outside the frame or under the title block",
     "title": "the title block names the board, its revision and the date",
-    "text": "no text overlaps another text",
+    "text": "no text overlaps another text, nor comes within TEXT_GAP of the text above or below it",
     "text-wire": "no wire runs through a text",
     "text-graphic": "no text runs into a symbol's drawn lines (a body outline, a power glyph)",
     "body": "no wire crosses a symbol body, no two bodies overlap",
@@ -256,8 +257,9 @@ def run(design, waivers=(), with_svg=True):
         if miss:
             find("title", sh, "fields", f"title block has no {', '.join(miss)}")
 
-        # text on text
-        boxes = [shrink(b, 0.05) for _, b in texts]
+        # text on text -- and text that touches the text above or below it: a hierarchical label
+        # centred on its pin with a local label (drawn above its wire) on the pin below
+        boxes = [(b[0] + 0.05, b[1] - TEXT_GAP / 2, b[2] - 0.05, b[3] + TEXT_GAP / 2) for _, b in texts]
         for i, j in pairs_overlapping(boxes):
             a, b = texts[i], texts[j]
             if a[0] == b[0] and a[1] == b[1]:

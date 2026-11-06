@@ -569,18 +569,28 @@ class Ctx:
             if self.is_rail(net):
                 self.terminate(blk, net, at, o, clear)
                 glyphs.append(blk.power[-1].box())
-        for net, at, o in ends:
-            if self.is_rail(net):
-                continue
+        # hierarchical labels first: one is centred on its wire, so it reaches into the lane below,
+        # where a local label draws its text above its own wire -- that label starts past it
+        kind = lambda net: "hier" if self.kind(net) == "hier" else "label"
+        sigs = [e for e in ends if not self.is_rail(e[0])]
+        hiers = []
+        for net, at, o in sorted(sigs, key=lambda e: kind(e[0]) != "hier"):
             n = self.stub(at, o, clear)
-            end = (at[0] + o[0] * n, at[1] + o[1] * n)
-            lb = label_box("hier" if self.kind(net) == "hier" else "label", net, *end, label_rot(o))
-            for gb in glyphs:
-                if check.overlap(lb, gb):
+            obstacles = glyphs + (hiers if kind(net) == "label" else [])
+            for _ in range(len(obstacles) + 1):
+                end = (at[0] + o[0] * n, at[1] + o[1] * n)
+                lb = label_box(kind(net), net, *end, label_rot(o))
+                hit = [gb for gb in obstacles if check.overlap(lb, gb)]
+                if not hit:
+                    break
+                for gb in hit:
                     far = {(1, 0): gb[2] - at[0], (-1, 0): at[0] - gb[0],
                            (0, 1): gb[3] - at[1], (0, -1): at[1] - gb[1]}[(round(o[0]), round(o[1]))]
                     n = max(n, math.ceil((far + 1.27) / 1.27 - 1e-6) * 1.27)
             self.terminate(blk, net, at, o, n=round(n, 4))
+            if kind(net) == "hier":
+                end = (at[0] + o[0] * n, at[1] + o[1] * n)
+                hiers.append(label_box("hier", net, *end, label_rot(o)))
 
 
 HW_SCH = Path(__file__).resolve().parent / "hw_sch.kicad_sym"
