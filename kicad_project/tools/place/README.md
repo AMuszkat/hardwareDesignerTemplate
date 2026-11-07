@@ -235,8 +235,12 @@ API answering. When that path is closed:
   renamed nets, `unconnected-(…)` names and new fields stayed (board1: parity
   325 after it, 0 after this). Traps it handles: `kicad-cli`'s netlist names an
   open pin of a multi-unit part with its unit letter, the update without; a
-  footprint field is removed with `RemoveNative` (the wrapper's `Remove`
-  corrupts the footprints after it).
+  footprint field the symbol dropped is hidden, not removed (the wrapper's
+  `Remove` corrupts the footprints after it; `RemoveNative` reports success
+  and the field is still saved). The live Konnect update also strips pad
+  properties (BGA, heatsink, fiducial -- they reach the Gerbers' aperture
+  functions); KiCad then reports lib_footprint_mismatch: copy each pad's
+  property back from the library footprint (`pad.SetProperty`).
 - `addfp.py` adds footprints the schematic has and the board has not (from the
   schematic's own netlist; nets set **after** `Add`), parked off the board;
 - `refresh.py` replaces the shapes on chosen front layers of named footprints

@@ -14,9 +14,9 @@ designators" ticked -- from the schematic's own netlist
   * every pad's net, by the netlist's own name (`/POR_B`, `unconnected-(...)`);
     a pad the netlist does not name gets no net;
   * Value, every symbol field (MPN, Description, ...); a field the symbol does
-    not have is removed only when `--drop` names it (default: DNP, the text
-    field a DNP flag replaces) -- a footprint's own library fields
-    (KiLib_Generator, ...) stay, or KiCad reports lib_footprint_mismatch;
+    not have is HIDDEN when `--drop` names it (default: DNP, the text field a
+    DNP flag replaces) -- a footprint's own library fields (KiLib_Generator,
+    ...) stay, or KiCad reports lib_footprint_mismatch;
   * the DNP and Exclude-from-BOM attributes;
   * then the nets no pad uses any more are removed.
 
@@ -155,19 +155,20 @@ def main():
                     f.GetField(k).SetVisible(False)
         for fld in list(f.GetFields()):
             k = fld.GetName()
-            if k in a.drop and k not in c["fields"]:
+            if k in a.drop and k not in c["fields"] and fld.IsVisible():
                 count["removed"] += 1
                 if not a.dry_run:
-                    # RemoveNative, never Remove: the Python wrapper's Remove corrupts the footprints
-                    # that follow (seen as GetPath() -> a bare SwigPyObject, then a segfault in GC)
-                    f.RemoveNative(fld)
+                    # hidden, not removed: the wrapper's Remove corrupts the footprints that follow
+                    # (GetPath() -> a bare SwigPyObject, then a segfault in GC), and RemoveNative
+                    # reports success while the field is still saved (board1, RV3.7)
+                    fld.SetVisible(False)
         if (f.IsDNP(), f.IsExcludedFromBOM()) != (c["dnp"], c["no_bom"]):
             count["attrs"] += 1
             if not a.dry_run:
                 f.SetDNP(c["dnp"])
                 f.SetExcludedFromBOM(c["no_bom"])
     print(f"{len(comps)} footprints: {count['path']} re-linked, {count['pads']} pad nets, {count['value']} values, "
-          f"{count['fields']} fields set, {count['removed']} fields removed, {count['attrs']} DNP / BOM attributes")
+          f"{count['fields']} fields set, {count['removed']} fields hidden, {count['attrs']} DNP / BOM attributes")
     if a.dry_run:
         print("(dry run, nothing written)")
         return 0
