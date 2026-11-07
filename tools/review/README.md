@@ -69,3 +69,18 @@ poppler-utils (`pdftoppm`, `pdftotext`, `pdfinfo`); without them the row says
   column silently, then needed the `.kicad_sch` to prove the flag missing.
   `parts.csv` reads both from the netlist, where the flag is
   `<property name="dnp"/>` and the field a `<field name="DNP">`.
+
+## `rulecheck.py` — a custom DRC rule, proved before it is published
+
+    python3 tools/review/rulecheck.py --board board1 [--rule pair]
+
+Writes every custom rule the publisher would put in the board's `14_fab.md`
+**now** (the derived area rules, the fab profile's and the board's own) into a
+`.kicad_dru` beside a copy of the board's PCB in `out/rulecheck/<board>/`,
+keeps the board's own non-generated rules, runs `kicad-cli pcb drc`, and
+prints the violations grouped by rule. Run it after editing a board's
+`FAB["rules"]` and before publishing: a rule that reads well can still miss
+its nets (KiCad pairs only names ending P / N or + / -; a net name carries its
+sheet path, so match `'*NAME'`) or, placed after the area rules, outrank them
+(a board-wide pair rule once held a BGA's own balls to 0.15 mm). Never writes
+the board.

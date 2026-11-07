@@ -45,6 +45,11 @@ it. Two pair routes once argued from pin order each failed their next review
 (a pocket, then an exit four tracks short); the measurement settled the
 third.
 
+**A custom DRC rule** that an answer adds to a board's `FAB["rules"]` is run
+on a copy of the board before the publish: `python3 tools/review/rulecheck.py
+--board boardN`. Twice a rule that read well was wrong on the board (it missed
+the DRAM's pair names; it outranked the BGA area classes).
+
 ## 3. Fix the generator, then answer
 
 - The fact goes where the handoff should have carried it: the value bus, a
