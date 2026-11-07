@@ -222,6 +222,9 @@ its docstring. What the spec has to be told:
   a split it passes can still stall the grid router at one gap (board1: three
   layers each contested at the same depopulated site) -- move one net per hot
   gap to a layer with room and re-route, and sweep `--seed` / `--hist`.
+  A layer confined to one region (board1's In4 / In5 carry signal only toward
+  U500) gets `--exit east`: with exits on every side the bound passed In5's 7
+  nets; east only it is 6 (two gaps of 3), which is what the router hit.
 - **Two BGAs in one group** (a SoC and its DRAM): `"fields": [...]`, one per
   part, each at its own area clearance. With one field, the other part's
   dog-bones keep the group's class clearance between them (SE_50's 0.2032

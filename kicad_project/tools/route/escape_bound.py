@@ -72,9 +72,11 @@ def _delaunay(pts):
     return [t for t in tris if max(t) < n]
 
 
-def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
+def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=(), exit_ok=None):
     """lat: {(i, j): (x, y)} every lattice site; vias: set of (i, j); srcs: {(i, j): name};
-    padded: vias that keep their pad on this layer (a pour's own vias) though not a source."""
+    padded: vias that keep their pad on this layer (a pour's own vias) though not a source.
+    exit_ok(x, y): which hull points lead out (a layer that may leave the field on one side
+    only); None: all."""
     P = w + c
     R = {p: (r_own if (p in srcs or p in padded) else r_other) for p in vias}
 
@@ -109,7 +111,7 @@ def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
         if len(ts) == 2:
             add(("t", ts[0]), ("t", ts[1]), cp)
             add(("t", ts[1]), ("t", ts[0]), cp)
-        else:
+        elif exit_ok is None or exit_ok(*[(xy(e[0])[k] + xy(e[1])[k]) / 2 for k in (0, 1)]):
             add(("t", ts[0]), "T", cp)
     inc = collections.defaultdict(list)
     for tid, t in enumerate(tri):
@@ -117,7 +119,7 @@ def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
             inc[p].append(tid)
     for p in srcs:
         add("S", ("s", p), 1)
-        if p in hull:
+        if p in hull and (exit_ok is None or exit_ok(*xy(p))):
             add(("s", p), "T", INF)
         for tid in inc[p]:
             add(("s", p), ("t", tid), INF)
@@ -156,7 +158,8 @@ def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
     cut = []
     for e, ts in et.items():
         ins = [("t", x) in seen for x in ts]
-        if (len(ts) == 2 and ins[0] != ins[1]) or (len(ts) == 1 and ins[0]):
+        out = exit_ok is None or exit_ok(*[(xy(e[0])[k] + xy(e[1])[k]) / 2 for k in (0, 1)])
+        if (len(ts) == 2 and ins[0] != ins[1]) or (len(ts) == 1 and ins[0] and out):
             cut.append((e, cap(*e)))
     return f, trapped, cut
 
@@ -175,6 +178,8 @@ def main():
     ap.add_argument("--drill", type=float, default=0.2)
     ap.add_argument("--hole-clearance", type=float, help="copper to hole (default: the board's)")
     ap.add_argument("--nfp", action="store_true", help="other nets' vias have no pad on this layer")
+    ap.add_argument("--exit", choices=["any", "east", "west", "north", "south"], default="any",
+                    help="the side the nets may leave the field by (a layer confined to one region)")
     ap.add_argument("--pad-nets", default="", help="comma-separated nets whose vias keep their pad on this "
                     "layer even with --nfp (the layer's own pours: a plane layer carrying a few signals)")
     a = ap.parse_args()
@@ -222,7 +227,11 @@ def main():
     r_other = (a.drill / 2 + hc + a.width / 2) if a.nfp else r_own
     pn_ = {x.strip() for x in a.pad_nets.split(",") if x.strip()}
     padded = {p for p in vias if ball.get(p, ("", ""))[1] in pn_}
-    fl, trapped, cut = flow_bound(lat, vias, srcs, a.width, a.clearance, r_own, r_other, padded)
+    x0, x1, y0, y1 = xs[0], xs[-1], ys[0], ys[-1]
+    side = {"any": None,                        # within 3/4 pitch of that side's outer row
+            "east": lambda x, y: x > x1 - 0.75 * px, "west": lambda x, y: x < x0 + 0.75 * px,
+            "south": lambda x, y: y > y1 - 0.75 * py, "north": lambda x, y: y < y0 + 0.75 * py}[a.exit]
+    fl, trapped, cut = flow_bound(lat, vias, srcs, a.width, a.clearance, r_own, r_other, padded, side)
     print(f"{a.ref} {a.layer}: {len(srcs)} nets leave on in-pad vias here ({len(S) - len(srcs)} sources off the lattice "
           f"ignored); {len(vias)} vias; lattice {NX} x {NY} at {px:.3f} x {py:.3f}; track {a.width} / {a.clearance}, "
           f"R own {r_own:.4f}, other {r_other:.4f}{' (holes: --nfp)' if a.nfp else ''}"
