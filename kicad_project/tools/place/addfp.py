@@ -175,6 +175,9 @@ def main():
         for k, v in c.get("fields", {}).items():
             fp.SetField(k, v)               # Description and the rest, or parity
                                             # reports footprint_symbol_field_mismatch
+            # SetField makes a NEW field visible on F.SilkS at the origin: an MPN
+            # printed across the part's own pads (board2 review RV4.4)
+            fp.GetField(k).SetVisible(False)
         for prop, setter in (("dnp", "SetDNP"), ("exclude_from_bom", "SetExcludedFromBOM"),
                              ("exclude_from_board", "SetExcludedFromPosFiles")):
             if prop in c.get("props", ()) and hasattr(fp, setter):

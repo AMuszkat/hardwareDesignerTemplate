@@ -141,9 +141,13 @@ def main():
                     f.SetField(k, v)
                     if not f.HasField(k):
                         P.die(f"{r}: field {k} did not take", 4)
-                    fld = f.GetField(k)
-                    if k not in ("Datasheet", "Description"):
-                        fld.SetVisible(False)
+        # every symbol field but Reference / Value stays off the silk: a new one is
+        # created visible at the origin, across the part's own pads (board2 RV4.4)
+        for k in c["fields"]:
+            if f.HasField(k) and f.GetField(k).IsVisible():
+                count["fields"] += 1
+                if not a.dry_run:
+                    f.GetField(k).SetVisible(False)
         for fld in list(f.GetFields()):
             k = fld.GetName()
             if k not in KEEP and k not in c["fields"] and k not in ("Datasheet", "Description"):

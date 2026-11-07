@@ -128,6 +128,25 @@ not a tidy. Edit the pads with KiCad's own API (`pcbnew.FootprintLoad`, `SetSize
 `FootprintSave`), confirm that positions and graphics are unchanged, and
 **re-sign** it against the datasheet page like any new land.
 
+Traps in that API (KiCad 10, board2's standoff paste; each cost a segfault):
+
+- **A paste margin does nothing on a pad with no copper** (a vendor's
+  paste-only stencil segments): `GetSolderPasteMargin` is 0 there. Redraw
+  the segments instead, and measure the result with KiCad's own geometry:
+  `pad.TransformShapeToPolygon(ps, F_Paste, 0, maxErr, ERROR_INSIDE)`, the
+  footprint on a `BOARD`.
+- **A custom pad**: `fp.Add(pad)` before its primitives; key the anchor
+  and the primitives on `F_Cu` (a normal padstack's key) even for an
+  F.Paste-only pad; `AddPrimitivePoly` with a `SHAPE_POLY_SET` -- the
+  `VECTOR_VECTOR2I` overload segfaults.
+- **`pcbnew.FootprintSave` / `FootprintLoad` look the plugin up per call**,
+  and `PCB_IO_MGR.FindPlugin` can come back as an untyped `SwigPyObject`
+  ("no attribute FootprintSave"): use one `pcbnew.PCB_IO_KICAD_SEXPR()`.
+- **A `BOARD` built only to measure on segfaults at garbage collection**
+  (a footprint owned by Python and by the board): measure in a child
+  process, keep the build process board-free, end it with `os._exit(0)`.
+  `board2_carrier_v2/build/standoff_paste125.py` is the worked example.
+
 `derive` does the same to one of **KiCad's own** footprints and installs
 the result as `<stem>:<name>`:
 

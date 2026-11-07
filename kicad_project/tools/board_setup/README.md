@@ -28,7 +28,9 @@ as a note: confirm it with the fab before ordering.
 
 The board is loaded, modified and saved by **`pcbnew` itself**
 (`LoadBoard` / `SaveBoard`), the same serializer the GUI uses. No text edit
-touches `.kicad_pcb` or `.kicad_pro`.
+touches `.kicad_pcb`; in `.kicad_pro` only the three silk defaults below are
+written in the parsed JSON (SWIG exposes their per-class arrays read-only, and
+there is no setter), and `check` reads them back through pcbnew's getters.
 
 | 14_fab.md | KiCad | where it lands |
 |---|---|---|
@@ -38,6 +40,7 @@ touches `.kicad_pcb` or `.kicad_pro`.
 | Constraints: mask expansion, mask minimum web | Board Setup → Solder Mask/Paste | `.kicad_pcb` |
 | Constraints: allow bridged solder mask apertures between pads within footprints (yes / no; optional row) | Board Setup → Solder Mask/Paste, board-wide | `.kicad_pcb` |
 | Constraints: silk height and stroke | minimum text height / thickness | `.kicad_pro` |
+| Constraints: silk line and stroke | the **defaults for new silk** -- line width, text stroke, text height at least the minimum (KiCad's own 0.1 / 1.0 x 0.1 start every new text under a 0.15 fab stroke) | `.kicad_pro` `design_settings.defaults` |
 | Constraints: "keep silk ≥ X mm off every pad" | silk clearance **X − mask expansion** | `.kicad_pro` |
 | Constraints: hole to board edge | custom rule `physical_hole_clearance` against `Edge.Cuts` | `.kicad_dru` |
 | Net classes: values | net classes (Default edited, the rest created) | `.kicad_pro` |

@@ -680,6 +680,51 @@ def cmd_stackup(spec, board_dir, args):
 APPLY, QUESTION, BOARD = "apply", "QUESTION", "board"
 
 
+def silk_targets(spec):
+    """The project's defaults for NEW silk, from the silkscreen row: line and
+    text stroke at the row's widths, text at least the row's height. KiCad's
+    own defaults (0.1 / 1.0 x 0.1) start every new text under the fab's
+    0.15 stroke (board2 review RV4.7)."""
+    c = spec.get("constraints", {})
+    if "silk_line" not in spec or "m_MinSilkTextThickness" not in c:
+        return {}
+    return {"silk_line_width": spec["silk_line"],
+            "silk_text_thickness": c["m_MinSilkTextThickness"],
+            "silk_text_size_min": c.get("m_MinSilkTextHeight", 0.0)}
+
+
+def silk_defaults(spec, ds, pcbnew):
+    """(what, want, have) for the silk defaults, read with pcbnew's getters."""
+    t = silk_targets(spec)
+    if not t:
+        return []
+    size = pcbnew.ToMM(ds.GetTextSize(pcbnew.F_SilkS).y)
+    return [("default silk line width", t["silk_line_width"], pcbnew.ToMM(ds.GetLineThickness(pcbnew.F_SilkS))),
+            ("default silk text thickness", t["silk_text_thickness"], pcbnew.ToMM(ds.GetTextThickness(pcbnew.F_SilkS))),
+            ("default silk text height >= minimum", True, size >= t["silk_text_size_min"] - 1e-6)]
+
+
+def write_silk_defaults(spec, pro):
+    """The three keys in <board>.kicad_pro's parsed JSON (no pcbnew setter
+    exists: SWIG gives the per-class arrays read-only). Only those keys
+    change; `check` reads them back through pcbnew."""
+    import json
+    t = silk_targets(spec)
+    if not t or not pro.exists():
+        return False
+    d = json.loads(pro.read_text())
+    dft = d.setdefault("board", {}).setdefault("design_settings", {}).setdefault("defaults", {})
+    before = dict(dft)
+    dft["silk_line_width"] = t["silk_line_width"]
+    dft["silk_text_thickness"] = t["silk_text_thickness"]
+    for k in ("silk_text_size_h", "silk_text_size_v"):
+        dft[k] = max(float(dft.get(k, 1.0)), t["silk_text_size_min"])
+    if dft == before:
+        return False
+    pro.write_text(json.dumps(d, indent=2) + "\n")
+    return True
+
+
 def compare(spec, board_dir):
     """Every difference between the saved board and 14_fab.md.
 
@@ -712,6 +757,8 @@ def compare(spec, board_dir):
         cmp("copper layers", spec["layers"], b.GetCopperLayerCount())
     for attr, want in spec["constraints"].items():
         cmp(attr, float(want), pcbnew.ToMM(getattr(ds, attr)))
+    for what, want, have in silk_defaults(spec, ds, pcbnew):
+        cmp(what, want, have, tol=1e-4)
     if "tent" in spec:
         cmp("m_TentViasFront", spec["tent"], bool(ds.m_TentViasFront))
         cmp("m_TentViasBack", spec["tent"], bool(ds.m_TentViasBack))
@@ -991,6 +1038,10 @@ def cmd_apply(spec, board_dir, args):
             die(f"pcbnew.SaveBoard failed; originals are in {backup}", 4)
         dru.write_text(dru_text(dru.read_text() if dru.exists() else None, spec))
         print(f"saved {pcb.name}, {pro.name}, {dru.name}")
+
+    if write_silk_defaults(spec, pro):
+        print(f"{pro.name}: silk defaults for new items set from the silkscreen row "
+              f"(line {spec['silk_line']:g}, text stroke {spec['constraints']['m_MinSilkTextThickness']:g})")
 
     if stack_diff:
         # Its own process too: it loads a scratch copy of the board as a second project.
