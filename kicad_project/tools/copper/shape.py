@@ -20,6 +20,8 @@ Each site: kind, net, layer, a point, a size, the item uuids -- for the crop
   notch         morphology: a concave wedge or slot narrower than 2*CLOSE and longer than 2*CLOSE
   poly-neck     a net-tied polygon that falls apart when shrunk by half its class width
   poly-pour     a polygon on an outer layer touching a fill of its own net (solid into the pour)
+  mask-bare     a track, polygon or pour fill bare inside a footprint's own mask-layer opening (a ganged
+                opening over a fine-pitch row: copper between its pads is one bare land; pads' own openings exempt)
 
 Exempt: a straight 45-degree via link (vialink.py lists it), a round via end,
 the courtyards of the guide's `via field` parts (a BGA's dog-bone V is the
@@ -35,6 +37,62 @@ import math
 import sys
 
 import common as CM
+
+
+MASK_BARE_MIN = 0.02     # mm2: a track leaving a pad's end crosses the opening's 0.05 margin (0.01 for 0.2 wide)
+
+
+def mask_bare(b, pcbnew, LAYERS, ERR, infield):
+    """mask-bare: non-pad copper (track, net-tied polygon, pour fill) bare inside a footprint's own
+    mask-layer opening -- a ganged opening over a fine-pitch row (board2 RV15.2: a polygon tying J1's
+    0.20 mm pins became one bare 2.2 mm land; the stencil, sized per pad, wets twice the copper).
+    Pads' own openings are not judged: a track entering a pad is normal."""
+    mm = pcbnew.ToMM
+    out = []
+    MASK = {"F.Cu": pcbnew.F_Mask, "B.Cu": pcbnew.B_Mask}
+    zones = [z for z in b.Zones() if not z.GetIsRuleArea()]
+    for f in b.Footprints():
+        for g in f.GraphicalItems():
+            for L, ml in MASK.items():
+                if L not in LAYERS or g.GetLayer() != ml or not hasattr(g, "TransformShapeToPolygon"):
+                    continue
+                lid = b.GetLayerID(L)
+                M = pcbnew.SHAPE_POLY_SET()
+                g.TransformShapeToPolygon(M, ml, 0, ERR, pcbnew.ERROR_INSIDE)
+                if M.Area() <= 0:
+                    continue
+                bb = M.BBox()
+                for p in f.Pads():
+                    if p.IsOnLayer(lid):
+                        P_ = pcbnew.SHAPE_POLY_SET()
+                        p.TransformShapeToPolygon(P_, lid, 0, ERR, pcbnew.ERROR_OUTSIDE)
+                        M.BooleanSubtract(P_)
+                items = [t for t in b.GetTracks() if t.Type() != pcbnew.PCB_VIA_T and t.GetLayer() == lid
+                         and bb.Intersects(t.GetBoundingBox())]
+                items += [d for d in b.GetDrawings() if d.GetLayer() == lid and d.GetNetCode() > 0
+                          and bb.Intersects(d.GetBoundingBox())]
+                for it in items:
+                    C_ = pcbnew.SHAPE_POLY_SET()
+                    it.TransformShapeToPolygon(C_, lid, 0, ERR, pcbnew.ERROR_INSIDE)
+                    C_.BooleanIntersection(M)
+                    a = mm(mm(C_.Area()))
+                    if a >= MASK_BARE_MIN:
+                        c = C_.BBox().Centre()
+                        out.append(dict(kind="mask-bare", net=it.GetNetname(), layer=L, at=[round(mm(c.x), 3), round(mm(c.y), 3)],
+                                        size=round(a, 3), field=infield(mm(c.x), mm(c.y)), uuids=[it.m_Uuid.AsString()],
+                                        why=f"bare inside {f.GetReference()}'s mask opening"))
+                for z in zones:
+                    if not z.IsOnLayer(lid) or not bb.Intersects(z.GetBoundingBox()):
+                        continue
+                    C_ = pcbnew.SHAPE_POLY_SET(z.GetFilledPolysList(lid))
+                    C_.BooleanIntersection(M)
+                    a = mm(mm(C_.Area()))
+                    if a >= MASK_BARE_MIN:
+                        c = C_.BBox().Centre()
+                        out.append(dict(kind="mask-bare", net=z.GetNetname(), layer=L, at=[round(mm(c.x), 3), round(mm(c.y), 3)],
+                                        size=round(a, 3), field=infield(mm(c.x), mm(c.y)), uuids=[z.m_Uuid.AsString()],
+                                        why=f"pour fill inside {f.GetReference()}'s mask opening"))
+    return out
 
 
 def audit(b, pcbnew, LAYERS=None, OPEN=0.055, CLOSE=0.15, AMIN=0.003, FIELDS=(), dump=None):
@@ -332,6 +390,7 @@ def audit(b, pcbnew, LAYERS=None, OPEN=0.055, CLOSE=0.15, AMIN=0.003, FIELDS=(),
             skipped['under own pour'] += 1; continue
         seen.add(k); uniq.append(s)
     sites = uniq
+    sites += mask_bare(b, pcbnew, LAYERS, ERR, infield)
     if dump:                 # every net's copper union per layer (no fills) + pad labels, for crops.py
         D = dict(layers=LAYERS, copper=[], pads=[])
         for code, L in keys:
