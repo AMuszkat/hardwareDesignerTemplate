@@ -45,7 +45,13 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 1. **Read** the group's rules: the guide's sections that touch it, its
    `10_layout.md` items, its `02_nets.md` entries, its class rows. A bus head,
    a star, a taper is a net-tied polygon (`polys`), not a stack of tracks; a
-   via is linked straight and centred, off the pad by the gap.
+   via is linked straight and centred, off the pad by the gap. **A power net's
+   `02_nets` constraint ("a pour, sized for N A") and the layout's pours item
+   decide pour or track, and which side, before any geometry** (board2 R4 laid
+   a 35 mm 1.0 mm B.Cu trunk for a net the handoff made a top-side pour, and
+   re-laid it). **Draw the window first** (`view.py`, outline and cut-outs
+   included) and route every group's nets in your head to their far ends: a
+   group that takes a corridor another group needs is re-laid later.
 2. **Plan in a file**: `<board>/routing/Rn_<name>.json` (polylines, vias,
    zones, necks — format in the README). Draw it by hand, with `decap.py` for a
    decoupling ring, or with `netgroup.py` from a spec for a congested signal
