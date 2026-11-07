@@ -972,6 +972,7 @@ class Board:
         if not changed and not gone and prev:
             return prev, False                    # nothing moved; log no noise
         amending = False
+        earlier = ""
         now = datetime.datetime.now()
         stamp = now.strftime("%Y-%m-%d %H:%M")
         rev = prev.count("\n## rev ") + 1
@@ -983,6 +984,10 @@ class Board:
             if age < AMEND_MIN * 60 and set(changed) | set(gone) <= prior:
                 rev = int(m.group(1))
                 rest = prev.split("-->\n", 1)[1].split("\n## rev ", 1)
+                # the replaced entry's own note: kept below unless the new note
+                # repeats it, so an amend never drops what the first publish said
+                mo = re.search(r"### What actually changed\n\n(.*)", rest[0], re.S)
+                earlier = mo.group(1).strip() if mo else ""
                 prev = (prev.split("-->\n", 1)[0] + "-->\n" +
                         ("## rev " + rest[1] if len(rest) > 1 else ""))
                 changed = sorted(set(old["moved"]) - set(gone))
@@ -1014,6 +1019,8 @@ class Board:
             if amending and same:
                 warn(f"{self.id} amends rev {rev} with an UNCHANGED RELEASE_NOTE -- "
                      "it must describe every change since the previous revision.")
+            if amending and earlier and earlier not in note:
+                entry += ["", "Earlier in this revision (before the amend):", "", earlier]
         elif note:
             warn(f"{self.id} RELEASE_NOTE is unchanged since the previous "
                  "rev -- update or clear it; this rev lists pages only.")
