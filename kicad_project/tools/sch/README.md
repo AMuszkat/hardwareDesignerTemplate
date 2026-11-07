@@ -288,7 +288,8 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
   Konnect moves a multi-unit part only as a whole). On a board whose PCB
   already holds the parts, the PCB must be updated from the schematic with
   *Re-link footprints to schematic symbols based on their reference
-  designators* — in KiCad, by the user — before any further PCB work.
+  designators* before any further PCB work: `tools/place/schupdate.py`, KiCad
+  closed, then `place.py drc` (schematic parity 0).
 - **The DNP and Exclude-from-BOM flags.** No call sets KiCad's own
   `(dnp yes)` or `(in_bom no)`, and a redraw places the parts again without
   them. `sch.py flags` writes them (parsed tree, only those two atoms, the

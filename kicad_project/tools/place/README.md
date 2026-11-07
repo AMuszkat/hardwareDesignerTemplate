@@ -18,6 +18,7 @@ the reference designators go.
     tools/kpy tools/place/sites.py        --board board1 --ref C13 --box x0,y0,x1,y1
     tools/kpy tools/place/pack.py         --board board1 --spec pack.json
     tools/kpy tools/place/addfp.py        --board board1 [REF ...] [--dry-run]   # KiCad closed
+    tools/kpy tools/place/schupdate.py    --board board1 [--dry-run]             # KiCad closed
     tools/kpy tools/place/refresh.py      --board board1 J1 J2                   # KiCad closed
 
 A plan is `{"REF": [x, y, rot]}`, or `[x, y, rot, "B"]` for the back side
@@ -197,12 +198,24 @@ of `movable` parts against courtyard gaps, keep-outs, "pad within N mm of pad",
 A run that reaches cost 0 satisfied all of them at once; the result is a plain
 plan for `check` to judge independently. The spec is in the module docstring.
 
-## `addfp.py` and `refresh.py` — the closed-board fallbacks
+## `schupdate.py`, `addfp.py` and `refresh.py` — the closed-board paths
 
 Konnect's `update_pcb_from_schematic` and `update_footprints_from_library` are
 the documented paths, and both need the board open in live KiCad with its IPC
 API answering. When that path is closed:
 
+- `schupdate.py` is Update PCB from Schematic, with *Re-link footprints by
+  reference designator*, for the parts already on the board: symbol path,
+  every pad's net (by the name KiCad's update and DRC parity use), Value,
+  fields (the ones the symbol dropped removed), DNP / Exclude from BOM. It is
+  the way after a schematic redraw (every symbol a new UUID): Konnect's
+  `update_pcb_from_schematic` matches by path, so it refuses a board without
+  paths, and once re-linked it moved only the pads whose connection changed --
+  renamed nets, `unconnected-(…)` names and new fields stayed (board1: parity
+  325 after it, 0 after this). Traps it handles: `kicad-cli`'s netlist names an
+  open pin of a multi-unit part with its unit letter, the update without; a
+  footprint field is removed with `RemoveNative` (the wrapper's `Remove`
+  corrupts the footprints after it).
 - `addfp.py` adds footprints the schematic has and the board has not (from the
   schematic's own netlist; nets set **after** `Add`), parked off the board;
 - `refresh.py` replaces the shapes on chosen front layers of named footprints

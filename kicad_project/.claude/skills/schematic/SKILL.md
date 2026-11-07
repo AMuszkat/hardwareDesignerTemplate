@@ -222,9 +222,11 @@ with a `why`) is for a choice that is right, such as a connector kept as one
 2 × 50 row; it is never for a collision.
 
 ⚠ **A redraw gives every symbol a new UUID.** If the PCB already holds the
-parts, tell the user before any PCB work: Update PCB from Schematic with
-*Re-link footprints to schematic symbols based on their reference
-designators*.
+parts, update it before any PCB work, KiCad closed:
+`tools/kpy tools/place/schupdate.py --board <board>` (Update PCB from
+Schematic with *Re-link by reference*, for the parts already there), then
+`board_setup.py apply` (net names may have changed) and `place.py drc`:
+schematic parity 0.
 
 ⚠ **KiCad's own DNP and Exclude-from-BOM flags are set by no Konnect call,
 and a redraw places every part again without them.** After the last redraw,
