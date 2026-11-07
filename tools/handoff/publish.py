@@ -840,6 +840,19 @@ class Board:
             rel = self.get(a)
             if rel and not os.path.exists(os.path.join(ROOT, rel)):
                 prob.append(f"{a} names {rel}, which does not exist -- run its generator")
+        # a pair class whose gap is under its clearance: KiCad holds the pair's
+        # own two nets at the clearance unless a rule lowers it (board1 Q15)
+        fab = getattr(self.B, "FAB", None) or {}
+        rules_text = " ".join(r[1] for r in fab.get("rules", []) if len(r) > 1)
+        for row in fab.get("netclasses", []):
+            m = re.search(r"\bgap ([\d.]+)", str(row[-1]))
+            try:
+                clear = float(row[3])
+            except (ValueError, IndexError):
+                continue
+            if m and float(m.group(1).rstrip(".")) < clear and "isCoupledDiffPair" not in rules_text:
+                prob.append(f"net class {row[0]}: pair gap {m.group(1)} < clearance {row[3]} and no "
+                            f"rule lowers a pair's own clearance -- add one on A.isCoupledDiffPair()")
         if self.fab and getattr(self.fab, "EXAMPLE", False):
             prob.append(f"14_fab.md is built from the EXAMPLE profile {self.fab.NAME}: no "
                         "number on it is a real fab's (copy fabs/_blank.py for yours)")
