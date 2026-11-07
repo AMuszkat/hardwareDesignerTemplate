@@ -241,6 +241,16 @@ its docstring. What the spec has to be told:
   0.2032 that the grid had passed at 0.0889). Gate every layer's escape with
   `route.py check` -- `track_dangling` at the ring is expected, any other DRC
   finding is not.
+- **A field is its part's courtyard, and its tracks are written at its width.**
+  KiCad's area rule holds only where both items intersect the courtyard, so
+  `netgroup` takes the field from the courtyard (the pads + 0.3 only for a
+  part with none) and writes each run split at it: the field's `width`
+  inside, the group's outside, joined on the first cell outside. Written at
+  the group's width throughout, board1's U1 escapes came 0.080-0.085 apart
+  against 0.0889; with a field 0.2 past the courtyard the grid gave 0.0889
+  where DRC wants the class's 0.2032. A spec's `padclr` is the LARGER of the
+  two classes' clearances (SE_50's 0.2032 against a Default pad), not the
+  pad's own.
 - **Two BGAs in one group** (a SoC and its DRAM): `"fields": [...]`, one per
   part, each at its own area clearance. With one field, the other part's
   dog-bones keep the group's class clearance between them (SE_50's 0.2032

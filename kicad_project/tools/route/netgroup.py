@@ -289,7 +289,15 @@ def main():
         G.static_pad(p["L"], p["T"], p["R"], p["B"], lays)
     for F in FO:
         bx = [p for p in pads if p["ref"] == F["ref"]]
-        F["_box"] = (min(p["L"] for p in bx), min(p["T"] for p in bx), max(p["R"] for p in bx), max(p["B"] for p in bx))
+        # the field is the part's COURTYARD: KiCad's area rule holds where both items intersect it
+        # (intersectsCourtyard), so a field grown past it lets the thin clearance out where DRC
+        # applies the class's.  No courtyard: the pads' extent + 0.3, as before.
+        cy = B.courtyard(B.fps[F["ref"]])
+        if cy:
+            F["_box"], F["_m"] = tuple(cy[:4]), 0.0
+        else:
+            F["_box"], F["_m"] = (min(p["L"] for p in bx), min(p["T"] for p in bx),
+                                  max(p["R"] for p in bx), max(p["B"] for p in bx)), 0.3
         F["_clr"] = float(F.get("clr", maze.PADCLR))
         # "width": the track the escapes inside the field really are (thinner than the group's).
         # The grid carries one track width, so inside the field every obstacle's halo is shrunk by
@@ -300,7 +308,8 @@ def main():
     def field_of(x, y):
         for F in FO:
             fL, fT, fR, fB = F["_box"]
-            if fL - 0.3 <= x <= fR + 0.3 and fT - 0.3 <= y <= fB + 0.3:
+            m = F["_m"]
+            if fL - m <= x <= fR + m and fT - m <= y <= fB + m:
                 return F
         return None
 
@@ -808,13 +817,36 @@ def main():
             for x, y, _r, _s in vv:
                 G.block(["via"], G.disc(x, y, 0.8))
 
+    def width_runs(cells):
+        """A run's cells split by the width they were routed at: a field's own "width" inside it,
+        W outside.  The cell where the two meet -- always the one OUTSIDE the field, modelled at
+        W -- ends the one and starts the other, so the wide copper never reaches into the field
+        (where the grid shrank every halo for the thin track) and the thin one overshoots by a
+        cell at most.  Written at W throughout, a field's escapes came 0.080 apart at 0.0889."""
+        out, cur, cw = [], [], None
+        for c in cells:
+            F = field_of(*G.xy(c))
+            w = float(F.get("width", W)) if F else W
+            if cur and w != cw:
+                if cw < w:                     # leaving the field: the thin run takes this first outside cell
+                    out.append((cw, cur + [c])); cur = [c]
+                else:                          # entering it: the thin run starts on the last outside cell
+                    out.append((cw, cur)); cur = [cur[-1], c]
+            else:
+                cur.append(c)
+            cw = w
+        if cur:
+            out.append((cw, cur))
+        return out
+
     plan = dict(group=S["group"], why=S["why"], tracks=[], vias=[], zones=[], necks=S.get("necks", []))
     for n, legs in out.items():
         for runs, vias in legs:
             for layer, cells in runs:
-                pts = straighten([list(q) for q in G.polyline(cells)], W)
-                if len(pts) > 1:
-                    plan["tracks"].append(dict(net=full[n], layer=layer, width=W, pts=pts))
+                for w, part in width_runs(cells):
+                    pts = straighten([list(q) for q in G.polyline(part)], w)
+                    if len(pts) > 1:
+                        plan["tracks"].append(dict(net=full[n], layer=layer, width=w, pts=pts))
             for c in vias:
                 x, y = G.xy(c)
                 if any(math.dist((x, y), (e["at"][0], e["at"][1])) < 0.05 for e in S.get("extra_vias", [])
