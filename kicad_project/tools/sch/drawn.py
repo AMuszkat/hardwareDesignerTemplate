@@ -30,38 +30,45 @@ R = lambda v: round(float(v), 2)
 
 
 def items(path):
+    return set(item_list(path))
+
+
+def item_list(path):
+    """Every item, a duplicate as often as it is drawn (two dots on one point:
+    Konnect's batch_add_wire dots a T itself, and the plan's batch_add_junction
+    then dots it again -- a set would count the pair as one)."""
     t = sexpr.load(path)
-    out = set()
+    out = []
     for s in sexpr.every(t, "symbol"):
         at = sexpr.value(s, "at")
         props = {str(p[1]): str(p[2]) for p in sexpr.every(s, "property")}
         ref = props.get("Reference", "")
         ref = "#PWR" if ref.startswith("#PWR") else "#FLG" if ref.startswith("#FLG") else ref
-        out.add(("symbol", ref, str(sexpr.atom(s, "unit")), R(at[0]), R(at[1]), R(at[2]) % 360,
+        out.append(("symbol", ref, str(sexpr.atom(s, "unit")), R(at[0]), R(at[1]), R(at[2]) % 360,
                  str(sexpr.atom(s, "lib_id")), props.get("Value", "")))
     for w in sexpr.every(t, "wire"):
         pts = sorted((R(p[1]), R(p[2])) for p in sexpr.every(sexpr.first(w, "pts"), "xy"))
-        out.add(("wire",) + tuple(pts))
+        out.append(("wire",) + tuple(pts))
     for kind in ("label", "hierarchical_label", "global_label"):
         for l in sexpr.every(t, kind):
             at = sexpr.value(l, "at")
-            out.add((kind, str(l[1]), R(at[0]), R(at[1]), R(at[2]) % 360))
+            out.append((kind, str(l[1]), R(at[0]), R(at[1]), R(at[2]) % 360))
     for j in sexpr.every(t, "junction"):
         at = sexpr.value(j, "at")
-        out.add(("junction", R(at[0]), R(at[1])))
+        out.append(("junction", R(at[0]), R(at[1])))
     for n in sexpr.every(t, "no_connect"):
         at = sexpr.value(n, "at")
-        out.add(("no_connect", R(at[0]), R(at[1])))
+        out.append(("no_connect", R(at[0]), R(at[1])))
     for n in sexpr.every(t, "text"):
         at = sexpr.value(n, "at")
-        out.add(("text", str(n[1]), R(at[0]), R(at[1])))
+        out.append(("text", str(n[1]), R(at[0]), R(at[1])))
     for sh in sexpr.every(t, "sheet"):
         name = {str(p[1]): str(p[2]) for p in sexpr.every(sh, "property")}.get("Sheetname", "")
         at, size = sexpr.value(sh, "at"), sexpr.value(sh, "size")
-        out.add(("sheet", name, R(at[0]), R(at[1]), R(size[0]), R(size[1])))
+        out.append(("sheet", name, R(at[0]), R(at[1]), R(size[0]), R(size[1])))
         for p in sexpr.every(sh, "pin"):
             at = sexpr.value(p, "at")
-            out.add(("sheet_pin", name, str(p[1]), R(at[0]), R(at[1]), R(at[2]) % 360))
+            out.append(("sheet_pin", name, str(p[1]), R(at[0]), R(at[1]), R(at[2]) % 360))
     return out
 
 
@@ -107,6 +114,9 @@ def run(board, plan_dir, sheets=None):
     for f in files:
         drawn, plan = items(board / f), items(preview / f)
         missing, extra = sorted(plan - drawn, key=str), sorted(drawn - plan, key=str)
+        from collections import Counter
+        twice = Counter(item_list(board / f)) - Counter(item_list(preview / f))
+        extra += sorted((("again",) + x for x in twice.elements() if x in plan), key=str)
         want = wanted_fields(plan_dir / f"{Path(f).stem}.ops.json")
         have = drawn_fields(board / f)
         fields = [(r, k, v, sorted(have.get((r, k), []))) for (r, k), v in sorted(want.items())
@@ -124,7 +134,7 @@ def run(board, plan_dir, sheets=None):
             print(f"  field {r}.{k}: planned {v!r}, drawn {got}")
         if dnp_want - dnp_have:
             print(f"  DNP flag not set on {', '.join(sorted(dnp_want - dnp_have))} -- no Konnect call sets it: "
-                  "in eeschema, Symbol Properties -> 'Do not populate', after the last redraw")
+                  "run `sch.py flags` after the last redraw")
         if dnp_have - dnp_want:
             print(f"  DNP flag set on {', '.join(sorted(dnp_have - dnp_want))}, which the plan fits")
         bad += bool(missing or extra or fields or dnp_want != dnp_have)
