@@ -37,12 +37,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "place"))
 
 
-def flow_bound(lat, vias, srcs, w, c, r_own, r_other):
-    """lat: {(i, j): (x, y)} every lattice site; vias: set of (i, j); srcs: {(i, j): name}."""
+def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
+    """lat: {(i, j): (x, y)} every lattice site; vias: set of (i, j); srcs: {(i, j): name};
+    padded: vias that keep their pad on this layer (a pour's own vias) though not a source."""
     NX = max(i for i, _ in lat) + 1
     NY = max(j for _, j in lat) + 1
     P = w + c
-    R = {p: (r_own if p in srcs else r_other) for p in vias}
+    R = {p: (r_own if (p in srcs or p in padded) else r_other) for p in vias}
 
     def xy(p):
         return lat[p]
@@ -141,6 +142,8 @@ def main():
     ap.add_argument("--drill", type=float, default=0.2)
     ap.add_argument("--hole-clearance", type=float, help="copper to hole (default: the board's)")
     ap.add_argument("--nfp", action="store_true", help="other nets' vias have no pad on this layer")
+    ap.add_argument("--pad-nets", default="", help="comma-separated nets whose vias keep their pad on this "
+                    "layer even with --nfp (the layer's own pours: a plane layer carrying a few signals)")
     a = ap.parse_args()
     import place as P
     a.board = P.board_dir_arg(a.board)
@@ -184,10 +187,13 @@ def main():
     hc = a.hole_clearance if a.hole_clearance is not None else B.b.GetDesignSettings().m_HoleClearance / MM
     r_own = a.pad / 2 + a.clearance + a.width / 2
     r_other = (a.drill / 2 + hc + a.width / 2) if a.nfp else r_own
-    fl, trapped, cut = flow_bound(lat, vias, srcs, a.width, a.clearance, r_own, r_other)
+    pn_ = {x.strip() for x in a.pad_nets.split(",") if x.strip()}
+    padded = {p for p in vias if ball.get(p, ("", ""))[1] in pn_}
+    fl, trapped, cut = flow_bound(lat, vias, srcs, a.width, a.clearance, r_own, r_other, padded)
     print(f"{a.ref} {a.layer}: {len(srcs)} nets leave on in-pad vias here ({len(S) - len(srcs)} sources off the lattice "
           f"ignored); {len(vias)} vias; lattice {NX} x {NY} at {px:.3f} x {py:.3f}; track {a.width} / {a.clearance}, "
-          f"R own {r_own:.4f}, other {r_other:.4f}{' (holes: --nfp)' if a.nfp else ''}")
+          f"R own {r_own:.4f}, other {r_other:.4f}{' (holes: --nfp)' if a.nfp else ''}"
+          + (f"; {len(padded)} pour vias keep their pad" if padded else ""))
     if fl >= len(srcs):
         print(f"BOUND {fl} of {len(srcs)}: not excluded")
         return 0

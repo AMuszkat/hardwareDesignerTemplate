@@ -213,7 +213,12 @@ its docstring. What the spec has to be told:
   9 nets to another layer did not move the router's overlap (22 -> 21 nets):
   the CA block sat inside an 11-track cut on EVERY layer, which only the bound
   showed. `--nfp` when the fab removes non-functional pads (other nets' vias
-  are holes + copper-to-hole on the layer).
+  are holes + copper-to-hole on the layer); `--pad-nets A,B` for a power layer
+  that carries a few signals -- its own pours' vias keep their pads there.
+  To choose a split over several layers, anneal over assignments with the
+  bound as the per-layer test (keep pairs together); board1 needed four layers
+  where any three stayed 3 short (a pocket of 2-3 balls with one exit each
+  makes per-layer capacities not add).
 - **Two BGAs in one group** (a SoC and its DRAM): `"fields": [...]`, one per
   part, each at its own area clearance. With one field, the other part's
   dog-bones keep the group's class clearance between them (SE_50's 0.2032
