@@ -8,7 +8,7 @@
 Board mm, 1 mm grid, every copper layer in its own colour (F.Cu red, B.Cu blue,
 inner layers green/olive/...), zone FILLS shaded underneath, pads tinted (GND
 green, plus any --tint NETGLOB=#colour), courtyards and designators, vias as
-rings.  A plan's tracks and vias are drawn over the board's; a stalled
+rings, the outline and every inner cut-out (Edge.Cuts) in amber.  A plan's tracks and vias are drawn over the board's; a stalled
 plan may carry `marks` (points to flag) and `guides` (lines) for a picture; no tool writes them.
 Writes OUT.svg and OUT.png (PyMuPDF, from kicad_project/tools/.venv -- pcbnew
 pins this tool to KiCad's own interpreter, so the raster runs out of process).
@@ -92,6 +92,30 @@ def main():
                     hh = poly.Hole(i, h)
                     hp = " ".join(f"{mm(hh.CPoint(k).x):.3f},{mm(hh.CPoint(k).y):.3f}" for k in range(hh.PointCount()))
                     o.append(f'<polygon points="{hp}" fill="#fff"/>')
+
+    # the board outline AND its inner cut-outs (Edge.Cuts): a picture without them invites a route
+    # across a hole that only DRC's copper-to-edge test then reports (board2 R4, the module cut-out)
+    for d in B.b.GetDrawings():
+        if d.GetLayer() != pn.Edge_Cuts:
+            continue
+        s = d.GetShape()
+        if s == pn.SHAPE_T_ARC:
+            c_, r_ = d.GetCenter(), mm(d.GetRadius())
+            a0, da = d.GetArcAngleStart().AsRadians(), d.GetArcAngle().AsRadians()
+            pts = [(mm(c_.x) + r_ * math.cos(a0 + da * k / 16), mm(c_.y) + r_ * math.sin(a0 + da * k / 16)) for k in range(17)]
+        elif s == pn.SHAPE_T_CIRCLE:
+            c_, r_ = d.GetCenter(), mm(d.GetRadius())
+            pts = [(mm(c_.x) + r_ * math.cos(2 * math.pi * k / 32), mm(c_.y) + r_ * math.sin(2 * math.pi * k / 32)) for k in range(33)]
+        elif s == pn.SHAPE_T_RECT:
+            p0, p1 = d.GetStart(), d.GetEnd()
+            pts = [(mm(p0.x), mm(p0.y)), (mm(p1.x), mm(p0.y)), (mm(p1.x), mm(p1.y)), (mm(p0.x), mm(p1.y)), (mm(p0.x), mm(p0.y))]
+        elif s == pn.SHAPE_T_POLY:
+            pts = [(mm(q.x), mm(q.y)) for q in d.GetPolyPoints()]
+            pts.append(pts[0])
+        else:
+            pts = [(mm(d.GetStart().x), mm(d.GetStart().y)), (mm(d.GetEnd().x), mm(d.GetEnd().y))]
+        o.append(f'<polyline points="{" ".join(f"{x:.3f},{y:.3f}" for x, y in pts)}" fill="none" '
+                 f'stroke="#c90" stroke-width="0.08"/>')
 
     for ref, f in B.fps.items():
         c = B.courtyard(f)
