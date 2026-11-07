@@ -17,7 +17,8 @@ Sites (each with the via, the pad, the segments, a point):
   via-angle    the link has a segment at an angle other than 0/45/90, or bends
   via-45       one straight 45-degree link: listed so each one is a choice ("never": a site)
   via-offset   axial, but not leaving the pad's centre line or not ending at the via's centre
-Not judged: vias inside the guide's `via field` parts (a BGA's dog-bones),
+Not judged: vias inside the guide's `via field` parts (a BGA's dog-bones), a via
+whose centre lies in a pad of its own net (via-in-pad: no link to judge),
 links to those parts' pads, and vias with no link to a pad unless they touch
 one.  A link is the chain of segments from a via to a pad through plain
 joints, at most 4 segments and 3 mm.  A site declared in
@@ -129,6 +130,11 @@ def audit(b, GAP=0.15, EXC=(), fields=(), field_refs=()):
     for v in b.GetTracks():
         if v.Type() != pcbnew.PCB_VIA_T: continue
         if in_field(v, fields): skipped['via inside a via-field part'] += 1; continue
+        # a via IN a pad of its own net (a fine-pitch BGA's via-in-pad, filled and capped) needs
+        # no link, and its gap to the neighbouring lands is the field's rule, DRC's to judge
+        if any(p.GetNetCode() == v.GetNetCode() and p.HitTest(v.GetPosition())
+               for lid in (pcbnew.F_Cu, pcbnew.B_Cu) for _n, p in pads[lid]):
+            skipped['via in a pad of its own net (via-in-pad: no link)'] += 1; continue
         nvia += 1; vp = P(v.GetPosition()); r = v.GetWidth(pcbnew.F_Cu) / 2
         for lid in (pcbnew.F_Cu, pcbnew.B_Cu):
             for name, p in pads[lid]:

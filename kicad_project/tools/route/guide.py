@@ -21,7 +21,7 @@ from pathlib import Path
 FILE = "general_routing_guide.md"
 RULES = ("joints", "copper to edge", "via to pad gap", "45-degree via link", "copper shape",
          "class width", "thermals", "plane layer", "no vias", "class layers", "keep-out",
-         "via field", "ground beside", "frozen", "thermal pad")
+         "via field", "bga field", "ground beside", "frozen", "thermal pad")
 
 
 class GuideError(SystemExit):
@@ -128,6 +128,14 @@ def _parse(rule, val, src, G):
         if m.group(5):
             f["widths"] = [float(m.group(5)), float(m.group(6))]
         G.setdefault("field_vias", []).append(f)
+    elif rule == "bga field":
+        # a fine-pitch BGA whose courtyard the copper rules (shape, via links) do not judge inside:
+        # the escape's neck-down and the via-in-pad there are the fab rules' business. Unlike
+        # "via field" it refuses nothing outside -- for a board whose field via is its only via
+        refs = [x.strip() for x in val.split(",") if x.strip()]
+        if not refs or not all(re.fullmatch(r"[A-Za-z]+\d+", r) for r in refs):
+            raise GuideError(f"{FILE}: 'bga field' takes 'U1, U300, U500'")
+        G.setdefault("bga_fields", []).extend(dict(s, ref=r) for r in refs)
     elif rule == "ground beside":
         m = re.fullmatch(r"\s*([A-Za-z0-9_]+)\s*:\s*(\S+)\s+within\s+(\d+(?:\.\d+)?)\s*mm\s*", val)
         if not m:
@@ -174,7 +182,7 @@ def describe(G):
         if k in G:
             e = {q: v for q, v in G[k].items() if q != "source"}
             L.append(f"  {k:13s} {e or 'on'}   source: {G[k]['source']}")
-    for k in ("plane_layers", "class_vias", "class_layers", "keepouts", "field_vias", "thermal_pads"):
+    for k in ("plane_layers", "class_vias", "class_layers", "keepouts", "field_vias", "bga_fields", "thermal_pads"):
         for e in G.get(k, []):
             body = {q: v for q, v in e.items() if q != "source"}
             L.append(f"  {k:13s} {body}   source: {e['source']}")
@@ -185,7 +193,7 @@ def field_boxes(b, G, pcbnew):
     """The courtyard boxes (nm) of the via-field parts, which the copper rules do
     not judge inside (a BGA's dog-bones are the fab rules' business)."""
     out = []
-    for f in G.get("field_vias", []):
+    for f in G.get("field_vias", []) + G.get("bga_fields", []):
         fp = b.FindFootprintByReference(f["ref"])
         if fp is None:
             continue

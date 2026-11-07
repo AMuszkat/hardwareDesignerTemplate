@@ -241,6 +241,29 @@ its docstring. What the spec has to be told:
   0.2032 that the grid had passed at 0.0889). Gate every layer's escape with
   `route.py check` -- `track_dangling` at the ring is expected, any other DRC
   finding is not.
+- **Gate an escape against the WHOLE fanout.** `route.py check` judges what the
+  plan holds; an escape plan holds its own nets' vias, so DRC never measures it
+  against the field's other vias (board1 RV4.4: 331 of 358 missing, three
+  real clearances at one GND ball). Lay every fanout via in a copy of the plan,
+  with `"nfp": true` on a via whose inner pads the fab removes (KiCad's
+  "remove unconnected layers", start and end kept), `accept` track_dangling and
+  via_dangling with reasons, and gate that copy.
+- **`pourreach.py`: a rail via must still reach its pour.** A signal track
+  through a power layer's via field can close the last gap between a rail via
+  and its pour, and DRC cannot see it (there is no pour yet). `pourreach.py
+  --layer --box <field> --vias <models> --pad-nets <the layer's pours> --nfp
+  --plans <escapes> --min-width 0.1` floods each pour net's free space from
+  outside the field: `POURREACH PASS|FAIL`, one line per via cut off. Run it
+  with and without `--plans` -- a via already walled in by other nets' holes is
+  the fanout's, not the escape's (board1 In5: 3 of 33 without tracks, 8 with).
+  `--corridors --json` gives each via's reach path in the no-plan geometry, to
+  reserve (as the rail's `reserve_tracks`) for the vias a route cut off --
+  reserving all of them walls the field, every corridor crossing every escape.
+- **`bga field: U1, U300` in the guide** makes the copper rules (shape, via
+  links) skip the inside of those courtyards, where the neck-down and the
+  via-in-pad are the fab rules' business, without `via field`'s refusal of the
+  same via outside. And `vialink` never judges a via whose centre is in a pad
+  of its own net (via-in-pad: no link).
 - **A field is its part's courtyard, and its tracks are written at its width.**
   KiCad's area rule holds only where both items intersect the courtyard, so
   `netgroup` takes the field from the courtyard (the pads + 0.3 only for a

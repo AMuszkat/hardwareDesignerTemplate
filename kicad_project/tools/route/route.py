@@ -215,13 +215,18 @@ class RBoard(Board):
         self.b.Add(t)
         return t
 
-    def add_via(self, net, at, pad, drill, top="F.Cu", bottom="B.Cu"):
+    def add_via(self, net, at, pad, drill, top="F.Cu", bottom="B.Cu", nfp=False):
         pn = self.pn
         v = pn.PCB_VIA(self.b)
         v.SetPosition(pn.VECTOR2I(pn.FromMM(at[0]), pn.FromMM(at[1])))
         v.SetWidth(pn.FromMM(pad))
         v.SetDrill(pn.FromMM(drill))
         v.SetLayerPair(self.layer(top), self.layer(bottom))
+        if nfp:
+            # "nfp": the fab removes this via's unconnected INNER pads (non-functional pads,
+            # 14_fab) -- KiCad's "remove unconnected layers", the start and end layers kept;
+            # DRC then measures an inner-layer track to the hole, not to a pad
+            v.Padstack().SetUnconnectedLayerMode(pn.UNCONNECTED_LAYER_MODE_REMOVE_EXCEPT_START_AND_END)
         v.SetNet(self.net(net))
         self.b.Add(v)
         return v
@@ -337,7 +342,8 @@ class RBoard(Board):
         for v in plan.get("vias", []):
             made["vias"].append(self.add_via(v["net"], v["at"], v.get("pad", 0.6),
                                              v.get("drill", 0.3),
-                                             v.get("top", "F.Cu"), v.get("bottom", "B.Cu")))
+                                             v.get("top", "F.Cu"), v.get("bottom", "B.Cu"),
+                                             nfp=bool(v.get("nfp"))))
         for z in plan.get("zones", []):
             made["zones"].append(self.add_zone(z["net"], z["layer"], z["poly"],
                                                pad_connection=z.get("pad_connection"),
