@@ -39,6 +39,16 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 - Fill `ROUTING_PLAN.md` §1 (layer roles, class table) from the same lines,
   and §3 (the groups, criticality first: the most sensitive nets
   get first pick of the copper, then fanout, then bulk, then pours).
+- **Count the order before you count the lanes.** For each pair of
+  connectors a bundle joins, list its nets by the x (or y) where they leave
+  the source and where they must arrive, and count the inversions. In a
+  corridor that has only ONE free layer (the other a pour or a plane) the order
+  cannot change: every inversion is a via pair somewhere with both layers
+  free, and a fine-pitch fan-out eats that room first. Two connectors whose
+  pin 1s sit at opposite ends reverse every fixed-function block. Do it before
+  the first pour is laid over the corridor -- board2's +5V pour (R4) took the
+  only two-layer room between a 0.4 mm receptacle and a 2.54 mm header whose
+  maps run in opposite directions; 48 inversions surfaced at R5 (board2 Q7).
 
 ## 1. One group
 
