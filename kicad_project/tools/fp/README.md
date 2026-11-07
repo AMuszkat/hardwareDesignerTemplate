@@ -113,7 +113,16 @@ assembly drawing keeps the body. `tidy` carries the existing signature over
 (the land it vouches for is unchanged) and appends a `tidy` entry to the
 record.
 
-Three more non-land edits live in `tidy`:
+Four more non-land edits live in `tidy`:
+
+- `--pad-prop bga` (or `fiducial_glob`, `testpoint`, `heatsink`, ...) sets
+  KiCad's fabrication property on every SMD pad that has none: the Gerber X2
+  aperture function that tells the fab which lands are BGA balls. A converter
+  (easyeda2kicad) leaves it off -- board1's U1 had 486 lands without it while
+  U300 / U500 had theirs (review RV4.12). The land is compared WITHOUT pad
+  properties, so nothing else can move; refused on a stock-derived footprint
+  (its land stays KiCad's). Then `place.py landsync <ref>` -- `refresh.py`
+  never touches pads -- and `sync`.
 
 - `--silk-width W` raises every unfilled silk stroke narrower than W to W:
   KiCad's stock marks are 0.12, a fab's silk line minimum is often 0.15

@@ -1476,9 +1476,23 @@ def _rect_outline(rects):
 
 def tidy_tree(tree, silk_keep=(), silk_dot=None, courtyard=None,
               silk_drop=(), fab_from_silk=False, drop_props=(),
-              mask_bridges=False, contour=False, silk_width=None):
+              mask_bridges=False, contour=False, silk_width=None, pad_prop=None):
     """Drop body silk, keep marks, rebuild the courtyard. Returns the log."""
     log = {"silk_dropped": [], "silk_kept": []}
+    if pad_prop:
+        # KiCad's fabrication property on every SMD pad (pad_prop_bga: the Gerber X2 aperture
+        # function that tells the fab which lands are BGA balls) -- a converter leaves it off.
+        # Land geometry is unchanged; a pad that has a property already keeps it.
+        n_set = 0
+        for n in tree:
+            if isinstance(n, list) and n[0] == "pad" and len(n) > 2 and n[2] == "smd" \
+                    and rkid(n, "property") is None:
+                k = next((i for i, c in enumerate(n) if isinstance(c, list) and c[0] == "size"), None)
+                if k is None:
+                    die(f"pad {rq(n[1])} has no (size)")
+                n.insert(k + 1, ["property", pad_prop])
+                n_set += 1
+        log["pad_prop"] = (pad_prop, n_set)
     if mask_bridges:
         # KiCad's per-footprint "allow bridged solder mask apertures": the
         # fab's minimum web cannot fit between 0.5 mm-pitch pads, so the
@@ -1709,7 +1723,7 @@ def _tidy_opts(a):
         die("--courtyard-contour needs --courtyard (the margin, IPC nominal 0.25)")
     return keep, dot, a.courtyard, drop, a.fab_from_silk, \
         tuple(a.drop_property or ()), a.allow_mask_bridges, a.courtyard_contour, \
-        a.silk_width
+        a.silk_width, ("pad_prop_" + a.pad_prop) if a.pad_prop else None
 
 
 def _print_log(log):
@@ -1721,6 +1735,8 @@ def _print_log(log):
         print(f"    silk added    pin-1 dot at {tuple(log['silk_dot'])}")
     if log.get("silk_width"):
         print(f"    silk width    {log['silk_width'][1]} stroke(s) raised to {log['silk_width'][0]:g}")
+    if log.get("pad_prop"):
+        print(f"    pad property  {log['pad_prop'][0]} on {log['pad_prop'][1]} SMD pad(s)")
     if log.get("fab_from_silk"):
         print(f"    F.Fab         {log['fab_from_silk']} dropped silk items "
               f"re-drawn there (the footprint had no assembly body)")
@@ -1763,7 +1779,18 @@ def cmd_tidy(a, board):
         return 0
     before = land_hash(_normalise(text, a.name))
     new = _normalise(raw_dump(tree), a.name)
-    if land_hash(new) != before:
+    if a.pad_prop:
+        if entry.get("stock"):
+            die("--pad-prop on a footprint derived from KiCad's stock: its land must stay KiCad's "
+                "(`derive` records that land); set the property on the board instead")
+        # a pad's fabrication property is not its geometry: compare the lands without it, so
+        # --pad-prop can add it and nothing else can move
+        strip = lambda t: raw_dump([[c for c in n if not (isinstance(c, list) and c[0] == "property")]
+                                    if isinstance(n, list) and n and n[0] == "pad" else n for n in raw_parse(t)])
+        same = land_hash(strip(new)) == land_hash(strip(_normalise(text, a.name)))
+    else:
+        same = land_hash(new) == before
+    if not same:
         die("the land would change -- nothing written. tidy edits F.SilkS "
             "and F.CrtYd only; if you meant to move a pad, that is a "
             "datasheet question and a re-sign.")
@@ -1776,9 +1803,13 @@ def cmd_tidy(a, board):
          "props_dropped": log.get("props_dropped"),
          "mask_bridges": log.get("mask_bridges"),
          "courtyard": log.get("courtyard"),
-         "courtyard_poly": log.get("courtyard_poly"), "note": a.note})
+         "courtyard_poly": log.get("courtyard_poly"), "pad_prop": log.get("pad_prop"),
+         "note": a.note})
     board.save(rec)
-    print(f"    written, land unchanged ({before}); record updated.")
+    if log.get("pad_prop"):
+        print(f"    written, land geometry unchanged, pad property added ({land_hash(new)}); record updated.")
+    else:
+        print(f"    written, land unchanged ({before}); record updated.")
     return 0
 
 
@@ -1954,6 +1985,10 @@ def main():
         p.add_argument("--silk-width", type=float, metavar="W",
                        help="raise every unfilled silk stroke narrower than W to W "
                             "(the fab's silk line minimum, 14_fab)")
+        p.add_argument("--pad-prop", choices=["bga", "fiducial_glob", "fiducial_loc", "testpoint",
+                                              "heatsink", "castellated"],
+                       help="set KiCad's fabrication property on every SMD pad that has none "
+                            "(bga: a converter's BGA leaves it off; Gerber X2 marks the lands)")
         p.add_argument("--fab-from-silk", action="store_true",
                        help="if the footprint has no F.Fab body, re-draw the "
                             "dropped silk there")
