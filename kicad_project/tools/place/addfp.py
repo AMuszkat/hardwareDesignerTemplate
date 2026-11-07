@@ -78,7 +78,11 @@ def netlist(pcb):
             continue
         for ref, pin in re.findall(r'\(ref "([^"]+)"\)\s*\n?\s*\(pin "([^"]+)"', b):
             if ref in comps:
-                comps[ref]["pads"][pin] = name.group(1)
+                # kicad-cli names a multi-unit part's open pin with its unit letter,
+                # "unconnected-(J2B-M164-Pad64)"; KiCad's update and DRC parity name it
+                # without -- as schupdate.py does (board2: parity 111 after addfp, 0 after)
+                comps[ref]["pads"][pin] = re.sub(rf"^unconnected-\({re.escape(ref)}[A-Z]{{1,2}}-",
+                                                 f"unconnected-({ref}-", name.group(1))
     return comps
 
 

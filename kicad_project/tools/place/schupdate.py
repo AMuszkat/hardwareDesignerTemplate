@@ -96,7 +96,9 @@ def main():
     if not a.dry_run and P.locks(B.pcb):
         P.die("KiCad has the board open; close it first (this writes with pcbnew)", 3)
     comps = schematic(B.pcb)
-    fps = {f.GetReference(): f for f in b.GetFootprints()}
+    # A board-only footprint (a plain hole, a fiducial) has no symbol by design: KiCad's own
+    # update and DRC parity skip it, and so does this.
+    fps = {f.GetReference(): f for f in b.GetFootprints() if not f.GetAttributes() & pn.FP_BOARD_ONLY}
     only_sch, only_pcb = sorted(set(comps) - set(fps)), sorted(set(fps) - set(comps))
     if only_sch or only_pcb:
         P.die(f"references on one side only -- schematic: {only_sch[:8]}, board: {only_pcb[:8]}; "
@@ -173,6 +175,8 @@ def main():
         back = pn.LoadBoard(str(B.pcb))
     bad = []
     for f in back.GetFootprints():
+        if f.GetAttributes() & pn.FP_BOARD_ONLY:
+            continue
         c = comps[f.GetReference()]
         if f.GetPath().AsString() != c["path"] or any(p.GetNetname() != c["pads"].get(p.GetNumber(), "")
                                                        for p in f.Pads()):
