@@ -15,6 +15,7 @@ the reference designators go.
     tools/kpy tools/place/place.py labels --board board1 [--dry-run]
     tools/kpy tools/place/place.py park   --board board1 [--refs H1,H2]  # KiCad closed
     tools/kpy tools/place/place.py drc    --board board1
+    tools/kpy tools/place/place.py silk   --board board1 [--dry-run]       # KiCad closed
     tools/kpy tools/place/sites.py        --board board1 --ref C13 --box x0,y0,x1,y1
     tools/kpy tools/place/pack.py         --board board1 --spec pack.json
     tools/kpy tools/place/addfp.py        --board board1 [REF ...] [--dry-run]   # KiCad closed
@@ -162,6 +163,19 @@ The swap order that works: `board.Add(new)` first, then for each pad
 `pad.SetNet(board.FindNet(name))` (nets set before `Add` are silently lost),
 carry `Datasheet`, `Description` and custom fields with `HasField` /
 `SetField`, `SaveBoard`, then **`place.py drc`** and **`place.py sync`**.
+
+## `silk` -- the silk line width DRC never tests
+
+KiCad's DRC checks silk TEXT thickness, never a stroke's width, and KiCad's
+stock marks (every chip R/C, the pin headers' pin-1 corners) are 0.12 mm --
+under a fab whose silk line minimum is 0.15 (board2 review RV5.5: 44
+strokes). `drc` now counts every unfilled silk stroke narrower than the
+project's default silk line (which `board_setup.py apply` sets from
+14_fab's silkscreen row) and exits 1 on any. `silk` raises them on the
+STOCK footprints (the chip R/C, which never enter the project library); a
+project-library footprint is fixed at its source, `fp.py tidy <name>
+--silk-keep ... --silk-width 0.15`, then `refresh.py --layers SilkS`, so
+`sync` stays exact -- `silk` refuses those.
 
 ## `labels`
 

@@ -1476,7 +1476,7 @@ def _rect_outline(rects):
 
 def tidy_tree(tree, silk_keep=(), silk_dot=None, courtyard=None,
               silk_drop=(), fab_from_silk=False, drop_props=(),
-              mask_bridges=False, contour=False):
+              mask_bridges=False, contour=False, silk_width=None):
     """Drop body silk, keep marks, rebuild the courtyard. Returns the log."""
     log = {"silk_dropped": [], "silk_kept": []}
     if mask_bridges:
@@ -1538,6 +1538,22 @@ def tidy_tree(tree, silk_keep=(), silk_dot=None, courtyard=None,
                       ["fill", "yes"], ["layer", '"F.SilkS"'],
                       ["uuid", _uuid()]])
         log["silk_dot"] = [x, y]
+    if silk_width:
+        # KiCad's stock marks are drawn 0.12 wide; a fab whose silk line minimum
+        # is 0.15 (14_fab) thickens or drops them, and DRC checks only text
+        # (board2 review RV5.5). Unfilled strokes only: a filled dot is its area.
+        n_w = 0
+        for n in new + added:
+            if isinstance(n, list) and n[0] in GRAPHICS and rlayer(n) in ("F.SilkS", "B.SilkS"):
+                fill = rkid(n, "fill")
+                if fill is not None and len(fill) > 1 and fill[1] in ("yes", "solid"):
+                    continue
+                st = rkid(n, "stroke")
+                w = rkid(st, "width") if st else None
+                if w and float(w[1]) < silk_width - 1e-9:
+                    w[1] = f"{silk_width:g}"
+                    n_w += 1
+        log["silk_width"] = [silk_width, n_w]
     if courtyard is not None:
         pts = []
         for n in new + added:                 # the footprint AS EDITED above
@@ -1692,7 +1708,8 @@ def _tidy_opts(a):
     if a.courtyard_contour and a.courtyard is None:
         die("--courtyard-contour needs --courtyard (the margin, IPC nominal 0.25)")
     return keep, dot, a.courtyard, drop, a.fab_from_silk, \
-        tuple(a.drop_property or ()), a.allow_mask_bridges, a.courtyard_contour
+        tuple(a.drop_property or ()), a.allow_mask_bridges, a.courtyard_contour, \
+        a.silk_width
 
 
 def _print_log(log):
@@ -1702,6 +1719,8 @@ def _print_log(log):
         print(f"    silk kept     {k}")
     if log.get("silk_dot"):
         print(f"    silk added    pin-1 dot at {tuple(log['silk_dot'])}")
+    if log.get("silk_width"):
+        print(f"    silk width    {log['silk_width'][1]} stroke(s) raised to {log['silk_width'][0]:g}")
     if log.get("fab_from_silk"):
         print(f"    F.Fab         {log['fab_from_silk']} dropped silk items "
               f"re-drawn there (the footprint had no assembly body)")
@@ -1932,6 +1951,9 @@ def main():
         p.add_argument("--silk-dot", nargs=2, type=float, metavar=("X", "Y"),
                        help="a pin-1 dot to add, footprint mm (e.g. "
                             "--silk-dot -3.2 -2.9)")
+        p.add_argument("--silk-width", type=float, metavar="W",
+                       help="raise every unfilled silk stroke narrower than W to W "
+                            "(the fab's silk line minimum, 14_fab)")
         p.add_argument("--fab-from-silk", action="store_true",
                        help="if the footprint has no F.Fab body, re-draw the "
                             "dropped silk there")

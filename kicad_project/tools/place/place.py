@@ -773,6 +773,20 @@ def cmd_labels(a):
             cx, cy = (c[0] + c[2]) / 2, (c[1] + c[3]) / 2
             near_obst = [ob for ob in obst if rgap(c, ob) < 6.0]
             near_cyd = [cc for q, cc in cyd.items() if rgap(c, cc) < 6.0]
+            # a label reads as the part whose pad is nearest it: a spot nearer a
+            # FOREIGN pad than any of its own pays heavily (board2 RV5.4 / RV6.1:
+            # "SW2" printed over J7's pin 1, "C8" under C9's pad)
+            ctr = lambda bb: ((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2)
+            own_p = [ctr(p["box"]) for p in B.pads(P[r])]
+            for_p = [ctr(p["box"]) for q, f in B.fps.items() if q != r and B.side(f) == side
+                     for p in B.pads(f) if rgap(c, p["box"]) < 8.0]
+
+            def foreign(sx, sy):
+                if not own_p or not for_p:
+                    return 0.0
+                mine = min(math.dist((sx, sy), q) for q in own_p)
+                theirs = min(math.dist((sx, sy), q) for q in for_p)
+                return 50.0 + (mine - theirs) if theirs < mine else 0.0
             out = []
             for ang in (0, 90):
                 w0 = text_box(ref, 0, 0, ang)
@@ -792,7 +806,8 @@ def cmd_labels(a):
                             continue
                         if any(rgap(bx, ob) < 0 for ob in near_obst) or any(rgap(bx, cc) < 0 for cc in near_cyd):
                             continue
-                        out.append((math.dist((sx, sy), (cx, cy)) + (0.4 if ang else 0.0), ang, sx, sy, bx))
+                        out.append((math.dist((sx, sy), (cx, cy)) + (0.4 if ang else 0.0) + foreign(sx, sy),
+                                    ang, sx, sy, bx))
             out.sort(key=lambda t: t[0])
             cands[r] = out
         taken = []
@@ -1066,6 +1081,51 @@ def cmd_park(a):
     return 0
 
 
+def thin_silk(B):
+    """Unfilled silk strokes narrower than the project's default silk line --
+    the one `board_setup.py apply` sets from 14_fab's silkscreen row (KiCad's
+    stock marks are 0.12; DRC tests only text). [(ref, own_lib, shape, width)]."""
+    pn = B.pn
+    floor = pn.ToMM(B.b.GetDesignSettings().GetLineThickness(pn.F_SilkS))
+    stem = next((p.name[:-len(".pretty")] for p in (Path(B.pcb).parent / "lib").glob("*.pretty")), None)
+    out = []
+    for r, f in B.fps.items():
+        own = str(f.GetFPID().GetLibNickname()) == stem
+        for g in f.GraphicalItems():
+            if g.GetLayer() in (pn.F_SilkS, pn.B_SilkS) and g.GetClass() == "PCB_SHAPE" \
+                    and not g.IsAnyFill() and pn.ToMM(g.GetWidth()) < floor - 1e-6:
+                out.append((r, own, g, pn.ToMM(g.GetWidth())))
+    return floor, out
+
+
+def cmd_silk(a):
+    """Raise every unfilled silk stroke narrower than the project's default silk
+    line (14_fab's, via board_setup) on the STOCK footprints the board carries
+    (KiCad's chip R/C, which never enter the project library). A project-library
+    footprint is fixed at the source -- `fp.py tidy <name> --silk-width W`, then
+    refresh.py -- so `sync` stays exact; this refuses to touch one. KiCad closed."""
+    B = Board(a.board)
+    if locks(B.pcb) and not a.dry_run:
+        die("KiCad has the board open; close it first", 3)
+    floor, thin = thin_silk(B)
+    own = sorted({r for r, o, _, _ in thin if o})
+    if own:
+        die(f"project-library footprints with silk under {floor:g} mm: {', '.join(own)} -- "
+            f"fp.py tidy <name> --silk-width {floor:g}, then refresh.py --layers SilkS", 2)
+    for r, _, g, _ in thin:
+        g.SetWidth(B.pn.FromMM(floor))
+    print(f"{len(thin)} silk stroke(s) on {len({r for r, *_ in thin})} stock footprint(s) "
+          f"raised to {floor:g} mm" + (" (dry run)" if a.dry_run else ""))
+    if a.dry_run or not thin:
+        return 0
+    backup = B.pcb.with_suffix(".kicad_pcb.silk-bak")
+    shutil.copy2(B.pcb, backup)
+    with quiet_stderr():
+        B.pn.SaveBoard(str(B.pcb), B.b)
+    print(f"saved {B.pcb.name} (previous copy: {backup.name}); now run `place.py drc`")
+    return 0
+
+
 def cmd_drc(a):
     """KiCad's own DRC WITH the schematic-parity test, summarised.
 
@@ -1116,12 +1176,18 @@ def cmd_drc(a):
           + (f" ({n_ok} board-only footprint(s) from placement.json 'fixed' ignored)" if n_ok else ""))
     for b in bad:
         print("  PARITY", b)
-    return 1 if bad else 0
+    # silk line width: KiCad's DRC tests text thickness, never a stroke's width
+    B = Board(a.board)
+    floor, thin = thin_silk(B)
+    print(f"silk strokes under {floor:g} mm: {len(thin)}"
+          + (f" on {', '.join(sorted({r for r, *_ in thin}))} -- `place.py silk` (stock) / "
+             f"`fp.py tidy --silk-width` (library)" if thin else ""))
+    return 1 if bad or thin else 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["gaps", "check", "apply", "sync", "labels", "auto", "park", "drc"])
+    ap.add_argument("command", choices=["gaps", "check", "apply", "sync", "labels", "auto", "park", "drc", "silk"])
     ap.add_argument("moves", nargs="?", help="check/apply: plan JSON")
     ap.add_argument("--board", help="boardN, the folder name or a path (default: the folder "
                     "you are in, else this session's board)")
@@ -1131,12 +1197,12 @@ def main():
     a.board = board_dir_arg(a.board)
     if a.moves:
         a.moves = str(boardsel.in_board(a.board, a.moves))    # as typed, else inside the board folder
-    if a.dry_run and a.command not in ("apply", "labels", "park"):
+    if a.dry_run and a.command not in ("apply", "labels", "park", "silk"):
         die(f"--dry-run has no meaning for {a.command} (it writes nothing anyway)")
     if a.command in ("check", "apply", "auto") and not a.moves:
         die(f"{a.command} needs a plan or spec file")
     sys.exit({"gaps": cmd_gaps, "check": cmd_check, "apply": cmd_apply, "sync": cmd_sync,
-              "labels": cmd_labels, "auto": cmd_auto, "park": cmd_park, "drc": cmd_drc}[a.command](a))
+              "labels": cmd_labels, "auto": cmd_auto, "park": cmd_park, "drc": cmd_drc, "silk": cmd_silk}[a.command](a))
 
 
 if __name__ == "__main__":

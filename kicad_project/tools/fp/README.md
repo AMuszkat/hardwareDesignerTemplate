@@ -113,7 +113,13 @@ assembly drawing keeps the body. `tidy` carries the existing signature over
 (the land it vouches for is unchanged) and appends a `tidy` entry to the
 record.
 
-Two more non-land edits live in `tidy`:
+Three more non-land edits live in `tidy`:
+
+- `--silk-width W` raises every unfilled silk stroke narrower than W to W:
+  KiCad's stock marks are 0.12, a fab's silk line minimum is often 0.15
+  (14_fab), and DRC checks only text. Name the kept marks with
+  `--silk-keep` (see `--dry-run`): tidy still drops any line it is not told
+  to keep.
 
 - `--allow-mask-bridges` sets KiCad's per-footprint *allow bridged solder
   mask apertures*. It is for a pitch the fab's minimum mask web cannot fit
