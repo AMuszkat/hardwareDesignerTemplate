@@ -319,12 +319,12 @@ def audit(b, pcbnew, LAYERS=None, OPEN=0.055, CLOSE=0.15, AMIN=0.003, FIELDS=(),
             size = max(mm(bb.GetWidth()), mm(bb.GetHeight()))
             if size < minsize: continue
             if infield(x, y): skipped[kind + ' in field'] += 1; continue
+            wall, apex = -1, False                      # measured for a notch only; a nub / bulb reports -1
             if kind == 'notch':
                 grown = pcbnew.SHAPE_POLY_SET(); grown.AddOutline(o); grown.Inflate(FM(0.01), RND, ERR)
                 npad = sum(1 for name, p, lid in pads[(cur_code, L)] if grown.Collide(PADPOLY.setdefault((name, L), pad_poly(p, lid)), 0))
                 nvia = sum(1 for v, lid in vias[(cur_code, L)] if grown.Collide(pcbnew.VECTOR2I(FM(P(v.GetPosition())[0]), FM(P(v.GetPosition())[1])), v.GetWidth(lid) // 2))
                 if npad >= 2: skipped['notch between two pads (footprint geometry)'] += 1; continue
-                wall, apex = -1, False
                 if size < 4 * CLOSE:
                     verts = [(mm(o.CPoint(i).x), mm(o.CPoint(i).y)) for i in range(o.PointCount())]
                     apex = any(math.hypot(jx - vx, jy - vy) < 0.35 for jx, jy in joints[(cur_code, L)] for vx, vy in verts)   # the void's apex sits w/2*cot(22.5) past the joint

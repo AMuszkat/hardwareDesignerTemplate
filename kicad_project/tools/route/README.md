@@ -225,6 +225,22 @@ its docstring. What the spec has to be told:
   A layer confined to one region (board1's In4 / In5 carry signal only toward
   U500) gets `--exit east`: with exits on every side the bound passed In5's 7
   nets; east only it is 6 (two gaps of 3), which is what the router hit.
+- **The pitch decides what fits through a gap of 3.** Two parallel 45-degree
+  tracks k cells apart are k x pitch / sqrt(2) apart: at 0.0625 four cells
+  give 0.1768 against 0.0889 + 0.0889 = 0.1778, so diagonals need five
+  (0.221) and a gap the bound passes 3 through takes 2 on the grid. Pick a
+  pitch where the straight AND the diagonal steps both land just over the
+  track pitch, with the ball pitch a whole number of cells: 0.5 / 11 =
+  0.04545 (4 cells straight 0.182, 6 diagonal 0.193) closed board1's In5 at
+  6 nets where 0.0625 and 0.5 / 9 stalled at the same two gaps every seed.
+  Do not round the pitch (sources must sit on grid points to 1e-4).
+- **An escape-only spec keeps the class rules outside the field.** Only the
+  BGA's courtyard has the area clearance; a leg to a ring just outside it runs
+  at the layer's class width and clearance, or KiCad's DRC fails the ring
+  parts (board1: two DQS tracks 0.144 from bottom caps against DDR_DIFF's
+  0.2032 that the grid had passed at 0.0889). Gate every layer's escape with
+  `route.py check` -- `track_dangling` at the ring is expected, any other DRC
+  finding is not.
 - **Two BGAs in one group** (a SoC and its DRAM): `"fields": [...]`, one per
   part, each at its own area clearance. With one field, the other part's
   dog-bones keep the group's class clearance between them (SE_50's 0.2032
