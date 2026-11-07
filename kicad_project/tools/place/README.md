@@ -246,6 +246,17 @@ API answering. When that path is closed:
 - `refresh.py` replaces the shapes on chosen front layers of named footprints
   with the library's, after `fp.py tidy` changed a courtyard or silk. Pads,
   texts, fields, model and placement are untouched — a land change is a
-  re-sign, not this.
+  re-sign, then `landsync.py`.
+- `landsync.py` copies a re-signed LAND (pad shape, size, the pads' own
+  solder-mask and paste margins, pad property) from the library onto the
+  named placed footprints, pad by pad number; nets, positions, graphics,
+  fields and placement stay. Refused when a pad number or a footprint-local
+  position differs (that is a re-place). Proof: its read-back, then
+  `place.py sync` "all identical" and `place.py drc` (board1, D55: U1 / U300
+  lands 0.25 NSMD -> 0.40 under a 0.35 opening, 639 pads). The library edit
+  itself: `pcbnew.PCB_IO_KICAD_SEXPR()` `FootprintLoad` / `SetSize(F_Cu, ...)` /
+  `SetLocalSolderMaskMargin` / `FootprintSave`, then `fp.py sign` (or `adopt`
+  for a stock footprint whose land is now your own); `print` before
+  `os._exit(0)` is lost unless stdout is flushed.
 
-Both write a backup first; `place.py drc` and `place.py sync` must pass after.
+Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
