@@ -78,6 +78,14 @@ PIN_OFFSET = {
 LAYOUT = [
     # ("Keep the regulator's input loop (C1, U1.VIN, U1.GND) under 5 mm.",
     #  ["U1 datasheet p.12"]),
+    # The routing workmanship the board's general_routing_guide.md reads, which
+    # its routing skill admits only from the handoff -- state it before routing,
+    # or the board session stops on a question:
+    # ("Routing workmanship: joints 0 / 45 (no 90, no arcs); via to pad <gap> mm, "
+    #  "own net included; via links straight on the pad's axis, 45 only as a listed "
+    #  "last resort; every copper-shape rule applies.", ["..."]),
+    # ("Pours and thermals: outer pours spoke every pad; inner planes / the GND pour "
+    #  "spoke through-hole pins; vias solid; which layers are planes (no tracks).", ["..."]),
 ]
 
 # Choices a review will flag that are intentional, with the reason. The
