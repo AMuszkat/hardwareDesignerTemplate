@@ -78,6 +78,7 @@ class Grid:
         self.keys = self.layers + ["via"]
         n = self.nx * self.ny
         self.static = {k: bytearray(n) for k in self.keys}
+        self.snon = {k: bytearray(n) for k in self.keys}    # static cells NOT from a round obstacle
         self.fix = {k: bytearray(n) for k in self.keys}     # other nets' board copper: hard
         self.dyn = {k: bytearray(n) for k in self.keys}     # routed here: hard or priced
         self.core = {k: bytearray(n) for k in self.layers}  # routed CENTRE-LINES (for 45-degree corners)
@@ -93,6 +94,12 @@ class Grid:
         # halo forbids the step -- which forbids a route parallel to a frozen diagonal at the pitch
         # the router itself lays them (an earlier run's bundles, frozen as fixed copper).
         self.fix_exact = False
+        # static_exact: the same for STATIC round obstacles (vias, round pads) laid with
+        # block_disc(): their halo grows by the most a 45-degree step's chord can cut into it,
+        # and a 45-degree step is then judged by its end cells only.  Off (the default), a corner
+        # cell inside a via's halo forbids the step -- which shuts the diagonal lane between two
+        # diagonal vias of a 0.5 mm BGA field (0.354 mm from each, against a 0.333 halo).
+        self.static_exact = False
 
     # -- geometry -> cells ---------------------------------------------------
     def cell(self, x, y):
@@ -152,15 +159,32 @@ class Grid:
     # -- obstacles -----------------------------------------------------------
     def block(self, keys, cells):
         for k in keys:
-            g = self.static[k]
+            g, h = self.static[k], self.snon[k]
             for c in cells:
                 g[c] = 1
+                h[c] = 1
+
+    def block_disc(self, keys, x, y, r):
+        """A round obstacle of halo radius r (a via, a round pad).  With static_exact its cells
+        are marked as round-only, its halo grows by g = sqrt(r^2 + (step/sqrt2)^2) - r -- the
+        deepest a 45-degree step (chord step*sqrt2) between two cells outside r + g can reach --
+        and route() judges a 45-degree step past it by the step's end cells alone."""
+        if not self.static_exact:
+            self.block(keys, self.disc(x, y, r))
+            return
+        g = math.sqrt(r * r + self.step * self.step / 2) - r
+        cells = self.disc(x, y, r + g)
+        for k in keys:
+            st = self.static[k]
+            for c in cells:
+                st[c] = 1
 
     def unblock(self, keys, cells):
         for k in keys:
-            g = self.static[k]
+            g, h = self.static[k], self.snon[k]
             for c in cells:
                 g[c] = 0
+                h[c] = 0
 
     def static_pad(self, L, T, R, B, layers):
         self.block(layers, self.rect(L, T, R, B, PADCLR + W / 2))
@@ -172,7 +196,7 @@ class Grid:
         self.block(["via"], self.seg(a, b, w / 2 + clr + VIA_R))
 
     def static_via(self, x, y, r, clr=PADCLR, sep=0.0):
-        self.block(self.layers, self.disc(x, y, r + clr + W / 2))
+        self.block_disc(self.layers, x, y, r + clr + W / 2)
         self.block(["via"], self.disc(x, y, max(sep, r + clr + VIA_R)))
 
     def _halo(self, tracks, vias, m=0.0):
@@ -277,6 +301,8 @@ class Grid:
         mfix = [own["fixed"][k] for k in L]
         mdyn = [own["routed"][k] for k in L]
         st = [self.static[k] for k in L]
+        sn = [self.snon[k] for k in L]
+        sexact = self.static_exact
         fx = [self.fix[k] for k in L]
         dy = [self.dyn[k] for k in L]
         hs = [self.hist[k] for k in L]
@@ -320,6 +346,7 @@ class Grid:
                 break
             i, j = c % nx, c // nx
             s_l, f_l, d_l, h_l, mf, md, step_c = st[li], fx[li], dy[li], hs[li], mfix[li], mdyn[li], lc[li]
+            sn_l = sn[li]
             k_l, mk = cr[li], mcore[li]
             for di, dj, nd in moves:
                 ni, nj = i + di, j + dj
@@ -346,7 +373,7 @@ class Grid:
                     # a 45-degree step passes 0.707 cells from BOTH corner cells: no
                     # obstacle, no foreign board copper and no foreign centre-line there
                     for cc in (j * nx + ni, nj * nx + i):
-                        if s_l[cc]:
+                        if s_l[cc] and (not sexact or sn_l[cc]):
                             o = -1
                             break
                         f = f_l[cc]
@@ -498,6 +525,14 @@ class Grid:
                 return False
             f = self.fix[key][c]
             return not (f and not (f == 1 and c in own["fixed"][key]))
+
+        def corner(c, key):
+            # route()'s corner rule: a round static obstacle (static_exact) and fixed copper
+            # (fix_exact) are judged by the step's end cells only
+            if self.static[key][c] and (not self.static_exact or self.snon[key][c]):
+                return False
+            f = self.fix[key][c]
+            return not (f and not self.fix_exact and not (f == 1 and c in own["fixed"][key]))
         start = (self.cell(*src) if isinstance(src, tuple) else src, li[src_layer])
         seen, dq = {start}, collections.deque([start])
         while dq:
@@ -508,7 +543,7 @@ class Grid:
                 ni, nj = i + di, j + dj
                 if 0 <= ni < nx and 0 <= nj < ny:
                     nc = nj * nx + ni
-                    if di and dj and self.diagonal and not (free(j * nx + ni, key) and free(nj * nx + i, key)):
+                    if di and dj and self.diagonal and not (corner(j * nx + ni, key) and corner(nj * nx + i, key)):
                         continue                     # the corner rule route() applies to a 45-degree step
                     if free(nc, key) and (nc, l) not in seen:
                         seen.add((nc, l)); dq.append((nc, l))

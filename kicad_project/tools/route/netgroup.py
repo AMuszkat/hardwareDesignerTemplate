@@ -51,7 +51,8 @@ WHAT IS BLOCKED, beyond the board's own copper:
 
 OPTIONS
   "field": {"ref": "U1", "open": ["In2.Cu", "B.Cu"], "clr": 0.1016, "width": 0.127}
-    names a fine-pitch part whose pad field is shut, and opens it on those
+  (or "fields": [{...}, {...}] -- two BGAs one group joins, a SoC and its DRAM, each at its
+  own area rule) names a fine-pitch part whose pad field is shut, and opens it on those
     layers (no lands there; the dog-bones are the obstacles, at the field's own
     clearance "clr", for a track of "width").  A net's prelaid dog-bone (an
     extra_via inside the field) is a legal layer change for it; no new via is
@@ -79,6 +80,10 @@ OPTIONS
     cells, with that copper's halo grown by the step's sagitta
     (maze.Grid.fix_exact) -- for escapes frozen from an earlier run, whose
     parallel diagonals the default corner test cannot rebuild;
+  "static_exact": true does the same for STATIC round obstacles (vias, the field's dog-bones):
+    a via's halo grows by what a 45-degree step's chord can cut into it, and the corner cells
+    no longer forbid the step -- the diagonal lane between two diagonal vias of a 0.5 mm BGA
+    field (0.354 mm from each centre) is otherwise shut by a 0.333 halo (maze.Grid.static_exact);
   "retrace_cost": 20 prices each cell of a net's OWN frozen copper it would run
     along (not round its leg's start): standing on it is legal, running back
     along it lays copper on copper and a 180-degree joint where the route
@@ -236,20 +241,24 @@ def main():
     G.diagonal = True
     G.only45 = True                                  # the angle rule: 0 or 45 degrees only
     G.fix_exact = bool(S.get("fix_exact"))           # frozen bundles: see maze.Grid.fix_exact
+    G.static_exact = bool(S.get("static_exact"))     # a BGA field's diagonal lanes: maze.Grid.static_exact
 
     goals_of = {n: [tuple(l["to"]) for l in S["nets"][n]["legs"] if "to" in l] + ([tuple(S["nets"][n]["src_pad"])]
                                                                    if S["nets"][n].get("src_pad") else [])
                 for n in nets}
     goal_net = {k: n for n, v in goals_of.items() for k in v}
     fixed = {n: dict(tracks=[], vias=[]) for n in nets}
-    FO = S.get("field")                  # {"ref", "open": [inner layers], "clr", "width"}
-    FREF = FO["ref"] if FO else None
-    if FO and FREF not in B.fps:
-        sys.exit(f"field: {FREF} is not on the board")
+    # "field" (one) or "fields" (a list): {"ref", "open": [inner layers], "clr", "width"} each --
+    # two BGAs joined by one group (a SoC and its DRAM) each have their own area rule
+    FO = ([S["field"]] if S.get("field") else []) + list(S.get("fields", []))
+    FREFS = {F["ref"] for F in FO}
+    for F in FO:
+        if F["ref"] not in B.fps:
+            sys.exit(f"field: {F['ref']} is not on the board")
     for p in pads:
         k = (p["ref"], p["pad"])
         lays = LAYERS if p["tht"] else [L_ for L_ in (p["cu"],) if L_ in LAYERS]
-        owner = goal_net.get(k) or (p["net"] if p["net"] in fixed and p["ref"] != FREF else None)
+        owner = goal_net.get(k) or (p["net"] if p["net"] in fixed and p["ref"] not in FREFS else None)
         if owner:                         # a pad of a net routed here is that net's copper (no via in it)
             # "pad_via_gap": how far a via's ring stays from its own net's pad (default the foreign
             # clearance) -- a pull-up whose only legal via site is 0.15-0.3 mm from its pad.
@@ -267,41 +276,61 @@ def main():
                 for L_ in lays:
                     fixed[owner]["tracks"].append((L_, *seg))
             continue
+        Fp = next((F for F in FO if F["ref"] == p["ref"]), None)
+        if Fp is not None:
+            # a field's own land: at the field's clearance, for a track of the field's width --
+            # the escape between two lands is the field's thin track (U500's 0.1016 between
+            # 0.27 mm lands at 0.65 mm pitch), not the group's
+            cl = float(Fp.get("clr", maze.PADCLR))
+            wf = float(Fp.get("width", maze.W))
+            G.block(lays, G.rect(p["L"], p["T"], p["R"], p["B"], cl + wf / 2))
+            G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], maze.PADCLR + maze.VIA_R))
+            continue
         G.static_pad(p["L"], p["T"], p["R"], p["B"], lays)
-    if FO:
-        bx = [p for p in pads if p["ref"] == FREF]
-        fL, fT, fR, fB = min(p["L"] for p in bx), min(p["T"] for p in bx), max(p["R"] for p in bx), max(p["B"] for p in bx)
-        in_field = lambda x, y: fL - 0.3 <= x <= fR + 0.3 and fT - 0.3 <= y <= fB + 0.3
-    else:
-        in_field = lambda x, y: False
-    fclr = float(FO.get("clr", maze.PADCLR)) if FO else maze.PADCLR
-    # "width": the track the escapes inside the field really are (thinner than the group's).
-    # The grid carries one track width, so inside the field every obstacle's halo is shrunk by
-    # the difference instead: a lane between two dog-bones that a thin track clears at the
-    # field's clearance is walled shut for a modelled full-width one.
-    fshrink = (maze.W - float(FO.get("width", maze.W))) / 2 if FO else 0.0
+    for F in FO:
+        bx = [p for p in pads if p["ref"] == F["ref"]]
+        F["_box"] = (min(p["L"] for p in bx), min(p["T"] for p in bx), max(p["R"] for p in bx), max(p["B"] for p in bx))
+        F["_clr"] = float(F.get("clr", maze.PADCLR))
+        # "width": the track the escapes inside the field really are (thinner than the group's).
+        # The grid carries one track width, so inside the field every obstacle's halo is shrunk by
+        # the difference instead: a lane between two dog-bones that a thin track clears at the
+        # field's clearance is walled shut for a modelled full-width one.
+        F["_shrink"] = (maze.W - float(F.get("width", maze.W))) / 2
+
+    def field_of(x, y):
+        for F in FO:
+            fL, fT, fR, fB = F["_box"]
+            if fL - 0.3 <= x <= fR + 0.3 and fT - 0.3 <= y <= fB + 0.3:
+                return F
+        return None
+
+    def in_field(x, y):
+        return field_of(x, y) is not None
     for t in tracks:
         if t["net"] in fixed:
             fixed[t["net"]]["tracks"].append((t["layer"], t["a"], t["b"], t["w"]))
         else:
             # a track on a layer this group does not route on still blocks VIAS:
             # a through via lands on every layer (static_track skips the layer block itself)
-            inside = FO and t["layer"] in FO.get("open", []) and in_field(*t["a"]) and in_field(*t["b"])
-            G.static_track(t["layer"], t["a"], t["b"], t["w"], clr=fclr - fshrink if inside else maze.PADCLR)
+            F = field_of(*t["a"])
+            inside = F is not None and t["layer"] in F.get("open", []) and field_of(*t["b"]) is F
+            G.static_track(t["layer"], t["a"], t["b"], t["w"], clr=F["_clr"] - F["_shrink"] if inside else maze.PADCLR)
     board_vias = collections.defaultdict(list)
     for v in bvias:
         board_vias[v["net"]].append((v["x"], v["y"]))
     for v in bvias:
         if v["net"] in fixed:
             r_ = v["r"]
-            if FO and in_field(v["x"], v["y"]):
-                r_ -= maze.CLR - fclr + fshrink   # the halo is r + CLR: inside the field the field's rule applies
+            F = field_of(v["x"], v["y"])
+            if F is not None:
+                r_ -= maze.CLR - F["_clr"] + F["_shrink"]   # the halo is r + CLR: inside the field its rule applies
             fixed[v["net"]]["vias"].append((v["x"], v["y"], r_, v["r"] + maze.CLR + maze.VIA_R))
-        elif FO and in_field(v["x"], v["y"]):
+        elif in_field(v["x"], v["y"]):
             # a dog-bone: the field's clearance on its open layers, the full one on the rest
+            F = field_of(v["x"], v["y"])
             for L_ in LAYERS:
-                cl = fclr - fshrink if L_ in FO.get("open", []) else maze.PADCLR
-                G.block([L_], G.disc(v["x"], v["y"], v["r"] + cl + maze.W / 2))
+                cl = F["_clr"] - F["_shrink"] if L_ in F.get("open", []) else maze.PADCLR
+                G.block_disc([L_], v["x"], v["y"], v["r"] + cl + maze.W / 2)
             G.block(["via"], G.disc(v["x"], v["y"], v["r"] + maze.PADCLR + maze.VIA_R))
         else:
             G.static_via(v["x"], v["y"], v["r"])
@@ -309,8 +338,9 @@ def main():
     # the field's pad area: escapes only, and they are laid -- unless the spec opens
     # its inner layers, where the balls have no lands and the dog-bones are the
     # only obstacles
-    if FO:
-        shut = [L_ for L_ in LAYERS if L_ not in FO.get("open", [])]
+    for F in FO:
+        fL, fT, fR, fB = F["_box"]
+        shut = [L_ for L_ in LAYERS if L_ not in F.get("open", [])]
         G.block(shut, G.rect(fL, fT, fR, fB, 0.30))
         G.block(["via"], G.rect(fL, fT, fR, fB, 0.30 + maze.VIA_R))
     # the board edge

@@ -127,6 +127,33 @@ class RBoard(Board):
     def class_width(self, name):
         return self._class(name, "track_width")
 
+    def rule_widths(self, name, layer):
+        """The track widths the board's custom rules give a net on a layer: every
+        `(constraint track_width ... (opt W))` whose `(layer ...)` takes this layer (outer /
+        inner / a name) and whose condition names one of the net's classes as
+        `A.NetClass == 'X'` (board_setup.py's own form -- 14_fab's per-layer widths, 50 ohm at
+        0.178 on the outer layers where the class carries layer 3's 0.1016)."""
+        if not hasattr(self, "_rules"):
+            import re as _re
+            self._rules = []
+            dru = next(self.dir.glob("*.kicad_dru"), None)
+            text = dru.read_text() if dru else ""
+            for blk in _re.split(r"\n(?=\(rule )", text):
+                m = _re.search(r"\(constraint track_width[^\n]*\(opt ([0-9.]+)mm\)", blk)
+                if not m:
+                    continue
+                lay = _re.search(r"\(layer \"?([^\")]+)\"?\)", blk)
+                cls = set(_re.findall(r"A\.NetClass == '([^']+)'", blk))
+                self._rules.append((lay.group(1) if lay else None, cls, float(m.group(1))))
+        outer = layer in ("F.Cu", "B.Cu")
+        out = set()
+        for lay, cls, w in self._rules:
+            if lay not in (None, layer) and not (lay == "outer" and outer) and not (lay == "inner" and not outer):
+                continue
+            if cls & set(self.netclasses(name)):
+                out.add(round(w, 4))
+        return out
+
     def class_clearance(self, name):
         return self._class(name, "clearance")
 
@@ -468,7 +495,7 @@ def rule_gates(B, plan):
                            f"with a reason if deliberate)")
         elif "class_width" in G:
             want = B.class_width(net)
-            if want and abs(w - want) > 1e-6 and (net, w) not in necks:
+            if want and abs(w - want) > 1e-6 and (net, w) not in necks and w not in B.rule_widths(net, lay):
                 bad.append(f"width: {net} track {w} mm, class {cls} wants {want} mm "
                            f"({G['class_width']['source']}; declare it in \"necks\" with a reason "
                            f"if deliberate)")

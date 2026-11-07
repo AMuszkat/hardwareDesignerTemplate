@@ -179,6 +179,23 @@ its docstring. What the spec has to be told:
   The grid is then *strict* (a cell exactly at the clearance distance is
   free) — inferred from `pitch == width + clearance`, or set `"strict"` in
   the spec.
+- **A 0.5 mm BGA field with a via in every pad** (board1's U1, in-pad vias at
+  0.0889 mm): its only lanes are the diagonals between diagonal vias, 0.354 mm
+  from each centre against a 0.333 halo -- and the corner-cell test of a
+  45-degree step shuts every one of them, on any grid pitch. Set
+  `"static_exact": true` (and `"fix_exact": true` for the routed nets' own
+  vias): a round obstacle's halo grows by what a step's chord can cut into it
+  and the step is judged by its end cells. The symptom without it: every net
+  `reaches` tens of thousands of cells and its goal, and iteration 1 still
+  says "walled in" (`reach()` floods without the turn rule).
+- **Two BGAs in one group** (a SoC and its DRAM): `"fields": [...]`, one per
+  part, each at its own area clearance. With one field, the other part's
+  dog-bones keep the group's class clearance between them (SE_50's 0.2032
+  where U500's courtyard allows 0.1016) and its goals sit in pockets no net
+  reaches ("0 of 4 goal cells").
+- **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
+  (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
+  cell, which may lie in a neighbour's halo.
 - **A plane is blocked on its layer** except an apron round each net's own
   escape end there; priced instead, a net rides through its neighbours' aprons.
 - **`reach()` separates contested from walled in.** When negotiation stalls it
