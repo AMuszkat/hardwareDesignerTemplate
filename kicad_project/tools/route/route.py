@@ -1257,7 +1257,10 @@ def cmd_audit(a):
     if pours:
         r = subprocess.run([sys.executable, str(ROOT / "tools" / "route" / "pour.py"), "--board", str(a.board)],
                            capture_output=True, text=True)
-        isl = [ln.strip() for ln in r.stdout.splitlines() if "island" in ln]
+        # one summary line per pour ("VBUS on F.Cu: 1 island(s), ..."); the per-island
+        # detail lines ("island [0]: 1 via(s) ...") are not pours (board2 R3: a one-island
+        # pour read as "2 pours, 1 in more than one island")
+        isl = [ln.strip() for ln in r.stdout.splitlines() if "island(s)" in ln]
         many = [ln for ln in isl if not re.search(r"\b1 island", ln)]
         gate("pours", not many, f"{len(isl)} pour(s)" + (f"; {len(many)} in more than one island -- every island must be tied (pour.py)" if many else ", each one island"))
     bad = [n for n, ok, _ in rows if not ok]
