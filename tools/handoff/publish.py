@@ -41,6 +41,7 @@ import os
 import re
 import shutil
 import sys
+import subprocess
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1266,6 +1267,13 @@ def main(argv):
         except PublishError as e:
             print(f"publish: {bid}: {e}", file=sys.stderr)
             rc = 2
+    # STATUS's generated block names each board's revision: a publish makes it
+    # stale, and the doc lint then fails verify.sh long after the publish.
+    status = os.path.join(ROOT, "tools", "status.py")
+    if os.path.exists(status):
+        r = subprocess.run([sys.executable, status], capture_output=True, text=True)
+        if r.returncode:
+            print(f"publish: tools/status.py failed: {r.stderr.strip()}", file=sys.stderr)
     return rc
 
 
