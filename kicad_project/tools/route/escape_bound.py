@@ -6,7 +6,7 @@
         --width 0.0889 --clearance 0.0889 --nfp
 
 When a negotiated escape (netgroup.py) will not converge, this says whether ANY router
-could: a planar cut relaxation.  The ball lattice is triangulated; each triangle edge
+could: a planar cut relaxation.  The vias are triangulated (Delaunay); each triangle edge
 gets the most tracks that can cross it (an obstacle end keeps the track's centre R away,
 two tracks of different nets are width + clearance apart along it); max-flow from the
 escaping nets' vias to outside the lattice.  Every real routing is such a flow, so
@@ -31,17 +31,50 @@ import argparse
 import collections
 import json
 import math
+import random
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "place"))
 
 
+def _delaunay(pts):
+    """Bowyer-Watson; index triples.  Lattice ties broken by a fixed tiny jitter (any
+    triangulation of the obstacles is a valid relaxation)."""
+    rnd = random.Random(7)
+    P = [(x + rnd.uniform(-1e-6, 1e-6), y + rnd.uniform(-1e-6, 1e-6)) for x, y in pts]
+    xs, ys = [p[0] for p in P], [p[1] for p in P]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    D = max(max(xs) - min(xs), max(ys) - min(ys), 1.0) * 20
+    n = len(P)
+    P += [(cx - D, cy - D), (cx + D, cy - D), (cx, cy + D)]
+
+    def cc(t):
+        (ax, ay), (bx, by), (qx, qy) = P[t[0]], P[t[1]], P[t[2]]
+        d = 2 * (ax * (by - qy) + bx * (qy - ay) + qx * (ay - by))
+        ux = ((ax * ax + ay * ay) * (by - qy) + (bx * bx + by * by) * (qy - ay) + (qx * qx + qy * qy) * (ay - by)) / d
+        uy = ((ax * ax + ay * ay) * (qx - bx) + (bx * bx + by * by) * (ax - qx) + (qx * qx + qy * qy) * (bx - ax)) / d
+        return ux, uy, (ax - ux) ** 2 + (ay - uy) ** 2
+
+    tris = {(n, n + 1, n + 2): cc((n, n + 1, n + 2))}
+    for i in range(n):
+        x, y = P[i]
+        bad = [t for t, (ux, uy, r2) in tris.items() if (x - ux) ** 2 + (y - uy) ** 2 < r2]
+        edges = {}
+        for t in bad:
+            for e in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+                k = tuple(sorted(e))
+                edges[k] = edges.get(k, 0) + 1
+            del tris[t]
+        for (a, b), k in edges.items():
+            if k == 1:
+                tris[(a, b, i)] = cc((a, b, i))
+    return [t for t in tris if max(t) < n]
+
+
 def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
     """lat: {(i, j): (x, y)} every lattice site; vias: set of (i, j); srcs: {(i, j): name};
     padded: vias that keep their pad on this layer (a pour's own vias) though not a source."""
-    NX = max(i for i, _ in lat) + 1
-    NY = max(j for _, j in lat) + 1
     P = w + c
     R = {p: (r_own if (p in srcs or p in padded) else r_other) for p in vias}
 
@@ -53,17 +86,17 @@ def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
         g = math.hypot(ax - bx, ay - by) - R.get(a, 0) - R.get(b, 0)
         return 0 if g < -1e-9 else int(math.floor(g / P + 1e-9)) + 1
 
-    tri, et = [], collections.defaultdict(list)
-    for i in range(NX - 1):
-        for j in range(NY - 1):
-            a, b, cc, d = (i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)
-            # the diagonal joining two obstacles, when there is one: the tighter relaxation
-            T = [(a, b, cc), (a, cc, d)] if ((a in R and cc in R) or not (b in R and d in R)) else [(a, b, d), (b, cc, d)]
-            for t in T:
-                tid = len(tri)
-                tri.append(t)
-                for e in ((t[0], t[1]), (t[1], t[2]), (t[0], t[2])):
-                    et[tuple(sorted(e))].append(tid)
+    # triangulate the OBSTACLES only (Delaunay): a cut then runs obstacle to obstacle and no
+    # empty ball site is counted twice (a lattice triangulation through empty sites over-counts
+    # a gap like "N3 .. empty .. L2" by one track)
+    vl = sorted(vias)
+    T = _delaunay([xy(p) for p in vl])
+    tri = [tuple(vl[i] for i in t) for t in T]
+    et = collections.defaultdict(list)
+    for tid, t in enumerate(tri):
+        for e in ((t[0], t[1]), (t[1], t[2]), (t[0], t[2])):
+            et[tuple(sorted(e))].append(tid)
+    hull = {p for e, ts in et.items() if len(ts) == 1 for p in e}
     G = collections.defaultdict(dict)
     INF = 10 ** 6
 
@@ -84,7 +117,7 @@ def flow_bound(lat, vias, srcs, w, c, r_own, r_other, padded=()):
             inc[p].append(tid)
     for p in srcs:
         add("S", ("s", p), 1)
-        if p[0] in (0, NX - 1) or p[1] in (0, NY - 1):
+        if p in hull:
             add(("s", p), "T", INF)
         for tid in inc[p]:
             add(("s", p), ("t", tid), INF)

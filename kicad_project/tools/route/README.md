@@ -205,10 +205,10 @@ its docstring. What the spec has to be told:
 - **An escape that will not converge: bound it before re-splitting.**
   `escape_bound.py --ref U1 --layer In2.Cu --spec <escape spec> --vias <fanout
   model> --width W --clearance C [--nfp]` -- a planar cut relaxation over the
-  ball lattice (max-flow): `BOUND k of N`. Below N is a PROOF that no router
+  vias' Delaunay triangulation (max-flow): `BOUND k of N`. Below N is a PROOF that no router
   fits those nets on that layer with that via model, and it prints the min cut
   (the balls the wall runs through, how many tracks each gap passes). board1's
-  U1 (in-pad vias at 0.5 mm): In2 41 nets, bound 30; the 20-net B.Cu escape the
+  U1 (in-pad vias at 0.5 mm): In2 41 nets, bound 29; the 20-net B.Cu escape the
   router solved bounded at exactly 20 (calibrate against a solved one). Moving
   9 nets to another layer did not move the router's overlap (22 -> 21 nets):
   the CA block sat inside an 11-track cut on EVERY layer, which only the bound
@@ -218,7 +218,10 @@ its docstring. What the spec has to be told:
   To choose a split over several layers, anneal over assignments with the
   bound as the per-layer test (keep pairs together); board1 needed four layers
   where any three stayed 3 short (a pocket of 2-3 balls with one exit each
-  makes per-layer capacities not add).
+  makes per-layer capacities not add). The bound is necessary, not sufficient:
+  a split it passes can still stall the grid router at one gap (board1: three
+  layers each contested at the same depopulated site) -- move one net per hot
+  gap to a layer with room and re-route, and sweep `--seed` / `--hist`.
 - **Two BGAs in one group** (a SoC and its DRAM): `"fields": [...]`, one per
   part, each at its own area clearance. With one field, the other part's
   dog-bones keep the group's class clearance between them (SE_50's 0.2032
