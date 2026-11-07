@@ -233,6 +233,13 @@ swaps an outline in memory and measures; nothing is written.
 is the island count and `.Contains(pt)` says whether a via is really in the
 copper.
 
+- **A round through-hole pad takes its spokes at 45 degrees** (KiCad's default
+  for a circle; a square pad's are at 0 / 90). At a pour's corner, or where two
+  pours meet beside it, two of its four diagonal quadrants must be this pour's
+  fill, or DRC reports `starved_thermal` (min 2 spokes). Give the pour those
+  quadrants (a higher `priority` over the neighbour where they overlap), not a
+  track into the pad (board2 R4: J3 pin 2 between the +5V and VBUS pours).
+
 ## `corners.py` — the angle rule for a polyline
 
 `fix45(pts, width, cut)` rewrites the joints of a polyline whose segments run at
