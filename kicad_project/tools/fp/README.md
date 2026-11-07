@@ -121,8 +121,8 @@ Four more non-land edits live in `tidy`:
   (easyeda2kicad) leaves it off -- board1's U1 had 486 lands without it while
   U300 / U500 had theirs (review RV4.12). The land is compared WITHOUT pad
   properties, so nothing else can move; refused on a stock-derived footprint
-  (its land stays KiCad's). Then `place.py landsync <ref>` -- `refresh.py`
-  never touches pads -- and `sync`.
+  (its land stays KiCad's). Then `tools/kpy tools/place/landsync.py <ref>` --
+  `refresh.py` never touches pads -- and `place.py sync`.
 
 - `--silk-width W` raises every unfilled silk stroke narrower than W to W:
   KiCad's stock marks are 0.12, a fab's silk line minimum is often 0.15
