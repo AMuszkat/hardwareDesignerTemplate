@@ -36,6 +36,15 @@ the terminal, a one-line `PushNotification`, and — relay on —
 Then stop. When the user decides, run the `decision` skill and come back to
 step 3.
 
+**A question about a route** (pair order, which side a bus leaves, a
+crossing, an escape) is never answered from pin order alone. Before an
+option goes into the handoff, have the `pcb-reviewer` measure it on the
+board's snapshot: an escape / flood-fill test for every net the route
+encloses, and the track capacity of each exit against the nets that must use
+it. Two pair routes once argued from pin order each failed their next review
+(a pocket, then an exit four tracks short); the measurement settled the
+third.
+
 ## 3. Fix the generator, then answer
 
 - The fact goes where the handoff should have carried it: the value bus, a
