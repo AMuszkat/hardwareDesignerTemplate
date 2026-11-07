@@ -119,10 +119,17 @@ so put the big or critical ones first. It writes `<spec>.plan.json` for
 `check` and `apply`; it never writes the board.
 
 **`avoid` is how a BGA's fanout keeps its room.** Before placing decoupling on
-the back under a BGA, reserve one dog-bone via per *used* ball (via pad +
-clearance, at the diagonal centre toward the nearest package edge). Without it
-the caps land on the via field; reserving all four centres per ball instead
-blocks the whole field and pushes every cap millimetres out.
+the back under a BGA, reserve one via per *used* ball (via pad + clearance).
+Where the via goes depends on the pitch, and the model must prove it against
+every pad and via of another net before anything is placed on it: at 0.8 mm a
+dog-bone fits at the diagonal centre; at 0.5 mm a 0.4 mm via pad between four
+0.25 mm balls leaves 0.029 mm of copper, so the via goes IN the pad (filled and
+capped) unless that diagonal is clear of other-net balls, and two neighbouring
+in-pad vias leave 0.100 mm -- under a 4 mil area rule they shift off centre,
+the drill still inside the pad (board1: a dog-bone model 403 of 426 vias
+unbuildable, found only in review). A ball that escapes on the top layer (an
+outer-row signal) needs no via. `auto` does not know the model's vias unless
+they are in `avoid`: a part placed by `auto` under a BGA lands on them.
 
 ## `sync`
 

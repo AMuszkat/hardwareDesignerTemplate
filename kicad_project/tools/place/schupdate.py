@@ -13,8 +13,10 @@ designators" ticked -- from the schematic's own netlist
     footprint placed by script has no path at all;
   * every pad's net, by the netlist's own name (`/POR_B`, `unconnected-(...)`);
     a pad the netlist does not name gets no net;
-  * Value, every symbol field (MPN, Description, ...), and the fields the
-    symbol no longer has removed (an old DNP text field);
+  * Value, every symbol field (MPN, Description, ...); a field the symbol does
+    not have is removed only when `--drop` names it (default: DNP, the text
+    field a DNP flag replaces) -- a footprint's own library fields
+    (KiLib_Generator, ...) stay, or KiCad reports lib_footprint_mismatch;
   * the DNP and Exclude-from-BOM attributes;
   * then the nets no pad uses any more are removed.
 
@@ -88,8 +90,11 @@ def schematic(pcb):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
+    ap.add_argument("--drop", default="DNP",
+                    help="comma-separated footprint fields to remove when the symbol lacks them (default: DNP)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
+    a.drop = {x for x in a.drop.split(",") if x}
     a.board = P.board_dir_arg(a.board)
     B = P.Board(a.board)
     pn, b = B.pn, B.b
@@ -150,7 +155,7 @@ def main():
                     f.GetField(k).SetVisible(False)
         for fld in list(f.GetFields()):
             k = fld.GetName()
-            if k not in KEEP and k not in c["fields"] and k not in ("Datasheet", "Description"):
+            if k in a.drop and k not in c["fields"]:
                 count["removed"] += 1
                 if not a.dry_run:
                     # RemoveNative, never Remove: the Python wrapper's Remove corrupts the footprints
