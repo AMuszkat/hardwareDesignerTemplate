@@ -306,6 +306,17 @@ def main():
 
     def in_field(x, y):
         return field_of(x, y) is not None
+
+    if FO:
+        # between the nets routed here, inside a field its own rule holds too (BGA_ESCAPE_U1's
+        # 0.0889 between two escapes, not the group's 0.2032): the grid's track is W, the
+        # field's is narrower, so the halo shrinks by the difference as well
+        def clr_at(x, y, kind):
+            F = field_of(x, y)
+            if F is None:
+                return maze.CLR
+            return F["_clr"] - (2 if kind == "track" else 1) * F["_shrink"]
+        G.clr_at = clr_at
     for t in tracks:
         if t["net"] in fixed:
             fixed[t["net"]]["tracks"].append((t["layer"], t["a"], t["b"], t["w"]))

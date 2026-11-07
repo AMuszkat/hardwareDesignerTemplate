@@ -100,6 +100,9 @@ class Grid:
         # cell inside a via's halo forbids the step -- which shuts the diagonal lane between two
         # diagonal vias of a 0.5 mm BGA field (0.354 mm from each, against a 0.333 halo).
         self.static_exact = False
+        # clr_at(x, y, kind): the clearance between ROUTED nets at a point ("track" / "via"),
+        # for a group whose fields have their own area rule (netgroup sets it); None: CLR
+        self.clr_at = None
 
     # -- geometry -> cells ---------------------------------------------------
     def cell(self, x, y):
@@ -172,8 +175,7 @@ class Grid:
         if not self.static_exact:
             self.block(keys, self.disc(x, y, r))
             return
-        g = math.sqrt(r * r + self.step * self.step / 2) - r
-        cells = self.disc(x, y, r + g)
+        cells = self.disc(x, y, r + self._grow(r))
         for k in keys:
             st = self.static[k]
             for c in cells:
@@ -199,14 +201,40 @@ class Grid:
         self.block_disc(self.layers, x, y, r + clr + W / 2)
         self.block(["via"], self.disc(x, y, max(sep, r + clr + VIA_R)))
 
-    def _halo(self, tracks, vias, m=0.0):
+    def _grow(self, R):
+        """How far a halo of radius R must grow so that a 45-degree step (chord step*sqrt2)
+        between two cells outside it stays outside R: sqrt(R^2 + step^2/2) - R.  Computed on the
+        obstacle's WHOLE halo -- on its clearance part alone (the old formula) it is three times
+        too big at a 0.0889 mm BGA rule and shuts the 0.354 mm lanes between diagonal vias."""
+        return math.sqrt(R * R + self.step * self.step / 2) - R + 1e-4
+
+    def _seg_local(self, a, b, rfun):
+        """A segment's halo whose radius varies along it: rfun(x, y) at each sample."""
+        n = max(1, int(math.dist(a, b) / (self.step / 2)))
+        out = set()
+        for k in range(n + 1):
+            t = k / n
+            x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+            out |= self.disc(x, y, rfun(x, y))
+        return out
+
+    def _halo(self, tracks, vias, m=0.0, local=False):
+        """m: True grows each item by _grow() of its own halo (fix_exact); a number, by that.
+        local: the ROUTED nets' clearance between each other comes from clr_at(x, y, kind)
+        where the grid has one (a BGA field's area rule inside its courtyard), else CLR."""
         add = {k: set() for k in self.keys}
+        ca = self.clr_at if (local and self.clr_at) else None
         for lay, a, b, w in tracks:
             if lay in self.layers:
-                add[lay] |= self.seg(a, b, w / 2 + CLR + W / 2 + m)
+                if ca:
+                    add[lay] |= self._seg_local(a, b, lambda x, y: w / 2 + ca(x, y, "track") + W / 2)
+                else:
+                    R = w / 2 + CLR + W / 2
+                    add[lay] |= self.seg(a, b, R + (self._grow(R) if m is True else m))
             add["via"] |= self.seg(a, b, w / 2 + CLR + VIA_R)
         for x, y, r, sep in vias:
-            t = self.disc(x, y, r + CLR + W / 2 + m)
+            R = r + (ca(x, y, "via") if ca else CLR) + W / 2
+            t = self.disc(x, y, R + (self._grow(R) if m is True else m))
             for lay in self.layers:
                 add[lay] |= t
             add["via"] |= self.disc(x, y, max(sep, r + CLR + VIA_R))
@@ -219,11 +247,8 @@ class Grid:
 
     def register(self, net, kind, tracks=(), vias=()):
         """tracks: (layer, a, b, width); vias: (x, y, radius, centre_sep)."""
-        m = 0.0
-        if kind == "fixed" and self.fix_exact:
-            r_ = CLR + W / 2
-            m = r_ - math.sqrt(max(0.0, r_ * r_ - (self.step * 0.70710678) ** 2)) + 1e-3
-        add = self._halo(tracks, vias, m)
+        m = True if (kind == "fixed" and self.fix_exact) else 0.0
+        add = self._halo(tracks, vias, m, local=(kind == "routed"))
         own = self._own(net)
         grid = self.fix if kind == "fixed" else self.dyn
         for k in self.keys:

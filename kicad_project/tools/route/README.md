@@ -188,6 +188,20 @@ its docstring. What the spec has to be told:
   and the step is judged by its end cells. The symptom without it: every net
   `reaches` tens of thousands of cells and its goal, and iteration 1 still
   says "walled in" (`reach()` floods without the turn rule).
+- **`fix_exact` grew a fixed halo by the sagitta of its clearance part alone**
+  (CLR + W/2) -- at a 0.0889 mm field rule three times too much (0.034 mm), which
+  shut the 0.354 mm lanes between other nets' in-pad vias ("walled in" at
+  iteration 1 only when the spec's clearance was made small). Fixed: the growth
+  is `sqrt(R^2 + step^2/2) - R` on each obstacle's whole halo R (`Grid._grow`).
+- **Inside a field the nets routed here keep its rule between each other too**:
+  netgroup sets `Grid.clr_at` from the fields, so two escapes in a BGA courtyard
+  are held 0.0889 apart (BGA_ESCAPE_U1), not the group's 0.2032. Before it, an
+  escape group was judged at the class clearance inside the field and could
+  never converge.
+- **Measure a BGA's escape on its own first**: a copy of the spec whose legs end
+  `to_path` on a ring just outside the courtyard (each net anywhere on it). It
+  runs in minutes and says whether the field lets N nets out on a layer before
+  an hour of routing to the far part says nothing clearer.
 - **Two BGAs in one group** (a SoC and its DRAM): `"fields": [...]`, one per
   part, each at its own area clearance. With one field, the other part's
   dog-bones keep the group's class clearance between them (SE_50's 0.2032
