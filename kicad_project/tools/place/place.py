@@ -749,6 +749,10 @@ def cmd_labels(a):
                 # ... and its other silk text (a value, a note drawn in the footprint)
                 obst += [grow(B.box(g.GetBoundingBox()), B.silk_clr) for g in f.GraphicalItems()
                          if g.GetLayer() == B.SILK[side] and "TEXT" in g.GetClass()]
+                # GraphicalItems() holds no fields: a Value shown on the silk (board2's
+                # BOOT / POWER) is one, and the designator landed on it
+                obst += [grow(B.box(g.GetBoundingBox()), B.silk_clr) for g in f.GetFields()
+                         if not g.IsReference() and g.IsVisible() and g.GetLayer() == B.SILK[side]]
                 c = B.courtyard(f)
                 if c:
                     cyd[r] = c[:4]
