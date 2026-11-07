@@ -177,6 +177,14 @@ project-library footprint is fixed at its source, `fp.py tidy <name>
 --silk-keep ... --silk-width 0.15`, then `refresh.py --layers SilkS`, so
 `sync` stays exact -- `silk` refuses those.
 
+Raising a stroke 0.12 -> 0.15 grows it 0.015 mm each side, so **two
+neighbours' silk lines close by 0.03 mm** and a pin-1 dot grows toward its pad:
+run `drc` straight after. board1 got four `silk_overlap` (0.08-0.09 against
+the 0.0992 silk clearance) between abutting chip R/Cs -- a 0.02-0.03 mm
+nudge each, through `check`/`apply` -- and one `silk_over_copper`: a
+converter's second, inner pin-1 dot on pad 1's mask opening, dropped at the
+source with `fp.py tidy --silk-drop <i>` and `refresh.py --layers SilkS`.
+
 ## `labels`
 
 1. Every designator gets the Board Setup minimum silk text (typed from
