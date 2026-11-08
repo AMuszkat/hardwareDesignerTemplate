@@ -338,6 +338,28 @@ def main():
     board_vias = collections.defaultdict(list)
     for v in bvias:
         board_vias[v["net"]].append((v["x"], v["y"]))
+    # "cross_square": [{"layer", "pts", "width"}] -- copper on ANOTHER layer one core away that
+    # this group's tracks on "layer" may cross only at 90 degrees, never run along (10_layout
+    # #31 for board1's In4 / In5): every cell within the two half-widths of a segment admits only
+    # the two headings perpendicular to it; at a bend the sets intersect, so nothing crosses there
+    HEAD = {(1, 0): 1, (1, 1): 2, (0, 1): 3, (-1, 1): 4, (-1, 0): 5, (-1, -1): 6, (0, -1): 7, (1, -1): 8}
+    for e in S.get("cross_square", []):
+        lay = canon(B.b.GetLayerID(e["layer"]))
+        if lay not in LAYERS:
+            continue
+        xmap = G.xdir.setdefault(lay, {})
+        for a_, b_ in zip(e["pts"], e["pts"][1:]):
+            dx_, dy_ = b_[0] - a_[0], b_[1] - a_[1]
+            if abs(dx_) < 1e-9 and abs(dy_) < 1e-9:
+                continue
+            key = (0 if abs(dx_) < 1e-6 else (1 if dx_ > 0 else -1), 0 if abs(dy_) < 1e-6 else (1 if dy_ > 0 else -1))
+            h_ = HEAD.get(key)
+            if h_ is None or (key[0] and key[1] and abs(abs(dx_) - abs(dy_)) > 1e-3):
+                sys.exit(f"cross_square: a segment off the 0/45 lattice {a_} -> {b_}")
+            ok_ = {(h_ + 1) % 8 + 1, (h_ + 5) % 8 + 1}
+            for c_ in G.seg(tuple(a_), tuple(b_), (float(e["width"]) + W) / 2 - 1e-6):
+                xmap[c_] = ok_ if c_ not in xmap else (xmap[c_] & ok_)
+
     # every round static obstacle's exact clearance radius per layer (centre to the routed track's
     # centreline, as its halo was built): the plan writer tests straighten()'s result against them
     ROUND = collections.defaultdict(list)

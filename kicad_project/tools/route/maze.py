@@ -100,6 +100,10 @@ class Grid:
         # cell inside a via's halo forbids the step -- which shuts the diagonal lane between two
         # diagonal vias of a 0.5 mm BGA field (0.354 mm from each, against a 0.333 halo).
         self.static_exact = False
+        # xdir[layer] = {cell: {headings}}: copper on another layer this layer may cross only
+        # square (netgroup's "cross_square") -- a step into or out of such a cell must run on
+        # one of its headings, so a track crosses that copper at 90 degrees or not at all
+        self.xdir = {}
         # clr_at(x, y, kind): the clearance between ROUTED nets at a point ("track" / "via"),
         # for a group whose fields have their own area rule (netgroup sets it); None: CLR
         self.clr_at = None
@@ -336,6 +340,7 @@ class Grid:
         vst, vfx, vdy, vhs = self.static["via"], self.fix["via"], self.dyn["via"], self.hist["via"]
         vmfix, vmdyn = own["fixed"]["via"], own["routed"]["via"]
         ok_layer = [k in allowed for k in L]
+        xd = [self.xdir.get(k) for k in L]
         lc = [(layer_cost or {}).get(k, 1.0) * step for k in L]
         li0, lig = L.index(src_layer), L.index(goal_layer)
         sc = self.cell(*src)
@@ -373,6 +378,8 @@ class Grid:
             s_l, f_l, d_l, h_l, mf, md, step_c = st[li], fx[li], dy[li], hs[li], mfix[li], mdyn[li], lc[li]
             sn_l = sn[li]
             k_l, mk = cr[li], mcore[li]
+            xd_l = xd[li]
+            xc = xd_l.get(c) if xd_l else None
             for di, dj, nd in moves:
                 ni, nj = i + di, j + dj
                 if not (0 <= ni < nx and 0 <= nj < ny):
@@ -380,6 +387,12 @@ class Grid:
                 nc = nj * nx + ni
                 if s_l[nc]:
                     continue
+                if xd_l:
+                    xn = xd_l.get(nc)
+                    if (xn is not None and nd not in xn) or (xc is not None and nd not in xc):
+                        continue
+                    if di and dj and any(nd not in xd_l.get(cc, (nd,)) for cc in (j * nx + ni, nj * nx + i)):
+                        continue                  # a 45-degree step grazes its corner cells too
                 f = f_l[nc]
                 if f and not (f == 1 and nc in mf):
                     continue

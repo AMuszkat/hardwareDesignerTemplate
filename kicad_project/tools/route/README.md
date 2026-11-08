@@ -250,6 +250,14 @@ its docstring. What the spec has to be told:
   two same-sense 45-degree turns -- a one-cell flat or chamfer the angle rule
   reads as a right angle -- by sliding its ends back along the two diagonals,
   kept only where no halo is cut ("N short leg(s) widened").
+- **`"cross_square"`: two layers one core apart that may cross only at 90 degrees**
+  (`[{"layer", "pts", "width"}]`, the other layer's finished tracks relabelled
+  to this one): each cell within the two half-widths of a segment admits only
+  the two headings perpendicular to it (a bend admits none), checked on entry,
+  exit and a diagonal step's corner cells. Pricing the other layer's copper
+  instead does not work -- a square crossing costs more cells than a 38 mm loop
+  round the field. Two NEIGHBOURING balls on the two layers wall each other in
+  whichever routes first (board1 In4 / In5): keep neighbour pairs on one layer.
 - **Gate an escape against the WHOLE fanout.** `route.py check` judges what the
   plan holds; an escape plan holds its own nets' vias, so DRC never measures it
   against the field's other vias (board1 RV4.4: 331 of 358 missing, three
