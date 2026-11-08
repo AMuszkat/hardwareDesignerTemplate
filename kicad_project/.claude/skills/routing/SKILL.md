@@ -49,6 +49,26 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   the first pour is laid over the corridor -- board2's +5V pour (R4) took the
   only two-layer room between a 0.4 mm receptacle and a 2.54 mm header whose
   maps run in opposite directions; 48 inversions surfaced at R5 (board2 Q7).
+- **Count a fine-pitch row's via sites before planning anything beyond it.**
+  A row of 0.4 mm pads that drops to vias (a board-to-board receptacle) has a
+  strip between its pads' outer ends and the next obstacle:
+  - Start: pad end + the via-to-pad gap + the via radius.
+  - End: an edge band or a cut-out.
+
+  At 0.3 / 0.6 vias (0.8 mm centre to centre), two rows staggered about 0.55 mm
+  apart hold one via per 0.6 mm. That only works where each link moves less than
+  about 0.6 mm sideways: a link shifted further passes under its neighbour's
+  via, which must then take the lower row, and the run falls back to 0.8 mm.
+
+  So a run of used pins (signals AND ground) longer than the 0.6 mm staircase
+  can absorb has no fanout.
+  - board2: 11 used of 12 pins in 4.4 mm, 2.1 mm of strip before the cut-out.
+    One GND contact was left open (Q8, D59), and a 0.2 / 0.5 via did not free
+    it either.
+  - Measure it with a two-ended search: pack the west half west and the east
+    half east, then test the two halves together. A single left-to-right search
+    stalls on its own early choices and reads as infeasible when it is not.
+  - Ask at placement, not at R5.
 
 ## 1. One group
 
