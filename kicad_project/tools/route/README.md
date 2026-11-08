@@ -314,6 +314,16 @@ its docstring. What the spec has to be told:
   floods each net's reachable cells; a net that reaches a few dozen against tens
   of thousands for the others is a placement or fanout defect to report, not a
   route to keep negotiating for.
+- **"walled in" with a big `reach` is the turn rule, not a wall.** `reach()`
+  ignores the 0/45 joint rule; A* does not. A via that reaches 80 000 cells and
+  still has "no path even through the others" is boxed in by fixed copper
+  through which the only exits need a 90-degree turn (board2's R5: a
+  pre-routed lane hard against the via row). Draw the fixed copper with
+  `view.py` and free the lane; more `--limit` does not help.
+- **Run it under `timeout` with `PYTHONUNBUFFERED=1`** when stdout goes to a
+  file: a run the timeout kills leaves an EMPTY log otherwise (board2's R5
+  lost four 90-minute runs this way), and a stall is told from a slow
+  convergence only by the iteration lines.
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
 
