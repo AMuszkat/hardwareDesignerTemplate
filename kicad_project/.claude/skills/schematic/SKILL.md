@@ -244,6 +244,14 @@ DNP flags are right. A field named DNP is not the flag: write none.
 
 ## 5. Stop for review
 
+**A small edit after an answer is still a plan first.** For example, a pin taken off a net:
+1. `sch.py plan --handoff` re-makes `sch_plan/` against the new revision.
+2. Draw only what `drawn` then lists as missing or extra; the re-plan may move a neighbour's label too.
+3. Run `sch.py frame` for the title block's revision.
+
+A Konnect edit made straight on the sheet leaves `sch_plan/` describing the old drawing. `parity --handoff` passes,
+but plain `parity` fails, and replaying the plan would undo the edit (board2's RV17).
+
 With `check`, both `parity` runs and ERC clean, the schematic is requested for
 review: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — schematic: <title>`; relay off: tell the user that line). Scope: the sheets this change touched ("all"
 for a first drawing or a redraw); Gates: each run's last line. Then stop — the
