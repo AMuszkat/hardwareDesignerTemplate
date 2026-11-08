@@ -194,18 +194,26 @@ Bash call. **Size:** 1–2 days. **Gate:** tool.
 
 ## Phase 2 — process and algorithm
 
-**V1 · Review by milestone, not by group.** Placement is reviewed as a whole
-once every group passes `place.py check`; routing is reviewed at fanout and
-escape, buses, power, pours, close-out; `route.py rip` is the safety net a
-per-group stop was guarding. Resolve the contradiction found in this review:
-the routing and placement skills say "the next group does not start until
-the verdict is PASS", while `kicad_project/CLAUDE.md` and the protocol §10
-say "independent work may go on". Define independent: shares no corridor and
-no reserved copper with the change under review. **Where:** the `routing`,
-`placement` and `review-board` skills, `kicad_project/CLAUDE.md`,
-`RELAY_PROTOCOL.md` §10, the `ROUTING_PLAN.md` scaffold. **Done when:** the
-six files say the same thing. **Size:** half a day after the decision.
-**Gate:** user.
+**V1 · Review by milestone, with a group review on request.** Decided
+2026-11-08 (option D). Mandatory reviews: placement as a whole once every
+group passes `place.py check`; routing at five milestones — fanout and
+escape, buses, power, pours, close-out — plus the fixes for a CHANGES
+verdict and the fab release. A board session may still request a review of
+a single group it is unsure of, in the same `REVIEW.md` form; `route.py rip`
+by the applied manifest is the safety net a per-group stop was guarding, and
+the pre-routing gate (R7) catches the structural failures that used to
+surface at R5. Resolve the contradiction found in this review: the routing
+and placement skills say "the next group does not start until the verdict is
+PASS", while `kicad_project/CLAUDE.md` and the protocol §10 say "independent
+work may go on" — all six files take the protocol's wording. **Independent**
+is defined: a group shares no corridor with the change under review, uses
+none of the copper that change reserved, and moves no part that change
+touched; the board writes the claim in `ROUTING_PLAN.md` §5 and the reviewer
+checks it at the next milestone. **Where:** the `routing`, `placement` and
+`review-board` skills, `kicad_project/CLAUDE.md`, `RELAY_PROTOCOL.md` §10,
+the `ROUTING_PLAN.md` and `REVIEW.md` scaffolds. **Done when:** the files say
+the same thing and a board's first routing milestone is reviewed as one
+request. **Size:** half a day. **Gate:** decided — now tool.
 
 **R2 · Conflict-only rip-up.** After iteration 1, `negotiate` re-routes only
 the nets that overlap (standard PathFinder); the full re-route stays as
