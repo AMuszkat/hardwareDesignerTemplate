@@ -241,6 +241,15 @@ its docstring. What the spec has to be told:
   0.2032 that the grid had passed at 0.0889). Gate every layer's escape with
   `route.py check` -- `track_dangling` at the ring is expected, any other DRC
   finding is not.
+- **`straighten()` cannot see obstacles; the writer now checks it.** Pulling a
+  one-cell jog straight past a via cut its halo by 4 um (board1: 0.1737 from a
+  hole against 0.1778, DRC's find, not the grid's). `netgroup` records each
+  round obstacle's exact radius as it builds the halo and writes a run's own
+  cell polyline where the straightened one comes nearer ("N run(s) left
+  unstraightened"). It also widens a leg shorter than the track width between
+  two same-sense 45-degree turns -- a one-cell flat or chamfer the angle rule
+  reads as a right angle -- by sliding its ends back along the two diagonals,
+  kept only where no halo is cut ("N short leg(s) widened").
 - **Gate an escape against the WHOLE fanout.** `route.py check` judges what the
   plan holds; an escape plan holds its own nets' vias, so DRC never measures it
   against the field's other vias (board1 RV4.4: 331 of 358 missing, three

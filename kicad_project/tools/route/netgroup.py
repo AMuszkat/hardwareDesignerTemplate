@@ -338,6 +338,9 @@ def main():
     board_vias = collections.defaultdict(list)
     for v in bvias:
         board_vias[v["net"]].append((v["x"], v["y"]))
+    # every round static obstacle's exact clearance radius per layer (centre to the routed track's
+    # centreline, as its halo was built): the plan writer tests straighten()'s result against them
+    ROUND = collections.defaultdict(list)
     for v in bvias:
         if v["net"] in fixed:
             r_ = v["r"]
@@ -351,9 +354,12 @@ def main():
             for L_ in LAYERS:
                 cl = F["_clr"] - F["_shrink"] if L_ in F.get("open", []) else maze.PADCLR
                 G.block_disc([L_], v["x"], v["y"], v["r"] + cl + maze.W / 2)
+                ROUND[L_].append((v["x"], v["y"], v["r"] + cl + maze.W / 2, v["net"]))
             G.block(["via"], G.disc(v["x"], v["y"], v["r"] + maze.PADCLR + maze.VIA_R))
         else:
             G.static_via(v["x"], v["y"], v["r"])
+            for L_ in LAYERS:
+                ROUND[L_].append((v["x"], v["y"], v["r"] + maze.PADCLR + maze.W / 2, v["net"]))
 
     # the field's pad area: escapes only, and they are laid -- unless the spec opens
     # its inner layers, where the balls have no lands and the dog-bones are the
@@ -371,9 +377,24 @@ def main():
         dd = min(x - o[0], o[2] - x, y - o[1], o[3] - y)
         if dd < EDGE + W / 2 + 1e-6:
             band.add(c)
+    vband = {c for c in range(G.nx * G.ny)
+             if min(G.xy(c)[0] - o[0], o[2] - G.xy(c)[0], G.xy(c)[1] - o[1], o[3] - G.xy(c)[1]) < EDGE + maze.VIA_R + 1e-6}
+    # ... and round every cut-out: the bounding box above is the OUTER outline only, and a
+    # route straight across a board's hole is otherwise legal to the grid (board2's R5: the
+    # LED and GPIO nets cut across the 48 x 25 mm cut-out). Only cells near a hole are tested.
+    for hole in (B.rings or [])[1:]:
+        hx0, hy0 = min(p[0] for p in hole), min(p[1] for p in hole)
+        hx1, hy1 = max(p[0] for p in hole), max(p[1] for p in hole)
+        m = EDGE + max(W / 2, maze.VIA_R) + G.step
+        for c in G.rect(hx0, hy0, hx1, hy1, m):
+            x, y = G.xy(c)
+            d = B.edge_dist(x, y)                       # negative inside the hole
+            if d < EDGE + W / 2 + 1e-6:
+                band.add(c)
+            if d < EDGE + maze.VIA_R + 1e-6:
+                vband.add(c)
     G.block(LAYERS, band)
-    G.block(["via"], {c for c in range(G.nx * G.ny)
-                      if min(G.xy(c)[0] - o[0], o[2] - G.xy(c)[0], G.xy(c)[1] - o[1], o[3] - G.xy(c)[1]) < EDGE + maze.VIA_R + 1e-6})
+    G.block(["via"], vband)
     for r in S.get("block", []):
         G.block(r.get("layers", LAYERS), G.rect(*r["rect"]))
         if r.get("vias", True):
@@ -839,12 +860,73 @@ def main():
             out.append((cw, cur))
         return out
 
+    def cuts_round(pts, layer, net):
+        """True if a straightened polyline comes nearer a round static obstacle (another net's
+        via or round pad) than the radius its halo was built at (0.1 um of rounding)."""
+        obs = [o for o in ROUND.get(layer, ()) if o[3] != net]
+        for a, b in zip(pts, pts[1:]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            L2 = dx * dx + dy * dy
+            lo_x, hi_x = min(a[0], b[0]), max(a[0], b[0])
+            lo_y, hi_y = min(a[1], b[1]), max(a[1], b[1])
+            for x, y, r, _n in obs:
+                if x < lo_x - r or x > hi_x + r or y < lo_y - r or y > hi_y + r:
+                    continue
+                t = max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)) if L2 else 0.0
+                if math.hypot(a[0] + t * dx - x, a[1] + t * dy - y) < r - 1e-4:
+                    return True
+        return False
+
+    def widen_short_legs(pts, w, layer, net):
+        """A leg shorter than the track width between two same-sense 45-degree turns is a
+        90-degree joint (the angle rule's 'diagonal of a right-angle turn under one track
+        width'): a one-cell flat over a via, a one-cell chamfer. Its ends slide back along the
+        two legs either side until it is w long -- B' = B - u*s, C' = C + z*s -- kept only
+        where no via halo is cut (cuts_round); else the joint stays for the gate to report."""
+        q = [list(p_) for p_ in pts]
+        unit = lambda a, b: ((b[0] - a[0]) / math.dist(a, b), (b[1] - a[1]) / math.dist(a, b))
+        cr = lambda a, b: a[0] * b[1] - a[1] * b[0]
+        changed = True
+        while changed:
+            changed = False
+            for i in range(1, len(q) - 2):
+                A, B, C, D = q[i - 1], q[i], q[i + 1], q[i + 2]
+                L = math.dist(B, C)
+                if L >= w - 1e-9 or min(math.dist(A, B), math.dist(C, D)) < 1e-9:
+                    continue
+                u, v, z = unit(A, B), unit(B, C), unit(C, D)
+                c45 = math.sqrt(0.5)
+                if abs(u[0] * v[0] + u[1] * v[1] - c45) > 1e-3 or abs(v[0] * z[0] + v[1] * z[1] - c45) > 1e-3 \
+                        or cr(u, v) * cr(v, z) <= 0:
+                    continue
+                s_ = (w - L) / math.sqrt(2) + 1e-4
+                if s_ >= math.dist(A, B) - 1e-6 or s_ >= math.dist(C, D) - 1e-6:
+                    continue
+                B2 = [round(B[0] - u[0] * s_, 4), round(B[1] - u[1] * s_, 4)]
+                C2 = [round(C[0] + z[0] * s_, 4), round(C[1] + z[1] * s_, 4)]
+                cand = q[:i] + [B2, C2] + q[i + 2:]
+                if not cuts_round(cand, layer, net):
+                    q, changed = cand, True
+                    n_wide[0] += 1
+                    break
+        return q
+
+    n_raw, n_wide = [0], [0]
     plan = dict(group=S["group"], why=S["why"], tracks=[], vias=[], zones=[], necks=S.get("necks", []))
     for n, legs in out.items():
         for runs, vias in legs:
             for layer, cells in runs:
                 for w, part in width_runs(cells):
-                    pts = straighten([list(q) for q in G.polyline(part)], w)
+                    raw = [list(q) for q in G.polyline(part)]
+                    pts = straighten(raw, w)
+                    if pts != raw and cuts_round(pts, layer, n):
+                        # straighten() drops vertices without seeing obstacles: a jog pulled straight
+                        # past a via's halo (board1 RV4.4: 0.1737 from a hole against 0.1778) -- the
+                        # router's own polyline is written instead
+                        pts = raw
+                        n_raw[0] += 1
+                    if len(pts) > 3:
+                        pts = widen_short_legs(pts, w, layer, n)
                     if len(pts) > 1:
                         plan["tracks"].append(dict(net=full[n], layer=layer, width=w, pts=pts))
             for c in vias:
@@ -863,7 +945,9 @@ def main():
     p = Path(S["plan"])
     p = p if p.is_absolute() else Path(a.board) / p
     p.write_text(json.dumps(plan, indent=1) + "\n")
-    print(f"\nwrote {p}: {len(plan['tracks'])} track runs, {len(plan['vias'])} vias")
+    print(f"\nwrote {p}: {len(plan['tracks'])} track runs, {len(plan['vias'])} vias"
+          + (f" ({n_raw[0]} run(s) left unstraightened: straightening cut a via's halo)" if n_raw[0] else "")
+          + (f" ({n_wide[0]} short leg(s) widened to a track width)" if n_wide[0] else ""))
     return 0
 
 
