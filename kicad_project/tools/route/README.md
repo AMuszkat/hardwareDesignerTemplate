@@ -338,6 +338,16 @@ its docstring. What the spec has to be told:
   `routing/`, change the copy with pcbnew (delete a via, move a part), run
   the same spec with `--board <copy>`: the cheapest proof that one obstacle,
   not the router, is what fails a group.
+- **A fixed piece's free end goes ON the grid** (`window` origin + k x `pitch`;
+  board2: x = 0.05 + 0.2k, y = 0.2k). The leg ending there reaches the nearest
+  cell, and an end 0.15 mm off it joins with a jog the shape gate rejects.
+- **Where a gap is narrower than the grid can see, draw that piece and route
+  the rest.** A 45-degree slot between a board cut-out's corner arc and a
+  pair (board2: 1.27 mm between the arc and USB_DN's diagonal, 0.975 needed)
+  fits one track exactly, but not on a 0.2 grid with the pair's blocks: the
+  router went 120 mm round the board instead. Measure the slot from the arc's
+  centre (distance to the line minus the radius), put the track at a
+  distance between the two limits, and give the leg its grid-aligned end.
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
 
