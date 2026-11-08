@@ -291,6 +291,10 @@ its docstring. What the spec has to be told:
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.
+- **The edge band runs round every Edge.Cuts hole too**, not only the outer
+  outline (board2's R5: before it, the LED and GPIO nets went straight across
+  a 48 x 25 mm cut-out, legal to the grid). Prove it with `route.py check`:
+  no `RULE edge` line on a route that passes a cut-out.
 - **A plane is blocked on its layer** except an apron round each net's own
   escape end there; priced instead, a net rides through its neighbours' aprons.
 - **`reach()` separates contested from walled in.** When negotiation stalls it
