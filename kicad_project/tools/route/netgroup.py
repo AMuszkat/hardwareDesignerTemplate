@@ -360,7 +360,17 @@ def main():
         lay = canon(B.b.GetLayerID(e["layer"]))
         if lay not in LAYERS:
             continue
-        xmap = G.xdir.setdefault(lay, {})
+        # "nets": [names] -- the mask constrains only those nets (each keeps its own map, merged
+        # with the layer's general one); without it, every net routed on "layer"
+        if e.get("nets"):
+            maps = []
+            for nn in e["nets"]:
+                m_ = G.xdir_net.setdefault(lay, {}).setdefault(nn, None)
+                if m_ is None:
+                    m_ = G.xdir_net[lay][nn] = {c_: set(v_) for c_, v_ in G.xdir.get(lay, {}).items()}
+                maps.append(m_)
+        else:
+            maps = [G.xdir.setdefault(lay, {})] + [m_ for m_ in G.xdir_net.get(lay, {}).values() if m_ is not None]
         for a_, b_ in zip(e["pts"], e["pts"][1:]):
             dx_, dy_ = b_[0] - a_[0], b_[1] - a_[1]
             if abs(dx_) < 1e-9 and abs(dy_) < 1e-9:
@@ -369,7 +379,7 @@ def main():
             h_ = HEAD.get(key)
             if h_ is None or (key[0] and key[1] and abs(abs(dx_) - abs(dy_)) > 1e-3):
                 sys.exit(f"cross_square: a segment off the 0/45 lattice {a_} -> {b_}")
-            ok_ = {(h_ + 1) % 8 + 1, (h_ + 5) % 8 + 1}
+            ok_ = {(h_ + 1) % 8 + 1, (h_ + 5) % 8 + 1}  # perpendicular
             if e.get("allow") == "any":
                 # a granted overlap (board1 D62): this copper does not constrain the heading at all;
                 # how much is shared is the board's own check's business
@@ -379,7 +389,8 @@ def main():
                 # crossing is allowed, running over it is not
                 ok_ = {k for k in range(1, 9) if k not in (h_, (h_ + 3) % 8 + 1)}
             for c_ in G.seg(tuple(a_), tuple(b_), (float(e["width"]) + W) / 2 - 1e-6):
-                xmap[c_] = ok_ if c_ not in xmap else (xmap[c_] & ok_)
+                for xmap in maps:
+                    xmap[c_] = ok_ if c_ not in xmap else (xmap[c_] & ok_)
 
     # every round static obstacle's exact clearance radius per layer (centre to the routed track's
     # centreline, as its halo was built): the plan writer tests straighten()'s result against them

@@ -104,6 +104,8 @@ class Grid:
         # square (netgroup's "cross_square") -- a step into or out of such a cell must run on
         # one of its headings, so a track crosses that copper at 90 degrees or not at all
         self.xdir = {}
+        # xdir_net[layer][net] = {cell: {headings}}: the same, for one net only (an entry with "nets")
+        self.xdir_net = {}
         # clr_at(x, y, kind): the clearance between ROUTED nets at a point ("track" / "via"),
         # for a group whose fields have their own area rule (netgroup sets it); None: CLR
         self.clr_at = None
@@ -347,7 +349,8 @@ class Grid:
         vst, vfx, vdy, vhs = self.static["via"], self.fix["via"], self.dyn["via"], self.hist["via"]
         vmfix, vmdyn = own["fixed"]["via"], own["routed"]["via"]
         ok_layer = [k in allowed for k in L]
-        xd = [self.xdir.get(k) for k in L]
+        xd = [self.xdir_net.get(k, {}).get(net, self.xdir.get(k)) if self.xdir_net.get(k, {}).get(net) is not None
+              else self.xdir.get(k) for k in L]
         lc = [(layer_cost or {}).get(k, 1.0) * step for k in L]
         li0, lig = L.index(src_layer), L.index(goal_layer)
         sc = self.cell(*src)
