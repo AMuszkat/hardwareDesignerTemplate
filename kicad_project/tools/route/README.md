@@ -20,7 +20,7 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
     tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
     tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
-    tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json] [--vias model.json] [--contested netgroup.log]
+    tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json]
 
 `tools/kpy` only (they import `pcbnew`). `apply` and `rip` need KiCad
 **closed**; everything else reads the saved file. `--board` takes `boardN`, the
@@ -441,11 +441,3 @@ top, bottom and inner layers, rasterised with PyMuPDF from `tools/.venv`
 for the **work**: one window of the board, one colour per copper layer, zone
 fills shaded, an optional plan (or a stalled router's `.partial.json`) on top.
 
-- **A stalled escape is read off one picture, not off coordinates.** `--vias
-  <fanout model>` draws vias that are not on the board yet (bga_decap / `fanout.py
-  plan` output) with their top stubs and net names, and `--contested <netgroup log>`
-  marks every contested cell the log lists. Board1's In2 escape (D64) stalled at
-  three gaps each at exactly its counted capacity (3 tracks through a 1.118 mm
-  diagonal, 2 through a 1 mm row) -- the bound passed them, the 0.5/12 grid did not;
-  the fix was the fanout model (a GND / B-layer via moved off the gap's wall), not
-  more iterations or a finer pitch (0.5/14, 0.5/16: worse or out of time).
