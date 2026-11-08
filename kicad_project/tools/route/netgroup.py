@@ -338,7 +338,7 @@ def main():
     board_vias = collections.defaultdict(list)
     for v in bvias:
         board_vias[v["net"]].append((v["x"], v["y"]))
-    # "cross_square": [{"layer", "pts", "width"}] -- copper on ANOTHER layer one core away that
+    # "cross_square": [{"layer", "pts", "width"(, "allow": "nonparallel")}] -- copper on ANOTHER layer one core away that
     # this group's tracks on "layer" may cross only at 90 degrees, never run along (10_layout
     # #31 for board1's In4 / In5): every cell within the two half-widths of a segment admits only
     # the two headings perpendicular to it; at a bend the sets intersect, so nothing crosses there
@@ -357,6 +357,10 @@ def main():
             if h_ is None or (key[0] and key[1] and abs(abs(dx_) - abs(dy_)) > 1e-3):
                 sys.exit(f"cross_square: a segment off the 0/45 lattice {a_} -> {b_}")
             ok_ = {(h_ + 1) % 8 + 1, (h_ + 5) % 8 + 1}
+            if e.get("allow") == "nonparallel":
+                # a granted exception (board1 D61): any heading but along the segment -- a 45-degree
+                # crossing is allowed, running over it is not
+                ok_ = {k for k in range(1, 9) if k not in (h_, (h_ + 3) % 8 + 1)}
             for c_ in G.seg(tuple(a_), tuple(b_), (float(e["width"]) + W) / 2 - 1e-6):
                 xmap[c_] = ok_ if c_ not in xmap else (xmap[c_] & ok_)
 

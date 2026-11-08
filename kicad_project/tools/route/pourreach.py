@@ -144,16 +144,18 @@ def main():
                 continue
             r = a.clr_track + half
             # a rounded box: its rectangle grown by r, the corners as discs
-            i0, i1 = span(T, Bb, Y0, ny)
-            j0, j1 = span(L - r, Rr + r, X0, nx)
-            for i in range(i0, i1 + 1):
-                m[i * nx + j0:i * nx + j1 + 1] = b"\x01" * (j1 - j0 + 1)
-            i0, i1 = span(T - r, Bb + r, Y0, ny)
-            j0, j1 = span(L, Rr, X0, nx)
-            for i in range(i0, i1 + 1):
-                m[i * nx + j0:i * nx + j1 + 1] = b"\x01" * (j1 - j0 + 1)
+            for (yl, yh, xl, xh) in ((T, Bb, L - r, Rr + r), (T - r, Bb + r, L, Rr)):
+                if yh < Y0 or xh < X0 or yl > Y0 + (ny - 1) * R or xl > X0 + (nx - 1) * R:
+                    continue                      # wholly outside the raster
+                i0, i1 = span(yl, yh, Y0, ny)
+                j0, j1 = span(xl, xh, X0, nx)
+                if j1 < j0:
+                    continue
+                for i in range(i0, i1 + 1):
+                    m[i * nx + j0:i * nx + j1 + 1] = b"\x01" * (j1 - j0 + 1)
             for cx, cy in ((L, T), (Rr, T), (L, Bb), (Rr, Bb)):
                 disc(cx, cy, r)
+        assert len(m) == nx * ny, "raster resized -- a slice assignment overran"
         return m
 
     sides = {s_.strip().upper() for s_ in a.sides.split(",")}
