@@ -10,6 +10,10 @@ inner layers green/olive/...), zone FILLS shaded underneath, pads tinted (GND
 green, plus any --tint NETGLOB=#colour), courtyards and designators, vias as
 rings, the outline and every inner cut-out (Edge.Cuts) in amber.  A plan's tracks and vias are drawn over the board's; a stalled
 plan may carry `marks` (points to flag) and `guides` (lines) for a picture; no tool writes them.
+`--vias FILE` draws a fanout MODEL that is not on the board yet (bga_decap / fanout.py plan
+output: a list of {x, y, net[, bx, by]} or {"vias": [...]}): grey rings, the top stub from the
+ball, each net's short name.  `--contested LOG` marks every cell a netgroup log lists as
+contested ("... contested cell(s): In2.Cu(x, y) ...") -- a stalled escape's wall at a glance.
 Writes OUT.svg and OUT.png (PyMuPDF, from kicad_project/tools/.venv -- pcbnew
 pins this tool to KiCad's own interpreter, so the raster runs out of process).
 
@@ -43,6 +47,8 @@ def main():
     ap.add_argument("out", help="output path without extension")
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
     ap.add_argument("--plan", help="a route.py plan (or a netgroup .partial.json) to draw on top")
+    ap.add_argument("--vias", help="a fanout model to draw (vias not on the board yet)")
+    ap.add_argument("--contested", help="a netgroup log: mark the contested cells it lists")
     ap.add_argument("--scale", type=int, default=40, help="pixels per mm")
     ap.add_argument("--layers", default="", help="draw only these copper layers, comma separated")
     ap.add_argument("--tint", default="", help="NETGLOB=#colour,... pad tints (GND is green by default)")
@@ -169,6 +175,23 @@ def main():
             for i in range(len(g) - 1):
                 o.append(f'<line x1="{g[i][0]}" y1="{g[i][1]}" x2="{g[i + 1][0]}" y2="{g[i + 1][1]}" '
                          f'stroke="#000" stroke-width="0.04" opacity="0.8"/>')
+
+    if a.vias:
+        vp = Path(a.vias) if Path(a.vias).exists() else Path(a.board) / a.vias
+        vm = json.loads(vp.read_text())
+        for v in (vm["vias"] if isinstance(vm, dict) else vm):
+            x, y, n = v["x"], v["y"], (v.get("net") or "").split("/")[-1]
+            if v.get("bx") is not None and (abs(v["bx"] - x) > 1e-6 or abs(v["by"] - y) > 1e-6):
+                o.append(f'<line x1="{v["bx"]}" y1="{v["by"]}" x2="{x}" y2="{y}" stroke="#999" stroke-width="0.0889"/>')
+            o.append(f'<circle cx="{x}" cy="{y}" r="0.2" fill="#666" opacity="0.55"/>'
+                     f'<circle cx="{x}" cy="{y}" r="0.1" fill="#fff"/>'
+                     f'<text x="{x}" y="{y + 0.3}" font-size="0.13" text-anchor="middle" fill="#00a">{n[-9:]}</text>')
+    if a.contested:
+        import re as _re
+        for line in Path(a.contested).read_text().splitlines():
+            if "contested cell" in line:
+                for cx, cy in _re.findall(r"\(([-\d.]+), ([-\d.]+)\)", line):
+                    o.append(f'<circle cx="{cx}" cy="{cy}" r="0.06" fill="#f0f" opacity="0.8"/>')
 
     for gx in range(math.ceil(x0), int(x1) + 1):          # 1 mm grid
         o.append(f'<line x1="{gx}" y1="{y0}" x2="{gx}" y2="{y1}" stroke="#000" stroke-width="0.01" opacity="0.25"/>'

@@ -20,7 +20,7 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
     tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
     tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
-    tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json]
+    tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json] [--vias model.json] [--contested netgroup.log]
 
 `tools/kpy` only (they import `pcbnew`). `apply` and `rip` need KiCad
 **closed**; everything else reads the saved file. `--board` takes `boardN`, the
@@ -384,6 +384,34 @@ net out on three layers. `fanout.py plan` proposes that model;
   reports it unplaced). Pin a site with `--fixed FILE` (the output's format)
   and re-plan. The stub's inductance (about 0.3 nH per GND ball at 0.5 mm) is
   a PDN cost the tool does not judge.
+- **Two vias that keep a pad on the same inner layer are a pair rule, not a
+  site rule.** At 0.5 mm with a 0.4 mm via, orthogonal neighbours leave 0.1 mm
+  of copper: under an inner clearance above that (board1 rev 37: 0.1016 inside
+  U1) two nets escaping on one inner layer can never take adjacent sites (or
+  pads) -- a non-functional pad is dropped only where the via has no track on
+  that layer. Neither `plan` nor `layers` knows a net's layer while it places
+  vias, and the router does not see it either (each source keeps its own pad):
+  KiCad's DRC on the routed escape found 14 such pairs. What worked on board1,
+  in this order:
+  1. the sites as ONE integer program (scipy `milp`): options = each ball's
+     adjacent empty sites + its pad; one via a site; one diagonal stub a
+     square; each same-inner-layer orthogonal pair a soft constraint at a large
+     cost (pairs left are printed -- a layer move);
+  2. **anchored** to the model the router already escaped (leaving a ball's
+     site costs 20 against 1-1.3 for a site, 50 for the pad), so only the vias
+     the rule forces move. Unanchored, the program met the rule by scattering
+     the field (In2 went from 0 to 10-17 nets contested); a greedy re-solve
+     that bars one site at a time put 45 vias back in their pads;
+  3. a net's layer as the last lever, inside the handoff's permissions (a CA
+     net to B.Cu, an outer-ring byte out on the top with no via): try the
+     candidates in parallel model folders, each gated against its own model --
+     the obvious move (the most contested nets) gave B.Cu necks over its 4 mm
+     cap, because a net deep in a via block that is free on an inner layer is
+     walled on an outer one, where every via keeps its pad.
+- **An outer-ring ball that leaves on the top layer needs the site in front of
+  it.** A via another ball's matching put one step outside the array, straight
+  out of a via-free outer ball, walls that ball's top-layer exit (board1: F.Cu
+  "no path even through the others"). Bar those sites before the matching.
 - **`layers`: the exact maximum over several layers.** Each layer is
   `escape_bound.py`'s relaxation; the source sets one layer can escape form a
   matroid, so a matroid partition places the most nets possible over all the
@@ -451,3 +479,12 @@ top, bottom and inner layers, rasterised with PyMuPDF from `tools/.venv`
 for the **work**: one window of the board, one colour per copper layer, zone
 fills shaded, an optional plan (or a stalled router's `.partial.json`) on top.
 
+- **A stalled escape is read off one picture, not off coordinates.** `--vias
+  <fanout model>` draws vias that are not on the board yet (bga_decap / `fanout.py
+  plan` output) with their top stubs and net names, and `--contested <netgroup log>`
+  marks every contested cell the log lists. Board1's In2 escape (D64) stalled at
+  three gaps each at exactly its counted capacity (3 tracks through a 1.118 mm
+  diagonal, 2 through a 1 mm row) -- the bound passed them, the 0.5/12 grid did not.
+  A gentler negotiation (`--pres-mul 1.03 --iters 800`) and a finer pitch (0.5/14,
+  0.5/16: worse or out of the hour) did not help; changing the fanout model did
+  (the bullets under `fanout.py`).
