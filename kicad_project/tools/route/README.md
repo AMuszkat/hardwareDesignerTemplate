@@ -250,6 +250,11 @@ its docstring. What the spec has to be told:
   two same-sense 45-degree turns -- a one-cell flat or chamfer the angle rule
   reads as a right angle -- by sliding its ends back along the two diagonals,
   kept only where no halo is cut ("N short leg(s) widened").
+- **Fixed copper inside a field keeps the field's rule.** A prelaid escape stub (a
+  ring ball's top-layer stub, `extra_tracks`) beside another net's took the group's
+  clearance (board1 F.Cu: #30's 0.356) even inside U1's courtyard, so two stubs
+  0.5 mm apart shut the lane between them; maze now builds every track's halo with
+  the field's clearance where it lies (fixed vias were already pre-shrunk).
 - **`"cross_square"`: two layers one core apart that may cross only at 90 degrees**
   (`[{"layer", "pts", "width"}]`, the other layer's finished tracks relabelled
   to this one): each cell within the two half-widths of a segment admits only

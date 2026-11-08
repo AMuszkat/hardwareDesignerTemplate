@@ -228,10 +228,17 @@ class Grid:
         where the grid has one (a BGA field's area rule inside its courtyard), else CLR."""
         add = {k: set() for k in self.keys}
         ca = self.clr_at if (local and self.clr_at) else None
+        # a TRACK's halo takes the field's rule inside a field for FIXED copper too (a prelaid
+        # escape stub beside another net's, board1's top-row stubs 0.5 apart: at the group's
+        # 0.356 they shut each other's lane); fixed vias are pre-shrunk by netgroup instead
+        cat = self.clr_at if self.clr_at else None
         for lay, a, b, w in tracks:
             if lay in self.layers:
-                if ca:
-                    add[lay] |= self._seg_local(a, b, lambda x, y: w / 2 + ca(x, y, "track") + W / 2)
+                if cat:
+                    def rf(x, y, w=w):
+                        R_ = w / 2 + cat(x, y, "track") + W / 2
+                        return R_ + (self._grow(R_) if m is True else m)
+                    add[lay] |= self._seg_local(a, b, rf)
                 else:
                     R = w / 2 + CLR + W / 2
                     add[lay] |= self.seg(a, b, R + (self._grow(R) if m is True else m))
