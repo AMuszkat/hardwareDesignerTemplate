@@ -17,6 +17,8 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/route.py rules  --board board1                      # what the guide switches on
     tools/kpy tools/route/netgroup.py --board board1 routing/R3_spec.json
     tools/kpy tools/route/decap.py    --board board1 --group R2 --refs C9,C10 --plan routing/R2_decap.json
+    tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
+    tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
     tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
     tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json]
 
@@ -215,10 +217,10 @@ its docstring. What the spec has to be told:
   showed. `--nfp` when the fab removes non-functional pads (other nets' vias
   are holes + copper-to-hole on the layer); `--pad-nets A,B` for a power layer
   that carries a few signals -- its own pours' vias keep their pads there.
-  To choose a split over several layers, anneal over assignments with the
-  bound as the per-layer test (keep pairs together); board1 needed four layers
-  where any three stayed 3 short (a pocket of 2-3 balls with one exit each
-  makes per-layer capacities not add). The bound is necessary, not sufficient:
+  To choose a split over several layers, run `fanout.py layers`: the exact
+  most nets the layers take together (a matroid partition over this bound),
+  not an anneal -- a pocket of 2-3 balls with one exit each makes per-layer
+  capacities not add, which is where a greedy or annealed split stalls. The bound is necessary, not sufficient:
   a split it passes can still stall the grid router at one gap (board1: three
   layers each contested at the same depopulated site) -- move one net per hot
   gap to a layer with room and re-route, and sweep `--seed` / `--hist`.
@@ -326,6 +328,51 @@ its docstring. What the spec has to be told:
   convergence only by the iteration lines.
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
+
+## `fanout.py` — where a BGA's vias go, and how many nets leave over several layers
+
+**Plan the fanout before the escape, and plan it for the escape.** board1's U1
+(0.5 mm) spent seven rounds of per-net allowances (crossings, overlaps, rail
+feeds) on a fanout that put every via in its ball's pad; moving the signal and
+GND vias into the depopulated ball sites, as NXP's EVK does, let every DRAM
+net out on three layers. `fanout.py plan` proposes that model;
+`fanout.py layers` says how many nets it lets out, all layers at once.
+
+- **The pitch decides which rules apply, and `plan` prints the arithmetic.**
+  A via fits between four balls when `hypot(px, py) / 2 >= land/2 + clearance
+  + via/2` (and the pitch >= via + clearance). Then the field is **dog-bone**:
+  every ball that needs a via gets one at an interstitial point on a short
+  diagonal stub, as on any 0.8 mm (often 0.65 mm) BGA. Nothing about
+  depopulated sites or via-in-pad applies, no via goes in a pad, and the tool
+  is just a corner picker -- use it there as well, then `layers` for the split.
+- **Fine pitch** (no via between four balls -- 0.5 mm with a 0.4 mm via): a
+  via goes in a depopulated site next to its ball, on an orthogonal stub or a
+  diagonal one where the stub clears the two balls it passes, else in the
+  pad (filled and capped, a fab option). A maximum matching (`--priority`
+  nets first) gives as many balls as possible a site. **In-pad only**
+  (0.4 mm): not even a site fits; every via in the pad, or HDI.
+- **Which balls take a via is by net**: `--skip` (leave on the footprint's
+  side; `--skip-rings K` for the outer rings' signals), `--in-pad` (rails
+  whose vias feed a pour), `--share` (GND: its own site where free -- lower
+  inductance -- or `--share-mode cluster`, joined on top to a neighbour that
+  has one), the rest their own via. Moving the signal vias alone can be worse
+  than in-pad everywhere: the GND vias left in their pads wall the lanes.
+- **The plan is capacity, not routing.** The greedy matching can box in a
+  ball one ring in from the edge (board1: a DQS ball lost its lane; `layers`
+  reports it unplaced). Pin a site with `--fixed FILE` (the output's format)
+  and re-plan. The stub's inductance (about 0.3 nH per GND ball at 0.5 mm) is
+  a PDN cost the tool does not judge.
+- **`layers`: the exact maximum over several layers.** Each layer is
+  `escape_bound.py`'s relaxation; the source sets one layer can escape form a
+  matroid, so a matroid partition places the most nets possible over all the
+  layers together. The footprint's own side (`"side": "component"`) takes
+  nets from their balls past every land; other layers from their vias. Inner
+  layers are partitioned with every non-pour via a hole (optimistic), then
+  each layer is re-checked with its sources' own pads and a trapped net is
+  moved off it. It writes `{net: layer}`; `"together"` groups (pairs) are
+  reported when split, not enforced. Exit 1 when a net is left over: the
+  model or the rules must change, no router will find it. A pass is still a
+  bound -- the router has to find it.
 
 ## `decap.py` — the decoupling ring as a plan
 
