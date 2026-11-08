@@ -127,6 +127,13 @@ made generic before it travels; the board's numbers stay in the board folder.
 merge touches are stashed, merged over and compared before the stash is
 dropped; a conflict aborts and is reported.
 
+⚠ **`push` sends the whole working file, and `tools/` is shared by every board
+session.** Before pushing a file, `git diff HEAD -- <path>`: a hunk you did not
+write is another session's work in progress (board2's README push once carried
+board1's lines for view.py options its template copy did not have yet). Push a
+copy holding only your hunks, then put the working file back as it was, so the
+other session's edits stay uncommitted and theirs.
+
 ## Worked example — a schematic redraw, the first project on this template (2026-10)
 
 Eight sheets, 311 parts, redrawn to the schematic standard after the
