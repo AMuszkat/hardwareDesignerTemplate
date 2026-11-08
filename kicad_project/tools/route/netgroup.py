@@ -377,6 +377,11 @@ def main():
                 cl = F["_clr"] - F["_shrink"] if L_ in F.get("open", []) else maze.PADCLR
                 G.block_disc([L_], v["x"], v["y"], v["r"] + cl + maze.W / 2)
                 ROUND[L_].append((v["x"], v["y"], v["r"] + cl + maze.W / 2, v["net"]))
+                # a via near the field's edge: past the edge the track is the group's width, so the
+                # cells outside the field keep the full halo (board1: a 0.181 B.Cu run 0.066 from a
+                # dog-bone 0.3 inside U1's courtyard)
+                G.block([L_], {c_ for c_ in G.disc(v["x"], v["y"], v["r"] + maze.PADCLR + maze.W / 2)
+                               if not in_field(*G.xy(c_))})
             G.block(["via"], G.disc(v["x"], v["y"], v["r"] + maze.PADCLR + maze.VIA_R))
         else:
             G.static_via(v["x"], v["y"], v["r"])
@@ -927,7 +932,12 @@ def main():
                 B2 = [round(B[0] - u[0] * s_, 4), round(B[1] - u[1] * s_, 4)]
                 C2 = [round(C[0] + z[0] * s_, 4), round(C[1] + z[1] * s_, 4)]
                 cand = q[:i] + [B2, C2] + q[i + 2:]
-                if not cuts_round(cand, layer, net):
+                # every segment still on the 0/45 lattice (a rounding or an asymmetric pair of legs
+                # once left a 38-degree joint -- the gate's finding, not a fix)
+                on45 = all(abs((math.degrees(math.atan2(b_[1] - a_[1], b_[0] - a_[0])) + 360) % 45) < 0.5
+                           or abs((math.degrees(math.atan2(b_[1] - a_[1], b_[0] - a_[0])) + 360) % 45 - 45) < 0.5
+                           for a_, b_ in zip(cand, cand[1:]) if math.dist(a_, b_) > 1e-6)
+                if on45 and not cuts_round(cand, layer, net):
                     q, changed = cand, True
                     n_wide[0] += 1
                     break
