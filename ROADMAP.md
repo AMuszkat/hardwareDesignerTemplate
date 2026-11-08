@@ -102,16 +102,31 @@ flags and the Footprint field. Konnect stays for a one-off hand fix after
 drawing; `drawn` stays as the gate on such a fix. **Where:**
 `kicad_project/tools/sch/sch.py`, `emit.py` (UUID carry-over), the README;
 the `schematic` skill §3–§5 rewritten and `draw_sheet.md` retired;
-`kicad_project/CLAUDE.md` "KiCad files go through Konnect or pcbnew" gains a
-fifth named exception, with the same shape as the four it already lists.
+`kicad_project/CLAUDE.md` "KiCad files go through Konnect or pcbnew" is
+rewritten as a rule, not an exception list (decided 2026-11-08): **which tool
+edits what**, one row per kind of edit, naming the cases where the
+project's own tools are preferred to Konnect or pcbnew and the cases that
+stay theirs —
+
+| edit | tool | why |
+|---|---|---|
+| a sheet's drawing: parts, wires, labels, frames, title block, DNP and BOM flags, Footprint fields | `sch.py plan` then `draw` | the plan is proven before a file is written; the write is proven after |
+| a one-off fix on a drawn sheet (a jog moved to clear a text) | Konnect, KiCad open; then `drawn` | one undo step, no plan churn |
+| a library symbol | `symgen.py` / `symfields.py` | Konnect cannot set field positions, pin lengths or delete a saved symbol |
+| a footprint file | `fp.py` | land hashed and signed |
+| Board Setup, a placement plan, a routing group, labels, a schematic re-link | the `pcbnew` scripts, KiCad closed | bulk, backup first, read back after |
+| a single interactive move with KiCad open | Konnect | one undo step |
+| any KiCad file by text editor | never | — |
+
+and the `schematic` skill's §3 reads from that table.
 **Evidence:** `PLAN PASSES` already means the preview is the drawing; the
 README's whole "What Konnect cannot do" list (sheet-pin sides, stale embedded
 symbols, skipped fields, duplicate junctions, field positions, UUID churn)
 is the cost of the replay. **Done when:** a board drawn by `draw` passes
 `parity`, `parity --handoff`, `check`, ERC and `drawn` with zero Konnect
 calls, and a redraw keeps every symbol UUID the PCB references so
-`schupdate.py` finds nothing to re-link. **Size:** 2–3 days. **Gate:** user
-(the contract line), then tool.
+`schupdate.py` finds nothing to re-link. **Size:** 2–3 days. **Gate:** decided
+2026-11-08 — yes, as the rule table above; now tool.
 
 **S3 · Small edits are plan then draw.** Follows from S1: skill §5 says
 `plan --handoff`, `draw`, done; a straight Konnect edit no longer leaves
