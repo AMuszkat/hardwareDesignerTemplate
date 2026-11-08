@@ -95,7 +95,11 @@ OPTIONS
 
 A net that starts on a pad rather than on escape copper (the far side of a
 series resistor) names it as "src_pad" and gives a grid point inside it as
-"src".
+"src".  A THROUGH-HOLE source pad is on every layer: give "layer" as a list
+("layer": ["In2.Cu", "B.Cu"]) and the search starts on each of them -- with one
+layer, the net must leave the pad on it, and the other layer is reachable only
+through a via clear of the pad (board2's R5: every connector-row net forced
+onto In2.Cu in a row band with no room for that via).
 
 When negotiation stalls it prints, per net, how many cells it can reach at
 all (`reach`): a net that reaches a few dozen cells against tens of
@@ -816,7 +820,7 @@ def main():
                         per[li_plane][c] += plane_bias[n][c]
             jobs.append(dict(net=full[n] if False else n, src=s, src_layer=lay, goals=leg_goals(leg),
                              bias=per, goal_layer=leg_layer(leg),
-                             allowed=set(S["nets"][n].get("layers", LAYERS)) | {lay, leg_layer(leg)},
+                             allowed=set(S["nets"][n].get("layers", LAYERS)) | set([lay] if isinstance(lay, str) else lay) | {leg_layer(leg)},
                              start_dir=hd, goal_dirs=leg.get("goal_dirs")))
         if not jobs:
             continue
@@ -1020,8 +1024,9 @@ def reach(G, job, LAYERS):
     rule: separates 'contested' from 'walled in'."""
     li = {k: i for i, k in enumerate(LAYERS)}
     own = G._own(job["net"])
-    start = (G.cell(*job["src"]), li[job["src_layer"]])
-    seen, dq, nx, ny = {start}, collections.deque([start]), G.nx, G.ny
+    sl = job["src_layer"]
+    starts = [(G.cell(*job["src"]), li[k]) for k in ([sl] if isinstance(sl, str) else sl)]
+    seen, dq, nx, ny = set(starts), collections.deque(starts), G.nx, G.ny
 
     def free(c, key):
         if G.static[key][c]:

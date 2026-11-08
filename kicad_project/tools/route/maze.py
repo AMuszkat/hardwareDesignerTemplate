@@ -352,17 +352,18 @@ class Grid:
         xd = [self.xdir_net.get(k, {}).get(net, self.xdir.get(k)) if self.xdir_net.get(k, {}).get(net) is not None
               else self.xdir.get(k) for k in L]
         lc = [(layer_cost or {}).get(k, 1.0) * step for k in L]
-        li0, lig = L.index(src_layer), L.index(goal_layer)
+        # a through-hole source pad starts on every layer it has: src_layer may be a list
+        li0s = [L.index(k) for k in ([src_layer] if isinstance(src_layer, str) else src_layer)]
+        lig = L.index(goal_layer)
         sc = self.cell(*src)
         soft = pres is not None
         fexact = self.fix_exact
         INF = 1e18
 
-        start = (sc, li0, start_dir)
-        dist = {start: 0.0}
+        dist = {(sc, l0, start_dir): 0.0 for l0 in li0s}
         par = {}
         hk = step if not self.diagonal else step * 0.7071     # L1 / sqrt(2) <= octile
-        heap = [(hmap[sc] * hk, 0.0, sc, li0, start_dir)]
+        heap = [(hmap[sc] * hk, 0.0, sc, l0, start_dir) for l0 in li0s]
         goal = None
         n_exp = 0
         # (di, dj, heading); headings 1..8 run clockwise from east so a turn's
@@ -581,8 +582,9 @@ class Grid:
                 return False
             f = self.fix[key][c]
             return not (f and not self.fix_exact and not (f == 1 and c in own["fixed"][key]))
-        start = (self.cell(*src) if isinstance(src, tuple) else src, li[src_layer])
-        seen, dq = {start}, collections.deque([start])
+        c0 = self.cell(*src) if isinstance(src, tuple) else src
+        starts = [(c0, li[k]) for k in ([src_layer] if isinstance(src_layer, str) else src_layer)]
+        seen, dq = set(starts), collections.deque(starts)
         while dq:
             c, l = dq.popleft()
             i, j = c % nx, c // nx
