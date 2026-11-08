@@ -55,6 +55,12 @@ def main():
     ap.add_argument("--res", type=float, default=0.0125)
     ap.add_argument("--json", default=None)
     ap.add_argument("--corridors", action="store_true", help="with --json: a reach path per via, plans left out")
+    ap.add_argument("--feeds", nargs="*", default=[],
+                    help="plans holding FEEDS: a cut-off via passes if its island on --layer holds a via of its "
+                         "net from which that net's track on another layer reaches a via of the net outside --box")
+    ap.add_argument("--max-mohm", type=float, default=50.0, help="a feed's pour-to-ball limit")
+    ap.add_argument("--sheet-mohm", type=float, default=0.491, help="copper sheet resistance, mohm/sq (1 oz)")
+    ap.add_argument("--via-mohm", type=float, default=1.0, help="one via barrel, mohm")
     a = ap.parse_args()
     import collections
     import math
@@ -231,6 +237,69 @@ def main():
                 keep.append(pts[-1])
                 rec["corridor"] = keep
     sides_s = ",".join(sorted(sides))
+    if a.feeds and cut:
+        # D60-style feeds: the via's island on this layer, then another layer's track to the pour
+        fvias, ftracks = [], []
+        for f in a.feeds:
+            p_ = Path(f) if Path(f).is_absolute() else Path(B.dir) / f
+            pl = json.loads(p_.read_text())
+            fvias += [(short(v["net"]), v["at"][0], v["at"][1]) for v in pl.get("vias", [])]
+            for t in pl.get("tracks", []):
+                if t.get("layer") != a.layer:
+                    for u, w in zip(t["pts"], t["pts"][1:]):
+                        ftracks.append((short(t["net"]), t["layer"], tuple(u), tuple(w), float(t["width"])))
+        allv = {(n_, round(x, 4), round(y, 4)) for n_, x, y, _ in vias} | {(n_, round(x, 4), round(y, 4)) for n_, x, y in fvias}
+        still = []
+        for rec in cut:
+            net, (x, y) = rec["net"], rec["at"]
+            blk = blocked_for(net)
+            k0 = int(round((y - Y0) / R)) * nx + int(round((x - X0) / R))
+            isl, q = {k0}, collections.deque([k0])
+            while q:
+                k = q.popleft()
+                i, j = divmod(k, nx)
+                for kk, ok in ((k - 1, j > 0), (k + 1, j < nx - 1), (k - nx, i > 0), (k + nx, i < ny - 1)):
+                    if ok and kk not in isl and not blk[kk]:
+                        isl.add(kk); q.append(kk)
+            cell = lambda vx, vy: int(round((vy - Y0) / R)) * nx + int(round((vx - X0) / R))
+            starts = [(vx, vy) for n_, vx, vy in allv if n_ == net and inbox(vx, vy) and cell(vx, vy) in isl]
+            # the net's feed tracks as a graph; Dijkstra on resistance from the island's vias
+            import heapq
+            adj = collections.defaultdict(list)
+            for n_, lay, u, w, wd in ftracks:
+                if n_ != net:
+                    continue
+                r_ = math.dist(u, w) / wd * a.sheet_mohm
+                ku, kw = (round(u[0], 4), round(u[1], 4)), (round(w[0], 4), round(w[1], 4))
+                adj[ku].append((kw, r_)); adj[kw].append((ku, r_))
+            outv = {(vx, vy) for n_, vx, vy in allv if n_ == net and not inbox(vx, vy)}
+            best = None
+            for sx, sy in starts:
+                isl_r = math.dist((sx, sy), (x, y)) / max(a.min_width, 0.1) * a.sheet_mohm   # island, conservative
+                dist = {(sx, sy): isl_r + a.via_mohm}
+                hq = [(dist[(sx, sy)], (sx, sy))]
+                while hq:
+                    d, k = heapq.heappop(hq)
+                    if d > dist.get(k, 1e18):
+                        continue
+                    if k in outv:
+                        tot = d + a.via_mohm
+                        if best is None or tot < best[0]:
+                            best = (tot, (sx, sy), k)
+                        break
+                    for kk, r_ in adj.get(k, ()):
+                        if d + r_ < dist.get(kk, 1e18):
+                            dist[kk] = d + r_
+                            heapq.heappush(hq, (d + r_, kk))
+            if best and best[0] <= a.max_mohm + 1e-9:
+                rec["fed"] = dict(mohm=round(best[0], 1), via=list(best[1]), to=list(best[2]))
+                print(f"   fed: {net} via ({x:.3f}, {y:.3f}) -- island via {best[1]}, feed to {best[2]}, "
+                      f"{best[0]:.1f} mohm (<= {a.max_mohm:g})")
+            else:
+                still.append(rec)
+                if best:
+                    print(f"   feed too long: {net} via ({x:.3f}, {y:.3f}) {best[0]:.1f} mohm > {a.max_mohm:g}")
+        cut = still
     verdict = "PASS" if not cut else "FAIL"
     print(f"POURREACH {verdict} {a.layer}: {len(cut)} of {total} rail vias cut off "
           f"(min width {a.min_width}, sides {sides_s})")

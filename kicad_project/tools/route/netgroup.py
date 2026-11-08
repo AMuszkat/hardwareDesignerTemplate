@@ -252,6 +252,13 @@ def main():
     # two BGAs joined by one group (a SoC and its DRAM) each have their own area rule
     FO = ([S["field"]] if S.get("field") else []) + list(S.get("fields", []))
     FREFS = {F["ref"] for F in FO}
+    # each field's courtyard box, before the pads are laid: another part's pad INSIDE it (a bottom
+    # cap under the BGA) is judged at the field's clearance, as KiCad's area rule does
+    FCY = []
+    for F in FO:
+        cy_ = B.courtyard(B.fps[F["ref"]]) if F["ref"] in B.fps else None
+        if cy_:
+            FCY.append((tuple(cy_[:4]), float(F.get("clr", maze.PADCLR)), float(F.get("width", maze.W))))
     for F in FO:
         if F["ref"] not in B.fps:
             sys.exit(f"field: {F['ref']} is not on the board")
@@ -284,6 +291,12 @@ def main():
             cl = float(Fp.get("clr", maze.PADCLR))
             wf = float(Fp.get("width", maze.W))
             G.block(lays, G.rect(p["L"], p["T"], p["R"], p["B"], cl + wf / 2))
+            G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], maze.PADCLR + maze.VIA_R))
+            continue
+        inf = next(((c_, w_) for (bx_, c_, w_) in FCY
+                    if bx_[0] <= p["L"] and p["R"] <= bx_[2] and bx_[1] <= p["T"] and p["B"] <= bx_[3]), None)
+        if inf:
+            G.block(lays, G.rect(p["L"], p["T"], p["R"], p["B"], inf[0] + inf[1] / 2))
             G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], maze.PADCLR + maze.VIA_R))
             continue
         G.static_pad(p["L"], p["T"], p["R"], p["B"], lays)
@@ -338,7 +351,7 @@ def main():
     board_vias = collections.defaultdict(list)
     for v in bvias:
         board_vias[v["net"]].append((v["x"], v["y"]))
-    # "cross_square": [{"layer", "pts", "width"(, "allow": "nonparallel")}] -- copper on ANOTHER layer one core away that
+    # "cross_square": [{"layer", "pts", "width"(, "allow": "nonparallel" | "any")}] -- copper on ANOTHER layer one core away that
     # this group's tracks on "layer" may cross only at 90 degrees, never run along (10_layout
     # #31 for board1's In4 / In5): every cell within the two half-widths of a segment admits only
     # the two headings perpendicular to it; at a bend the sets intersect, so nothing crosses there
@@ -357,6 +370,10 @@ def main():
             if h_ is None or (key[0] and key[1] and abs(abs(dx_) - abs(dy_)) > 1e-3):
                 sys.exit(f"cross_square: a segment off the 0/45 lattice {a_} -> {b_}")
             ok_ = {(h_ + 1) % 8 + 1, (h_ + 5) % 8 + 1}
+            if e.get("allow") == "any":
+                # a granted overlap (board1 D62): this copper does not constrain the heading at all;
+                # how much is shared is the board's own check's business
+                continue
             if e.get("allow") == "nonparallel":
                 # a granted exception (board1 D61): any heading but along the segment -- a 45-degree
                 # crossing is allowed, running over it is not
