@@ -58,6 +58,7 @@ one comes from.
 | the handoff engine, adding a board | `tools/handoff/README.md` |
 | the PCB tools | `kicad_project/tools/*/README.md` |
 | 3D renders of a board (KiCad or Blender, the user's pick) | `kicad_project/tools/render/README.md` |
+| the plan for making board design faster: what changes, where, and the test for each | `ROADMAP.md` |
 
 ## What makes it work
 
