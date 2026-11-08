@@ -20,7 +20,7 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
     tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
     tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
-    tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json]
+    tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json] [--vias model.json] [--contested netgroup.log]
 
 `tools/kpy` only (they import `pcbnew`). `apply` and `rip` need KiCad
 **closed**; everything else reads the saved file. `--board` takes `boardN`, the
@@ -326,6 +326,18 @@ its docstring. What the spec has to be told:
   file: a run the timeout kills leaves an EMPTY log otherwise (board2's R5
   lost four 90-minute runs this way), and a stall is told from a slow
   convergence only by the iteration lines.
+- **A timeout-killed run writes no partial** — and the partial is where the
+  contested cells are named. Size `--iters` so the run ENDS inside the
+  timeout (board2's R5: about 18 s an iteration for 20 nets on a 76 x 51 mm
+  window); a run that stops by itself prints the contested cells and `reach`
+  per net and writes `<plan>.partial.json` for `view.py --plan`.
+- **What-if on a scratch board: copy it OUTSIDE kicad_project/** (the session
+  scratchpad). `--board` takes a path, but `boardsel` refuses any folder
+  inside kicad_project/ that is not a board's (tmpWork/ included). Copy the
+  `.kicad_pcb`, `.kicad_pro`, `.kicad_dru`, `fp-lib-table`, `lib/` and
+  `routing/`, change the copy with pcbnew (delete a via, move a part), run
+  the same spec with `--board <copy>`: the cheapest proof that one obstacle,
+  not the router, is what fails a group.
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
 
@@ -428,3 +440,12 @@ top, bottom and inner layers, rasterised with PyMuPDF from `tools/.venv`
 (written to `<board>/routing/renders/` unless `--out`). `view.py` is the picture
 for the **work**: one window of the board, one colour per copper layer, zone
 fills shaded, an optional plan (or a stalled router's `.partial.json`) on top.
+
+- **A stalled escape is read off one picture, not off coordinates.** `--vias
+  <fanout model>` draws vias that are not on the board yet (bga_decap / `fanout.py
+  plan` output) with their top stubs and net names, and `--contested <netgroup log>`
+  marks every contested cell the log lists. Board1's In2 escape (D64) stalled at
+  three gaps each at exactly its counted capacity (3 tracks through a 1.118 mm
+  diagonal, 2 through a 1 mm row) -- the bound passed them, the 0.5/12 grid did not;
+  the fix was the fanout model (a GND / B-layer via moved off the gap's wall), not
+  more iterations or a finer pitch (0.5/14, 0.5/16: worse or out of time).
