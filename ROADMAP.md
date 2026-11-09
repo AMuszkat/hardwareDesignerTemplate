@@ -256,9 +256,19 @@ S1 rewrites), the `ROUTING_PLAN.md` scaffold §4. **Done when:** a board is
 placed and routed through the scripts with KiCad opened only by the user.
 **Size:** half a day. **Gate:** decided — now tool.
 
-**X2 · The relay during a build.** The switch stays the user's. `bin/board`
-and `bin/concept` print one line when it is off, since with it off the user
-carries every ring of every review. **Size:** 1 h. **Gate:** user.
+**X2 · The relay during a build.** Decided 2026-11-09: B now, D after one
+board has run under it. The switch stays the user's; a message still carries
+no fact and waives no gate. **B, now:** `bin/board` and `bin/concept` print
+one line when the relay is off and a board folder exists — what the relay
+does and the command that turns it on — since with it off the user carries
+every ring of every review and answer. **D, later:** `setup.sh new-board`
+turns the relay on when the first board is created, says so, and
+`bin/relay off` still works; taken only after the arming handshake has been
+seen to work on the user's machine, because the protocol's caution about a
+ring lost on a permission prompt is earned. **Where:** `bin/board`,
+`bin/concept`, `tools/session/relay.py brief`; later `setup.sh new-board`,
+`RELAY_PROTOCOL.md` §0 (the default). **Size:** 1 h now; 1 h later.
+**Gate:** B decided — tool; D waits on one board's run, then the user's word.
 
 ## Phase 3 — new mechanisms
 
