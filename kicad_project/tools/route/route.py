@@ -1183,8 +1183,12 @@ def copper_gates(B, S):
     CC.G = G
     fields = guide.field_boxes(B.b, G, B.pn)
     if G.get("shape"):
-        s0 = SHAPE.audit(B.b, B.pn, FIELDS=fields)
-        s1 = SHAPE.audit(S.b, S.pn, FIELDS=fields)
+        # shape.py: OPEN must stay under half the thinnest track, or the opening eats the track and
+        # every free end of it reads as a "nub" (a 0.1016 inner-layer track against the 0.055 default)
+        thin = min((B.mm(t.GetWidth()) for t in S.b.GetTracks() if t.Type() != B.pn.PCB_VIA_T), default=0.2)
+        open_ = min(0.055, thin / 2 - 0.005)
+        s0 = SHAPE.audit(B.b, B.pn, FIELDS=fields, OPEN=open_)
+        s1 = SHAPE.audit(S.b, S.pn, FIELDS=fields, OPEN=open_)
         near = lambda x, L: any(t["kind"] == x["kind"] and t["net"] == x["net"] and t["layer"] == x["layer"]
                                 and abs(t["at"][0] - x["at"][0]) <= 0.3 and abs(t["at"][1] - x["at"][1]) <= 0.3 for t in L)
         new = [x for x in s1 if not near(x, s0)]
@@ -1258,7 +1262,8 @@ def cmd_audit(a):
         fields = guide.field_boxes(B.b, G, B.pn)
     if G.get("shape"):
         import shape as SHAPE
-        sites = SHAPE.audit(B.b, B.pn, FIELDS=fields)
+        thin = min((B.mm(t.GetWidth()) for t in B.b.GetTracks() if t.Type() != B.pn.PCB_VIA_T), default=0.2)
+        sites = SHAPE.audit(B.b, B.pn, FIELDS=fields, OPEN=min(0.055, thin / 2 - 0.005))   # under half the thinnest track
         out = Path(a.board) / "routing" / "shape_sites.json"
         out.parent.mkdir(exist_ok=True)
         out.write_text(json.dumps(sites, indent=1))
