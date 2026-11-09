@@ -26,6 +26,11 @@ a run that reaches 0 has satisfied all of them at once.  It anneals from the
 current positions; `--seed` and `--iters` make a run reproducible, and the
 result is a plain placement plan for `place.py check` to judge independently --
 this file never writes the board.
+
+The restarts run in parallel (tools/par.py: forked after the board is loaded,
+each with its own seed); the best is chosen exactly as the serial loop would
+-- in restart order, the first to reach zero ends it -- so the plan and the
+printed lines are the same with HW_JOBS=1.
 """
 
 import argparse
@@ -36,7 +41,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import place as P  # noqa: E402
+import par  # noqa: E402
 
 
 def main():
@@ -170,8 +177,8 @@ def main():
             c += 5 * (max(0.0, lo - g) + max(0.0, g - hi))
         return c
 
-    best = None
-    for rs in range(a.restarts):
+    def anneal(rs):
+        """One restart, from the board's positions, with its own seed: (cost, state) -- plain data."""
         rnd = random.Random(a.seed + rs * 977)
         state = {}
         for ref, m in movable.items():
@@ -203,8 +210,12 @@ def main():
                 state[ref] = old
             if cur < 1e-9:
                 break
+        return cur, dict(state)
+
+    best = None
+    for rs, (cur, state) in enumerate(par.pmap(anneal, range(a.restarts), note="pack restarts")):
         if best is None or cur < best[0]:
-            best = (cur, dict(state))
+            best = (cur, state)
         print(f"  restart {rs}: cost {cur:.3f}")
         if cur < 1e-9:
             break
