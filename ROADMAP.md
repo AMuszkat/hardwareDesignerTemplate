@@ -278,10 +278,15 @@ with the system C compiler into `tools/.native/` and loaded through ctypes
 over the existing `bytearray` and `array` buffers (no Python headers, so it
 works with KiCad.app's bundled Python too). `maze.py` falls back to pure
 Python when the library is missing; a fixture routed both ways must be
-identical. `SETUP.md`: a C compiler becomes a requirement. **Evidence:** 18 s
-per iteration is the inner loop; a compiled A* over the same arrays is
-typically 20–100× faster. **Size:** 1–2 weeks. **Gate:** user (the
-requirement), then tool.
+identical. Decided 2026-11-09 (option B): the C compiler is an OPTIONAL
+requirement in `SETUP.md`, in Blender's tier — `setup.sh check` prints the
+install command (`build-essential`, `gcc`, the Xcode command line tools) and
+a note that the router runs in pure Python without it; install completes
+either way; and every router run prints which core is active (`route.py
+rules` and the netgroup log's first line), so a slow run is never a mystery.
+No prebuilt binaries in the repo. **Evidence:** 18 s per iteration is the
+inner loop; a compiled A* over the same arrays is typically 20–100× faster.
+**Size:** 1–2 weeks. **Gate:** decided — now tool.
 
 **S2 · A symbol generator from a pin table.** `tools/sch/symgen.py`: from a
 CSV of pin number, name, type and function or bank, units by function, at
