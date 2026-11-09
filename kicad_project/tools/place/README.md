@@ -41,13 +41,13 @@ board):
 
 | key | meaning |
 |---|---|
-| `keepouts` | `{name, rect: [x0, y0, x1, y1], side?, allow?}`, board-relative mm from the outline's top-left, `null` = open side. Reservations from `handoff/11_floorplan.svg` for parts not placed yet (connectors with their mates, a big IC) and zones other groups may not enter. **Delete a reservation when its part is placed**: from then on the real courtyard is the obstacle |
+| `keepouts` | `{name, rect: [x0, y0, x1, y1], side?, allow?}`, board-relative mm from the outline's top-left, `null` = open side. Reservations for parts not placed yet (connectors with their mates, a big IC) and zones other groups may not enter — written by `place.py seed` from `handoff/floorplan.json` (`"from": "handoff/floorplan.json"`; `seeded_zones` remembers them). **Delete a reservation when its part is placed**: from then on the real courtyard is the obstacle, and `seed` never puts it back |
 | `groups` | name → references. `check` prints each group's extent |
 | `fixed` | parts exempt from the outline/keep-out test (mounting holes: their standoff courtyard overhangs the edge by design) and expected as board-only footprints by `drc` |
 | `overhang` | connectors whose courtyard may cross the outline (right-angle male pins mate off-board) |
 | `ignore_nets` | nets left out of the connection-length report (GND pours) |
 | `min_courtyard_gap` | smallest courtyard gap `check` accepts (0.03 mm: touching is legal in DRC, float noise is not) |
-| `hole_to_edge` | minimum hole-to-edge distance, from `14_fab.md` (Board Setup has no field for it). Starts as `null`: `check` refuses until you transcribe it |
+| `hole_to_edge` | minimum hole-to-edge distance, from `14_fab.md` (Board Setup has no field for it). Starts as `null`: `check` refuses until `place.py seed` copies it from `handoff/fab.json` |
 | `net_report_limit` | how many nets `check` lists in its span report |
 | `labels.hide` | references whose designator never goes on silk |
 | `shared_pad` | `[{refs: [A, B], net, source}]`: two stock parts drawn as one selector, their `net` pads on one point and the parts at 90° (a 3-pad selector made of two 0402s). That pair skips the courtyard test -- their courtyards overlap by design -- and `check` proves the merge instead: the `net` pads coincide, one side, 90° apart. Everything else (foreign-net pads, holes, silk) is still tested. KiCad's own DRC reports the overlap: exclude it there with the handoff's comment |

@@ -108,6 +108,18 @@ WORKMANSHIP = [
     # ("plane layer", "In1.Cu: GND", "14_fab Physical Stackup"),
 ]
 
+# The floorplan's reservations as DATA (the SVG stays for the eye): each zone a
+# dict -- name, rect [x0, y0, x1, y1] in mm from the board outline's top-left
+# corner (None = open on that side), side "F" / "B" / "both", allow (the refs
+# that may stand in it), note, source. Published as handoff/floorplan.json and
+# as a table in 10_layout.md; the board's `place.py seed` writes them into its
+# placement.json keep-outs, with 14_fab's hole-to-edge, so a new board's
+# placement starts with nothing typed.             [floorplan.json, 10_layout.md]
+FLOORPLAN_ZONES = [
+    # {"name": "power", "rect": [3.0, 9.0, 21.5, 34.0], "side": "F",
+    #  "allow": ["U3", "C30", "C31"], "note": "the regulator block", "source": "11_floorplan.svg; D7"},
+]
+
 # Choices a review will flag that are intentional, with the reason. The
 # board session does not "fix" these.            Markdown. [04_deliberate.md]
 DELIBERATE = ""

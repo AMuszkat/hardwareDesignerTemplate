@@ -181,6 +181,19 @@ class Board:
         rows("CONNECTORS", self.get("CONNECTORS", []), (4,))
         rows("LAYOUT", self.get("LAYOUT", []), (2,))
         rows("WORKMANSHIP", self.get("WORKMANSHIP", []), (3,))
+        for i, z in enumerate(self.get("FLOORPLAN_ZONES", [])):
+            bad = None
+            if not isinstance(z, dict) or not z.get("name"):
+                bad = "a dict with a name"
+            elif not (isinstance(z.get("rect"), (list, tuple)) and len(z["rect"]) == 4
+                      and all(v is None or isinstance(v, (int, float)) for v in z["rect"])):
+                bad = "rect [x0, y0, x1, y1] in mm (None = open)"
+            elif z.get("side", "F") not in ("F", "B", "both"):
+                bad = "side F, B or both"
+            elif not isinstance(z.get("allow", []), (list, tuple)):
+                bad = "allow, a list of refs"
+            if bad:
+                die(f"{self.id}: FLOORPLAN_ZONES[{i}] must be {bad}, got {z!r:.100}")
         if self.get("WORKMANSHIP"):
             # the board's own parser judges the rows: a form it cannot read stops here, not there
             sys.path.insert(0, os.path.join(ROOT, "kicad_project", "tools", "route"))
@@ -421,6 +434,19 @@ class Board:
         if not self.get("LAYOUT"):
             L += ["None published yet — layout must not start until this "
                   "list exists.", ""]
+        Z = self.get("FLOORPLAN_ZONES", [])
+        if Z:
+            L += ["## Floorplan zones — `floorplan.json`", "",
+                  "Reservations, in mm from the board outline's top-left corner (— = open on that side): "
+                  "`floorplan.json` holds them and `tools/place/place.py seed` writes them into your "
+                  "`placement.json` keep-outs — never type them.", "",
+                  "| zone | x0 | y0 | x1 | y1 | side | may stand in it | note | source |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+            for z in Z:
+                r = ["—" if v is None else f"{v:g}" for v in z["rect"]]
+                L.append(f"| {z['name']} | {' | '.join(r)} | {z.get('side', 'F')} | "
+                         f"{', '.join(z.get('allow', [])) or '—'} | {z.get('note', '')} | {z.get('source', '')} |")
+            L.append("")
         W = self.get("WORKMANSHIP", [])
         if W:
             L += ["## Routing workmanship — `rules.json`", "",
@@ -1080,6 +1106,22 @@ class Board:
         if self.pinout:
             files["08_pin_accounting.md"] = self.pins_md()
         files["netlist.json"] = json.dumps(self.netlist(), indent=1, sort_keys=True) + "\n"
+        if self.get("FLOORPLAN_ZONES"):
+            files["floorplan.json"] = json.dumps(
+                {"origin": "the board outline's top-left corner, mm; null = open on that side",
+                 "zones": [{"name": z["name"], "rect": list(z["rect"]), "side": z.get("side", "F"),
+                            "allow": list(z.get("allow", [])), "note": z.get("note", ""),
+                            "source": z.get("source", "")} for z in self.get("FLOORPLAN_ZONES")]},
+                indent=1) + "\n"
+        if self.fab:
+            order, cons, stack, classes, _rules = self.fab_tables()
+            files["fab.json"] = json.dumps(
+                {"profile": self.fab.NAME, "example": bool(getattr(self.fab, "EXAMPLE", False)),
+                 "constraints": {n: {"value": v, "basis": b_} for n, v, b_ in cons},
+                 "stackup": [{"layer": a_, "material": m_, "carries": c_} for a_, m_, c_ in stack],
+                 "netclasses": [{"class": c_, "nets": n_, "track": t_, "clearance": k_, "via": v_, "note": o_}
+                                for c_, n_, t_, k_, v_, o_ in classes]},
+                indent=1) + "\n"
         if self.get("WORKMANSHIP"):
             files["rules.json"] = json.dumps([{"rule": r, "setting": v, "source": s_}
                                               for r, v, s_ in self.get("WORKMANSHIP")], indent=1) + "\n"

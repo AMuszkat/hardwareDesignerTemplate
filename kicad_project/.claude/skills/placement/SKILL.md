@@ -23,9 +23,15 @@ script runs as `tools/kpy tools/place/<script>.py` (it imports `pcbnew`).
   `board-setup` skill). Placement against default rules is placement twice.
 - Read `handoff/10_layout.md` for the group (loop areas, "at the pin",
   sensitive zones, the deliberate choices in `04_deliberate.md`) and the
-  group's area in `handoff/11_floorplan.svg` if the handoff has one. Put the
-  floorplan's reservations into `placement.json` `keepouts` before the first
-  part moves.
+  group's area in `handoff/11_floorplan.svg` if the handoff has one.
+- `tools/kpy tools/place/place.py seed --board <board>` before the first part
+  moves, and after every handoff revision that touches the floorplan or
+  `14_fab.md`: it writes `handoff/floorplan.json`'s zones into
+  `placement.json` `keepouts`, 14_fab's hole-to-edge into `hole_to_edge`, and
+  the layer and class tables into `ROUTING_PLAN.md` §1 — nothing typed. A
+  reservation you delete once its part is placed is never put back. With no
+  `floorplan.json` published, a reservation that exists only in the SVG is a
+  question (ask for it as data), not a rectangle you measure off a picture.
 - `tools/kpy tools/place/place.py sync --board <board>` exits 0. If it does
   not, the board is not what the library says: fix that first (§4).
 

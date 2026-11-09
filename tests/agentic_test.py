@@ -143,6 +143,10 @@ LAYOUT = [
      "via links straight on the pad's axis, 45 only as a listed last resort; every copper-shape rule applies.",
      ["fixture"]),
 ]
+FLOORPLAN_ZONES = [
+    {"name": "keep clear", "rect": [32.0, 23.0, 40.0, 28.0], "side": "F", "allow": [],
+     "note": "fixture: a reservation nothing stands in", "source": "fixture"},
+]
 WORKMANSHIP = [
     ("joints", "0/45", "10_layout #3"),
     ("copper to edge", "0.5 mm", "fixture"),
@@ -613,6 +617,18 @@ def stage_pcb(copy, board, quick):
     if "AUDIT " not in out:
         ok = False
         notes.append("audit: " + tail(out, 2))
+    # H2: the handoff's zones, hole-to-edge and layer / class tables seeded, and the placement
+    # checks with no hand edit
+    rc, out = run([kpy, str(tools / "place" / "place.py"), "seed", "--board", str(board)], kp)
+    (board / "placement" ).mkdir(exist_ok=True)
+    (board / "placement" / "empty.json").write_text("{}\n")
+    rc2, out2 = run([kpy, str(tools / "place" / "place.py"), "check", "--board", str(board), "placement/empty.json"], kp)
+    cfg = json.loads((board / "placement.json").read_text())
+    nums["seed"] = f"{len(cfg.get('keepouts', []))} keep-out(s), hole_to_edge {cfg.get('hole_to_edge')}"
+    nums["placement_check_exit"] = rc2
+    if rc or rc2 or cfg.get("hole_to_edge") is None or "BEGIN handoff/fab.json" not in (board / "ROUTING_PLAN.md").read_text():
+        ok = False
+        notes.append(f"seed / check: {tail(out, 2)} / exit {rc2}: {tail(out2, 2)}")
     # a hand edit inside the generated block must fail the snapshot's guide-block gate
     gp = board / "general_routing_guide.md"
     gp.write_text(gp.read_text().replace("| via to pad gap | 0.15 mm |", "| via to pad gap | 0.1 mm |", 1))
@@ -643,7 +659,7 @@ def stage_pcb(copy, board, quick):
           f"{nums['check2_verdict']}); "
           f"audit {nums['audit_s']} s; snapshot pcb serial {nums['snapshot_serial_s']} s, "
           f"parallel {nums['snapshot_parallel_s']} s; guide {nums['guide_sync']}, a hand edit in it -> "
-          f"guide-block {nums['guide_block_after_hand_edit']}" + ("; " + "; ".join(notes) if notes else ""), **nums)
+          f"guide-block {nums['guide_block_after_hand_edit']}; seed: {nums['seed']}, place.py check exit {rc2}" + ("; " + "; ".join(notes) if notes else ""), **nums)
 
 
 def stage_prelayout():
