@@ -160,6 +160,9 @@ def main():
                     help="when negotiation stalls, re-route the overlapping nets one at a time, the rest hard")
     ap.add_argument("--limit", type=int, default=900000,
                     help="A* expansions per route; a big window hits the default and reads as 'walled in'")
+    ap.add_argument("--full", action="store_true",
+                    help="re-route every net every iteration (classic PathFinder, the pre-R2 result); default: "
+                         "only the nets that overlap, all of them when the overlap stalls")
     ap.add_argument("--timeout", type=float, default=0,
                     help="seconds: stop between iterations when the next would not end inside it, "
                          "partial written (use this, not a `timeout` prefix)")
@@ -898,7 +901,7 @@ def main():
 
         paths = G.negotiate(jobs, iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
                             hist_decay=a.hist_decay, seed=a.seed, layer_cost=S.get("layer_cost"),
-                            limit=a.limit, on_iter=on_iter)
+                            limit=a.limit, on_iter=on_iter, rip="full" if a.full else "conflict")
         if paths is None and getattr(G, "last", None) and a.repair and not stopped:
             # REPAIR: negotiation left a few overlaps.  Re-route the nets involved one at a time
             # with everything else HARD (pres=None) -- a stall is often one net that simply has

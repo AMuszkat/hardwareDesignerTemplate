@@ -334,6 +334,14 @@ its docstring. What the spec has to be told:
   through which the only exits need a 90-degree turn (board2's R5: a
   pre-routed lane hard against the via row). Draw the fixed copper with
   `view.py` and free the lane; more `--limit` does not help.
+- **Only the overlapping nets are ripped up** after the first iteration
+  (conflict-only PathFinder): the others keep their paths, and the rising
+  cost of the contested cells moves the overlapping nets round them. When
+  the overlap has not fallen for 4 iterations, one iteration re-routes every
+  net. `--full` re-routes every net every iteration — the router's result
+  before this, for a run that must reproduce an old plan. On the agentic
+  fixtures: 16 nets 52.5 s → 21 s in the same 14 iterations; the PCB
+  fixture's plan identical, 29 s → 21 s. Deterministic per seed either way.
 - **Bound a run with `--timeout S`, not a `timeout` prefix.** It stops
   between iterations when the next one (sized by the slowest so far) would not
   end inside S seconds, prints the contested cells and `reach` per net, and

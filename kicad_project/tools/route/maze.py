@@ -605,12 +605,23 @@ class Grid:
         return seen
 
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
-                  log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, **kw):
+                  log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
         Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
         after every iteration; a truthy return (a reason) stops an unconverged run there.
-        self.walled names the net that had no path at all (None otherwise)."""
+        self.walled names the net that had no path at all (None otherwise).
+
+        rip="conflict" (the default): after iteration 1 only the nets that overlap another are
+        ripped up and routed again -- the rest keep their paths, and their cells' rising
+        present and history costs still push the others round them.  When the overlap count has
+        not fallen for `stall` iterations, one iteration re-routes every net (a net that does
+        not overlap may have to move to make room).  rip="full" re-routes every net every
+        iteration (classic PathFinder; the result the router gave before conflict-only rip-up).
+        Deterministic per seed either way."""
         self.walled = None
+        if rip not in ("conflict", "full"):
+            raise ValueError(f"rip must be 'conflict' or 'full', got {rip!r}")
+        bad, best, since, full_next = {}, None, 0, False
         allgoals = set()
         for jb in jobs:
             allgoals |= set(jb["goals"])
@@ -622,8 +633,12 @@ class Grid:
         for it in range(1, iters + 1):
             if it > 1:
                 rnd.shuffle(jobs)                 # a fixed order lets two nets swap places for ever
+            full = rip == "full" or it == 1 or full_next
+            full_next = False
             for jb in jobs:
                 n = jb["net"]
+                if not full and n in paths and not bad.get(n):
+                    continue                      # no overlap: its path stays
                 self.unroute(n)
                 res = self.route(n, jb["src"], jb["src_layer"], jb["goals"], jb["goal_layer"],
                                  jb["allowed"], pres=pres, hmap=hm, via_mask=jb.get("via_mask"),
@@ -638,7 +653,14 @@ class Grid:
             bad = {n: self.conflicts(n, *paths[n]) for n in paths}
             nbad = sum(1 for v in bad.values() if v)
             ncell = sum(len(v) for v in bad.values())
-            log(f"   iteration {it}: pres {pres:.2f}, {nbad} nets overlap on {ncell} cells")
+            log(f"   iteration {it}: pres {pres:.2f}, {nbad} nets overlap on {ncell} cells"
+                + (" (all nets re-routed)" if full and rip != "full" and it > 1 else ""))
+            if best is None or ncell < best:
+                best, since = ncell, 0
+            else:
+                since += 1
+                if since >= stall:
+                    full_next, since = True, 0
             self.last = (dict(paths), bad)
             stop = on_iter(it, paths, bad) if on_iter else None
             if not ncell:

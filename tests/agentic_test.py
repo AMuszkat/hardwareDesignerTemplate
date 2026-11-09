@@ -465,7 +465,7 @@ def stage_draw(copy, board):
           draw_s=round(t_draw, 2), **{k.replace(" ", "_"): v[0] == 0 for k, v in res.items()})
 
 
-def stage_router(quick):
+def stage_router(quick, rip="conflict"):
     t0 = time.time()
     sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
     import maze                                   # noqa: E402
@@ -493,7 +493,7 @@ def stage_router(quick):
     log = []
     t1 = time.time()
     paths = G.negotiate(jobs, iters=80, pres0=0.5, pres_mul=1.1, hist_inc=0.5, hist_decay=0.7, seed=1,
-                        log=log.append, via_cost=2.0, limit=400000)
+                        log=log.append, via_cost=2.0, limit=400000, rip=rip)
     t_route = time.time() - t1
     iters = sum(1 for ln in log if ln.strip().startswith("iteration"))
     if paths is None:
@@ -520,7 +520,7 @@ def stage_router(quick):
                     bad_joint += 1
     ok = conflicts == 0 and bad_joint == 0
     stage("router", "PASS" if ok else "FAIL", time.time() - t0,
-          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers; converged in {iters} iteration(s), {t_route:.1f} s "
+          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers, rip {rip}; converged in {iters} iteration(s), {t_route:.1f} s "
           f"({t_route / max(iters, 1):.2f} s/iteration); {nseg} segments, {nvia} vias; conflicts {conflicts}; "
           f"joints not 0/45: {bad_joint}; result sha {h.hexdigest()[:10]}",
           nets=n, cells=G.nx * G.ny, iterations=iters, route_s=round(t_route, 2),
@@ -743,6 +743,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quick", action="store_true", help="a smaller router problem")
     ap.add_argument("--keep", action="store_true", help="keep the scratch copy and print its path")
+    ap.add_argument("--rip", choices=["conflict", "full"], default="conflict",
+                    help="the router stage's rip-up: conflict (the default) or full (the pre-R2 result)")
     ap.add_argument("--out", default=str(ROOT / "out" / "agentic"), help="where the report goes")
     a = ap.parse_args()
     t0 = time.time()
@@ -766,7 +768,7 @@ def main():
         else:
             stage("schematic", "SKIP", 0.0, "no handoff to plan from")
         stage_draw(copy, board) if (board and kcli and stock) else stage("draw", "SKIP", 0.0, "needs kicad-cli and KiCad's symbols")
-        stage_router(a.quick)
+        stage_router(a.quick, a.rip)
         stage_fanout(tmp)
         stage_snapshot(copy, kcli) if board else stage("snapshot", "SKIP", 0.0, "no board")
         stage_pcb_tools(pcb)
