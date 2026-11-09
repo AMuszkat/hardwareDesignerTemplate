@@ -207,7 +207,11 @@ def box_symbol(name, ref, units):
     s += _prop("Description", "fixture", 0, 0, hide=True)
     for u, (left, right) in enumerate(units, start=1):
         rows = max(len(left), len(right))
-        w = 12.7 if rows > 4 else 10.16
+        # wide enough for the longest name on each side to clear the other: 0.95 x 1.27 mm a
+        # character (tools/sch/model.py CHAR_W), 1.016 mm name offset each side, 1.27 mm between
+        # (a fixed 12.7 mm put MCU16's OSC_OUT over BOOT0 -- check's own finding)
+        names = (max((len(p[1]) for p in left), default=0) + max((len(p[1]) for p in right), default=0))
+        w = max(10.16, 2.54 * math.ceil((names * 0.95 * 1.27 + 2 * 1.016 + 1.27) / 2.54))
         s += f'\t\t(symbol "{name}_{u}_1"\n' + _rect(0, 0, w, -2.54 * (rows + 1))
         for i, (num, pname, kind) in enumerate(left):
             s += _pin(kind, -2.54, -2.54 * (i + 1), 0, pname, num)
@@ -248,19 +252,35 @@ def fixture_library():
 
 # == stages ==================================================================
 
+def free_board(copy):
+    """The first board number the copy has no board for: a project with board1 / board2
+    gets the fixture as board3 (a fresh template as board1)."""
+    n = 1
+    while ((copy / "tools" / "handoff" / "boards" / f"board{n}.py").exists()
+           or any((copy / "kicad_project").glob(f"board{n}_*"))):
+        n += 1
+    return n
+
+
+BOARD = None        # "boardN", set by stage_handoff
+
+
 def stage_handoff(copy):
+    global BOARD
     t0 = time.time()
-    rc, out = run([sys.executable, "tools/handoff/new_board.py", "1", "agentic", "Agentic test board",
+    n = free_board(copy)
+    BOARD = f"board{n}"
+    rc, out = run([sys.executable, "tools/handoff/new_board.py", str(n), "agentic", "Agentic test board",
                    "--fab", "example_standard"], copy)
     if rc:
         stage("handoff", "FAIL", time.time() - t0, "new_board: " + tail(out))
         return None
-    bus = copy / "studies" / "components_board1.py"
+    bus = copy / "studies" / f"components_{BOARD}.py"
     bus.write_text(bus.read_text() + "\nCOMPONENTS = " + repr(COMPONENTS) + "\n")
-    mod = copy / "tools" / "handoff" / "boards" / "board1.py"
+    mod = copy / "tools" / "handoff" / "boards" / f"{BOARD}.py"
     mod.write_text(mod.read_text() + BOARD_DATA)
     t1 = time.time()
-    rc, out = run([sys.executable, "tools/handoff/publish.py", "--board", "board1"], copy)
+    rc, out = run([sys.executable, "tools/handoff/publish.py", "--board", BOARD], copy)
     t_pub = time.time() - t1
     if rc:
         stage("handoff", "FAIL", time.time() - t0, "publish: " + tail(out))
@@ -269,7 +289,7 @@ def stage_handoff(copy):
     t2 = time.time()
     rc2, out2 = run([sys.executable, "tools/handoff/publish.py", "--check", "--all"], copy)
     t_chk = time.time() - t2
-    board = copy / "kicad_project" / "board1_agentic"
+    board = copy / "kicad_project" / f"{BOARD}_agentic"
     nl = json.loads((board / "handoff" / "netlist.json").read_text())
     pages = sorted(p.name for p in (board / "handoff").iterdir())
     ok = rc2 == 0 and nl.get("complete") is True
@@ -350,10 +370,11 @@ def stage_schematic(copy, board, kcli, stock):
                       findings=[f"{f[0]} {f[1]} {f[3]}" for f in findings])
         ok = not (missing or extra or twice or dangling or findings)
         if kcli:
-            ok = emit.prove(src, out) == 0 and ok
+            ok = real_prove(src, out) == 0 and ok
         return 0 if ok else 1
 
-    emit.prove = prove_structural
+    real_prove = emit.prove      # the kicad-cli proof, kept: the wrapper below replaces emit.prove, and
+    emit.prove = prove_structural  # calling emit.prove from inside it would call itself (RecursionError)
     t1 = time.time()
     import contextlib, io
     buf = io.StringIO()
@@ -494,7 +515,7 @@ def stage_fanout(tmp):
 
 def stage_snapshot(copy, kcli):
     t0 = time.time()
-    rc, out = run([sys.executable, "tools/review/snapshot.py", "--board", "board1", "--kind", "schematic", "--id", "RV0"], copy)
+    rc, out = run([sys.executable, "tools/review/snapshot.py", "--board", BOARD, "--kind", "schematic", "--id", "RV0"], copy)
     if not kcli:
         stage("snapshot", "SKIP" if rc == 2 else "FAIL", time.time() - t0,
               f"exit {rc} (2 = nothing to review, by design: no kicad-cli here); " + tail(out, 1), exit=rc)
