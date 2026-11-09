@@ -33,6 +33,12 @@ nets.csv -- every placed part's every pin with its name, type, no-connect flag
 and net. tmpWork/ is the reviewer's only scratch folder:
 temporary, emptied with every retake.
 
+The gates are independent child processes and run concurrently (a thread
+pool waiting on them; HW_JOBS=1 runs them one at a time); a gate that reads
+another's output (the sheet PNGs read the PDF) waits for it, and SUMMARY.md
+lists them in the same order either way. The board's DRC cache
+(routing/.drc_cache) is not copied: a review's DRC is its own run.
+
 Writes SUMMARY.md (one row per gate) beside the outputs. Exit 0 = every gate
 passed, 1 = a gate failed (the review starts from it), 2 = the snapshot itself
 could not be made.
@@ -49,7 +55,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +74,7 @@ SKIP_RE = re.compile(r"(^~.*\.lck$|\.lck$|^fp-info-cache$|^_autosave-|-backups$|
 TILE_PX = (1280, 896)
 SHEET_DPI, PCB_DPI = 300, 600          # 1.27 mm text = 15 px; a 0.5 mm pitch = 12 px
 OVERLAP_MM = 12
+DRC_NOTE = re.compile(r"^drc: .*(: kicad-cli run,|from the cache)")
 # Rows that are outputs for the reader, not gates.
 EXPORTS = ("netlist", "bom", "sch-pdf", "sch-png", "pcb-render", "pins", "sheet-tiles", "pcb-tiles")
 TMPWORK_README = """\
@@ -101,7 +110,7 @@ def ignore(src, names):
     for n in names:
         p = rel / n
         if p.is_dir() and (n in ("renders", ".history", ".sch_backups", ".board_setup_backups",
-                                 "__pycache__") or n.endswith("-backups")
+                                 "__pycache__", ".drc_cache") or n.endswith("-backups")
                            or (n == "preview" and rel.name == "sch_plan")
                            or (n == "out" and rel.name == "build")):
             out.add(n)
@@ -132,25 +141,60 @@ def sha(p):
     return h.hexdigest()
 
 
-class Run:
-    def __init__(self, out):
-        self.out, self.rows = out, []
+def jobs():
+    try:
+        return max(1, int(os.environ.get("HW_JOBS", "0"))) if os.environ.get("HW_JOBS") else (os.cpu_count() or 1)
+    except ValueError:
+        return os.cpu_count() or 1
 
-    def gate(self, name, cmd, cwd=None, ok=None, note=""):
-        """Run one gate; its whole output goes to gates/<name>.txt."""
-        log = self.out / "gates" / f"{name}.txt"
-        try:
-            r = subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True, text=True,
-                               timeout=1800)
-            text, code = (r.stdout or "") + (r.stderr or ""), r.returncode
-        except (OSError, subprocess.TimeoutExpired) as e:
-            text, code = f"could not run: {e}", -1
-        log.write_text("$ " + " ".join(str(c) for c in cmd) + f"\n(exit {code})\n\n" + text)
-        passed = ok(code, text) if ok else code == 0
-        tail = next((ln.strip() for ln in reversed(text.strip().splitlines()) if ln.strip()), "")
-        self.rows.append((name, "PASS" if passed else ("ERROR" if code == -1 else "FAIL"),
-                          note or tail[:160], f"gates/{log.name}"))
-        return passed, text
+
+class Run:
+    """The gates, run concurrently.  Each gate reserves its row when it is STARTED, so the
+    summary's order is the order of the calls, whatever order the gates finish in."""
+
+    def __init__(self, out, n_jobs=None):
+        self.out, self.rows, self.pending, self.times = out, [], [], {}
+        self.n_jobs = n_jobs or jobs()
+        self.pool = ThreadPoolExecutor(max_workers=self.n_jobs)
+
+    def gate(self, name, cmd, cwd=None, ok=None, note="", post=None, after=None):
+        """Start one gate; its whole output goes to gates/<name>.txt.  `after`: a gate (the
+        future this returns) whose output this one reads -- waited for first.  `post(i)`
+        rewrites row i once the gate is done.  Returns a future of (passed, text)."""
+        i = len(self.rows)
+        self.rows.append((name, "not run", "still running", ""))
+
+        def work():
+            if after is not None:
+                after.result()
+            log = self.out / "gates" / f"{name}.txt"
+            t0 = time.monotonic()
+            try:
+                r = subprocess.run([str(c) for c in cmd], cwd=cwd, capture_output=True, text=True,
+                                   timeout=1800)
+                text, code = (r.stdout or "") + (r.stderr or ""), r.returncode
+            except (OSError, subprocess.TimeoutExpired) as e:
+                text, code = f"could not run: {e}", -1
+            self.times[name] = time.monotonic() - t0
+            log.write_text("$ " + " ".join(str(c) for c in cmd) + f"\n(exit {code})\n\n" + text)
+            passed = ok(code, text) if ok else code == 0
+            # the DRC cache's stderr note ("drc: ... kicad-cli run") is not the gate's result line
+            tail = next((ln.strip() for ln in reversed(text.strip().splitlines())
+                         if ln.strip() and not DRC_NOTE.match(ln)), "")
+            self.rows[i] = (name, "PASS" if passed else ("ERROR" if code == -1 else "FAIL"),
+                            note or tail[:160], f"gates/{log.name}")
+            if post:
+                post(i)
+            return passed, text
+
+        f = self.pool.submit(work)
+        self.pending.append(f)
+        return f
+
+    def wait(self):
+        for f in self.pending:
+            f.result()
+        self.pending = []
 
     def skip(self, name, why):
         self.rows.append((name, "not run", why, ""))
@@ -158,17 +202,19 @@ class Run:
 
 def erc(run, sch, out):
     j = out / "erc.json"
-    run.gate("erc", ["kicad-cli", "sch", "erc", "--format", "json", "--severity-all", "-o", j, sch])
-    if not j.exists():
-        return
-    d = json.loads(j.read_text())
-    n = {"error": 0, "warning": 0}
-    for s in d.get("sheets", []):
-        for v in s.get("violations", []):
-            n[v.get("severity", "error")] = n.get(v.get("severity", "error"), 0) + 1
-    name, _, _, log = run.rows[-1]
-    run.rows[-1] = (name, "PASS" if n["error"] == 0 and n["warning"] == 0 else "FAIL",
-                    f"{n['error']} errors, {n['warning']} warnings (erc.json)", log)
+
+    def count(i):
+        if not j.exists():
+            return
+        d = json.loads(j.read_text())
+        n = {"error": 0, "warning": 0}
+        for s in d.get("sheets", []):
+            for v in s.get("violations", []):
+                n[v.get("severity", "error")] = n.get(v.get("severity", "error"), 0) + 1
+        name, _, _, log = run.rows[i]
+        run.rows[i] = (name, "PASS" if n["error"] == 0 and n["warning"] == 0 else "FAIL",
+                       f"{n['error']} errors, {n['warning']} warnings (erc.json)", log)
+    run.gate("erc", ["kicad-cli", "sch", "erc", "--format", "json", "--severity-all", "-o", j, sch], post=count)
 
 
 def schematic(run, b, out, root_sch):
@@ -397,11 +443,15 @@ def exports(run, out, root_sch):
              ok=lambda c, t: c == 0 and columns(out / "bom.csv") == labels.split(","),
              note="bom.csv (a column missing fails)")
     pdf = out / "schematic.pdf"
-    run.gate("sch-pdf", ["kicad-cli", "sch", "export", "pdf", "-o", pdf, root_sch], note="schematic.pdf")
-    if pdf.exists() and shutil.which("pdftoppm"):
+    made = run.gate("sch-pdf", ["kicad-cli", "sch", "export", "pdf", "-o", pdf, root_sch], note="schematic.pdf")
+    if shutil.which("pdftoppm"):
         (out / "sheets").mkdir(exist_ok=True)
-        run.gate("sch-png", ["pdftoppm", "-png", "-scale-to", str(TILE_PX[0]), pdf, out / "sheets" / "sheet"],
-                 note="sheets/sheet-N.png, each page whole (detail: sheets/tiles/)")
+        # pdftoppm on a missing PDF fails, which is the row the serial version left out: started
+        # only when the PDF exists, waited for after it
+        made.result()
+        if pdf.exists():
+            run.gate("sch-png", ["pdftoppm", "-png", "-scale-to", str(TILE_PX[0]), pdf, out / "sheets" / "sheet"],
+                     note="sheets/sheet-N.png, each page whole (detail: sheets/tiles/)")
 
 
 def pcb(run, b, out):
@@ -454,6 +504,9 @@ def main():
         {"board": src.name, "kind": a.kind, "id": rid, "handoff_rev": rev,
          "taken": datetime.datetime.now().isoformat(timespec="seconds"), "files": files}, indent=1))
 
+    if a.kind == "pcb" and not list(b.glob("*.kicad_pcb")):
+        die(f"{src.name}: no .kicad_pcb -- nothing to review yet")
+    t_gates = time.monotonic()
     run = Run(out)
     if a.kind == "schematic":
         schematic(run, b, out, root_sch)
@@ -461,11 +514,14 @@ def main():
         erc(run, root_sch, out)
         run.gate("handoff-parity", [VPY, TOOLS / "sch" / "sch.py", "parity", "--board", b, "--handoff"],
                  ok=lambda c, t: c == 0 and "HANDOFF PARITY OK" in t)
-        if not list(b.glob("*.kicad_pcb")):
-            die(f"{src.name}: no .kicad_pcb -- nothing to review yet")
         pcb(run, b, out)
     exports(run, out, root_sch)
+    run.wait()                                  # the reader's inputs: netlist, PDFs, renders
+    wall = time.monotonic() - t_gates
+    serial = sum(run.times.values())
     reader(run, out, a.kind)
+    print(f"gates: {len(run.times)} in {wall:.1f} s on {run.n_jobs} worker(s) "
+          f"({serial:.1f} s if run one at a time)", file=sys.stderr)
 
     gates = [r for r in run.rows if r[0] not in EXPORTS]
     failed = [r for r in gates if r[1] in ("FAIL", "ERROR")]
