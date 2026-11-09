@@ -9,6 +9,7 @@
     tools/kpy tools/place/place.py labels --board board1 [--dry-run]
     tools/kpy tools/place/place.py park   --board board1 [--refs J1,H1]
     tools/kpy tools/place/place.py drc    --board board1
+    tools/kpy tools/place/place.py render --board board1 [--refs U2,C10 | --box X0,Y0,X1,Y1] [--side B]
 
   gaps    courtyard gap to the nearest neighbour on each side, for every
           footprint on the board (per side).  Read-only.
@@ -34,6 +35,11 @@
   park    move every part not kept off the board (east of the outline) so a
           re-placement starts from a clean floor.  KiCad must be closed.
   drc     KiCad's DRC with the schematic-parity test ON, summarised.
+  render  the placed area as a PNG to look at: copper, silk, courtyard and
+          outline of one side (--side, default F), cropped to the courtyards
+          of --refs plus --margin mm, or to --box (board mm), else to the
+          board; --out (default <board>/placement/render_<side>.png),
+          --scale (pixels per point, default 6).  Read-only.
 
 A plan is JSON {"REF": [x, y, rot]} or [x, y, rot, "B"] for the back side
 (absolute board mm, rotation in degrees as KiCad shows it).
@@ -1157,6 +1163,44 @@ def cmd_drc(a):
     return rc
 
 
+def cmd_render(a):
+    """kicad-cli's PDF of one side, cropped (pdfcrop.py) -- the picture the placement skill looks at."""
+    import subprocess
+    import tempfile
+    import pdfcrop
+    B = Board(a.board)
+    s = a.side
+    layers = f"{s}.Cu,{s}.SilkS,{s}.CrtYd,Edge.Cuts"
+    if a.box:
+        box = tuple(float(v) for v in a.box.split(","))
+        if len(box) != 4:
+            die("--box takes X0,Y0,X1,Y1")
+    elif a.refs:
+        boxes = []
+        for r in a.refs.split(","):
+            if r not in B.fps:
+                die(f"--refs: {r} is not on the board")
+            c = B.courtyard(B.fps[r]) or B.box(B.fps[r].GetBoundingBox())
+            boxes.append(c[:4])
+        m = a.margin
+        box = (min(b[0] for b in boxes) - m, min(b[1] for b in boxes) - m,
+               max(b[2] for b in boxes) + m, max(b[3] for b in boxes) + m)
+    else:
+        box = None                                    # the ink: the board and what is on it
+    out = Path(a.out) if a.out else Path(a.board) / "placement" / f"render_{s}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as td:
+        pdf = Path(td) / "side.pdf"
+        r = subprocess.run(["kicad-cli", "pcb", "export", "pdf", "--layers", layers, "--mode-single",
+                            "--black-and-white", "-o", str(pdf), str(B.pcb)], capture_output=True, text=True)
+        if not pdf.exists():
+            die(f"kicad-cli pcb export pdf failed: {r.stderr.strip()[-300:]}", 4)
+        if not pdfcrop.raster(pdf, out, a.scale, box):
+            return 1
+    print(f"{out}" + (f"  (board mm {', '.join(f'{v:.2f}' for v in box)})" if box else "  (the whole board)"))
+    return 0
+
+
 def drc_summary(B, d, msg):
     """(lines, rc) of `place.py drc` for a loaded board, its DRC report and kicad-cli's
     output: rc 0 clean parity, 1 a parity problem or thin silk, 4 the test did not run
@@ -1196,12 +1240,18 @@ def drc_summary(B, d, msg):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["gaps", "check", "apply", "sync", "labels", "auto", "park", "drc", "silk"])
+    ap.add_argument("command", choices=["gaps", "check", "apply", "sync", "labels", "auto", "park", "drc", "silk",
+                                        "render"])
     ap.add_argument("moves", nargs="?", help="check/apply: plan JSON")
     ap.add_argument("--board", help="boardN, the folder name or a path (default: the folder "
                     "you are in, else this session's board)")
     ap.add_argument("--refs", help="gaps: only these references; park: references to leave in place")
     ap.add_argument("--dry-run", action="store_true", help="apply / labels / park: write nothing")
+    ap.add_argument("--side", choices=["F", "B"], default="F", help="render: the side to draw")
+    ap.add_argument("--box", help="render: X0,Y0,X1,Y1 in board mm")
+    ap.add_argument("--margin", type=float, default=2.0, help="render: mm round the --refs courtyards")
+    ap.add_argument("--scale", type=float, default=6.0, help="render: pixels per PDF point")
+    ap.add_argument("--out", help="render: the PNG to write")
     a = ap.parse_args()
     a.board = board_dir_arg(a.board)
     if a.moves:
@@ -1211,7 +1261,8 @@ def main():
     if a.command in ("check", "apply", "auto") and not a.moves:
         die(f"{a.command} needs a plan or spec file")
     sys.exit({"gaps": cmd_gaps, "check": cmd_check, "apply": cmd_apply, "sync": cmd_sync,
-              "labels": cmd_labels, "auto": cmd_auto, "park": cmd_park, "drc": cmd_drc, "silk": cmd_silk}[a.command](a))
+              "labels": cmd_labels, "auto": cmd_auto, "park": cmd_park, "drc": cmd_drc, "silk": cmd_silk,
+              "render": cmd_render}[a.command](a))
 
 
 if __name__ == "__main__":

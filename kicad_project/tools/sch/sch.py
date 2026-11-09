@@ -7,6 +7,8 @@
     tools/.venv/bin/python tools/sch/sch.py drawn  --board board1 [--plan DIR] [SHEET.kicad_sch ...]
     tools/.venv/bin/python tools/sch/sch.py frame  --board board1 [--plan DIR] [--remove]
     tools/.venv/bin/python tools/sch/sch.py parity --board board1 [--plan DIR | --handoff]
+    tools/.venv/bin/python tools/sch/sch.py pdf    --board board1 [--plan DIR] [--out FILE.pdf]
+    tools/.venv/bin/python tools/sch/sch.py ops    --board board1 SHEET [FROM [TO]] [--plan DIR]
     tools/.venv/bin/python tools/sch/sch.py rules
 
   check   the saved schematic against the standard (tools/sch/README.md, the
@@ -42,6 +44,12 @@
           and Exclude from BOM on schematic.json's "exclude_from_bom" globs --
           the two booleans no Konnect call sets (parsed tree, netlist proven
           unchanged, read back; flags.py).
+  pdf     the plan's preview as a PDF (default <plan>/preview.pdf) and one PNG
+          per page beside it (preview-N.png, when pdftoppm is installed): the
+          sheets to look at before drawing.  Read-only on the board.
+  ops     print a sheet's Konnect calls (<plan>/<SHEET>.ops.json), one line
+          each -- index, tool, arguments as compact JSON -- calls FROM to TO
+          (default: all), for reading a call list in chunks.
   rules   the rules and their numbers.
 
 Read-only on the board's KiCad files except `frame` and `flags`: plan writes under <out>
@@ -321,6 +329,52 @@ def dnp_diff(board, want, whose):
     return out
 
 
+def preview_root(plan_dir):
+    pros = sorted((Path(plan_dir) / "preview").glob("*/*.kicad_pro"))
+    if not pros:
+        sys.exit(f"no preview project under {Path(plan_dir) / 'preview'}: run `sch.py plan` first")
+    return pros[0].with_suffix(".kicad_sch")
+
+
+def cmd_pdf(a):
+    import shutil
+    import subprocess
+    board = boardsel.resolve(a.board)
+    plan_dir = Path(a.plan) if a.plan else Path(board) / "sch_plan"
+    root = preview_root(plan_dir)
+    out = Path(a.out) if a.out else plan_dir / "preview.pdf"
+    r = subprocess.run(["kicad-cli", "sch", "export", "pdf", "-o", str(out), str(root)],
+                       capture_output=True, text=True)
+    if not out.exists():
+        sys.exit(f"kicad-cli sch export pdf failed: {(r.stderr or r.stdout).strip()[-300:]}")
+    print(out)
+    if shutil.which("pdftoppm"):
+        stem = out.with_suffix("")
+        for old in out.parent.glob(f"{stem.name}-*.png"):
+            old.unlink()
+        subprocess.run(["pdftoppm", "-png", "-scale-to", "1600", str(out), str(stem)], check=False)
+        for png in sorted(out.parent.glob(f"{stem.name}-*.png")):
+            print(png)
+    else:
+        print("(pdftoppm not installed: no PNGs; read the PDF)")
+
+
+def cmd_ops(a):
+    board = boardsel.resolve(a.board)
+    plan_dir = Path(a.plan) if a.plan else Path(board) / "sch_plan"
+    name = a.sheet if a.sheet.endswith(".ops.json") else f"{a.sheet}.ops.json"
+    f = plan_dir / name
+    if not f.exists():
+        have = ", ".join(p.name[:-len(".ops.json")] for p in sorted(plan_dir.glob("*.ops.json")))
+        sys.exit(f"no {name} in {plan_dir} (have: {have or 'none'})")
+    calls = json.loads(f.read_text())["calls"]
+    lo = a.start or 0
+    hi = a.end if a.end is not None else len(calls)
+    for i, c in enumerate(calls[lo:hi], lo):
+        print(i, c["tool"], json.dumps(c["args"], separators=(",", ":")))
+    print(f"-- calls {lo}..{min(hi, len(calls)) - 1} of {len(calls)}", file=sys.stderr)
+
+
 def cmd_rules(_):
     for k, v in check.RULES.items():
         print(f"{k:10} {v}")
@@ -367,6 +421,18 @@ def main():
     qg.add_argument("--plan")
     qg.add_argument("--handoff", action="store_true", help="against handoff/netlist.json")
     q.set_defaults(fn=cmd_parity)
+    pd = sub.add_parser("pdf", help="the plan's preview as PDF and PNGs")
+    pd.add_argument("--board")
+    pd.add_argument("--plan")
+    pd.add_argument("--out")
+    pd.set_defaults(fn=cmd_pdf)
+    op = sub.add_parser("ops", help="a sheet's Konnect calls, one per line")
+    op.add_argument("--board")
+    op.add_argument("--plan")
+    op.add_argument("sheet")
+    op.add_argument("start", nargs="?", type=int)
+    op.add_argument("end", nargs="?", type=int)
+    op.set_defaults(fn=cmd_ops)
     r = sub.add_parser("rules")
     r.set_defaults(fn=cmd_rules)
     a = ap.parse_args()

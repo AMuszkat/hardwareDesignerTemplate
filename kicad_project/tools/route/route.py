@@ -1124,54 +1124,10 @@ def cmd_render(a):
     return 0
 
 
-_RASTER = r"""
-import sys
-try:
-    import pymupdf as fitz
-except ImportError:
-    import fitz
-pdf, png, scale = sys.argv[1], sys.argv[2], float(sys.argv[3])
-p = fitz.open(pdf)[0]
-ink = [v[1] for v in p.get_bboxlog()]
-if ink:
-    x0 = min(r[0] for r in ink) - 4; y0 = min(r[1] for r in ink) - 4
-    x1 = max(r[2] for r in ink) + 4; y1 = max(r[3] for r in ink) + 4
-    p.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=fitz.Rect(x0, y0, x1, y1)).save(png)
-"""
-
-
-VENV_PY = ROOT / "tools" / ".venv" / "bin" / "python"
-
-
 def _raster(pdf, png, box, scale):
-    """PyMuPDF crops the PDF to its ink.  pcbnew pins this script to KiCad's own
-    interpreter, and PyMuPDF lives in kicad_project/tools/.venv (tools/setup.sh),
-    so the crop runs out of process."""
-    try:
-        try:
-            import pymupdf as fitz                     # noqa: F401  (if it is here, use it)
-        except ImportError:
-            import fitz                                # noqa: F401  (older PyMuPDF)
-    except ImportError:
-        for exe in (str(VENV_PY), "python3"):
-            if exe != "python3" and not Path(exe).exists():
-                continue
-            r = subprocess.run([exe, "-c", _RASTER, str(pdf), str(png), str(scale)],
-                               capture_output=True, text=True)
-            if r.returncode == 0 and Path(png).exists():
-                return
-        print(f"  raster {png.name}: no interpreter with PyMuPDF -- run tools/setup.sh "
-              f"(the PDF is beside it)")
-        return
-    p = fitz.open(pdf)[0]
-    ink = [v[1] for v in p.get_bboxlog()]
-    if not ink:
-        return
-    x0 = min(r[0] for r in ink) - 4
-    y0 = min(r[1] for r in ink) - 4
-    x1 = max(r[2] for r in ink) + 4
-    y1 = max(r[3] for r in ink) + 4
-    p.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=fitz.Rect(x0, y0, x1, y1)).save(png)
+    """Cropped to the ink (tools/place/pdfcrop.py, shared with `place.py render`)."""
+    import pdfcrop
+    pdfcrop.raster(pdf, png, scale)
 
 
 def copper_gates(B, S):
