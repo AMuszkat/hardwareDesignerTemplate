@@ -102,5 +102,8 @@ merges across pins (PIC18), a ball map grid (MSP430 YFF), a row naming eight
 pins with no per-pin order (MAX7221). So no consumer (`symgen.py`,
 `fp.py verify --against`, the reviewer checklist) is wired; re-run
 `extract_corpus.py` after any parser change and wire one only when it
-passes. `pages` and `land` have not run (Ollama not installed here).
+passes. `pages` ran once on CPU (2026-11-09, TPS51363, 33 pages, 606 s —
+about 18 s a page, so a long datasheet wants the GPU): all four queries on
+the right page (pin functions p7, absolute maximum p2, package outline p28,
+land pattern p29). `land` has not run (it needs Ollama).
 
