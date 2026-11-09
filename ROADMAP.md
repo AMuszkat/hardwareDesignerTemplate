@@ -40,6 +40,19 @@ believed to pay. **Done when:** the test. **Size:** hours or days. **Gate:**
 contract, a protocol, a default or a machine requirement, so the user decides
 first and the PR description opens with that decision.
 
+## Progress
+
+Each landed item, with what it measured on `tests/agentic_test.py`'s
+fixtures (the `pcb` stage's board is `tests/fixture_pcb.py`'s).
+
+| item | landed | measured |
+|---|---|---|
+| R1 | Phase 0 PR | a run killed after 15 s leaves a partial naming iteration 1 and its contested cells; `--timeout 15` stops at 13 s with the reach table; converged plan byte-identical |
+| R6 | Phase 0 PR | `check` 2.6 s → 1.8 s cold, 1.55 s warm (one kicad-cli run); `audit` 1.8 s → 0.4 s; stdout identical |
+| V4 | Phase 0 PR | `snapshot --kind pcb` 6.6 s → 3.3 s; SUMMARY rows identical |
+| R8 | Phase 0 PR | no skill prescribes a bare kicad-cli, `python -c` or `timeout` line |
+| X3 | Phase 0 PR | `pack.py`, six restarts: 3.3 s → 0.8 s; plan identical to serial |
+
 ## Phase 0 — hours each, no behaviour change
 
 **R1 · The router writes its partial every iteration.** `maze.Grid.negotiate`
@@ -379,6 +392,7 @@ baseline on the day the plan was written, without KiCad on the machine:
 | schematic: plan, preview, structural proof and check | 0.1 s; 53 Konnect calls replaced |
 | router: 16 nets, 115 × 58 cells × 2 layers, converged | 14 iterations, 94 s, 6.7 s per iteration |
 | fanout: 84-ball 0.5 mm BGA, plan and layers | 0.2 s; every inner-ring signal has a via |
+| pcb (added with Phase 0, KiCad 10.0.7): fixture board, netgroup, check ×2, audit, snapshot | netgroup 3 iterations 31 s; check 2.1 s then 1.6 s; audit 0.3 s; snapshot 4.6 s serial, 2.6 s parallel |
 
 The per-board metrics the harness cannot take, from a real board's records:
 

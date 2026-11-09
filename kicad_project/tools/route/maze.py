@@ -607,7 +607,10 @@ class Grid:
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
                   log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
-        Returns {net: (runs, vias)} with no overlaps, or None."""
+        Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
+        after every iteration; a truthy return (a reason) stops an unconverged run there.
+        self.walled names the net that had no path at all (None otherwise)."""
+        self.walled = None
         allgoals = set()
         for jb in jobs:
             allgoals |= set(jb["goals"])
@@ -628,6 +631,7 @@ class Grid:
                                  goal_dirs=jb.get("goal_dirs"), **kw)
                 if res is None:
                     log(f"   iteration {it}: {n} has no path even through the others -- walled in")
+                    self.walled = n
                     return None
                 paths[n] = res
                 self.lay(n, *res)
@@ -636,10 +640,12 @@ class Grid:
             ncell = sum(len(v) for v in bad.values())
             log(f"   iteration {it}: pres {pres:.2f}, {nbad} nets overlap on {ncell} cells")
             self.last = (dict(paths), bad)
-            if on_iter:
-                on_iter(it, paths, bad)
+            stop = on_iter(it, paths, bad) if on_iter else None
             if not ncell:
                 return paths
+            if stop:
+                log(f"   iteration {it}: stopped -- {stop}")
+                return None
             if hist_decay < 1.0:                  # stale history outlives the conflict that made it and,
                 for k in self.keys:               # with guided nets, bends tracks round cells nobody wants
                     h = self.hist[k]

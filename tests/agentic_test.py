@@ -30,6 +30,12 @@ repository (nothing here is written; the copy is deleted unless --keep):
   snapshot   tools/review/snapshot.py on the scratch board (exit 2 without a
              KiCad project or kicad-cli, by design)
   pcb-tools  tools/kpy imports pcbnew (SKIP where KiCad is not installed)
+  pcb        board side, with pcbnew and kicad-cli: tests/fixture_pcb.py's
+             board in the scratch board folder; netgroup.py --timeout (the
+             partial every iteration, R1), route.py check twice (the second
+             runs kicad-cli once: the DRC cache, R6), route.py audit, and the
+             review snapshot --kind pcb serial and parallel (same SUMMARY rows,
+             the wall clock of each: V4)
   lint       tools/lint_docs.py on the scratch copy after the publish
 
 A stage is PASS, FAIL or SKIP (a dependency this machine lacks, named). The
@@ -534,6 +540,86 @@ def stage_pcb_tools(have):
     stage("pcb-tools", "PASS" if rc == 0 else "FAIL", time.time() - t0, "pcbnew " + tail(out, 1))
 
 
+def stage_pcb(copy, board, quick):
+    t0 = time.time()
+    kpy = str(ROOT / "kicad_project" / "tools" / "kpy")
+    tmp = Path(tempfile.mkdtemp(prefix="fixture-"))
+    try:
+        rc, out = run([kpy, str(ROOT / "tests" / "fixture_pcb.py"), str(tmp), "--nets", "4" if quick else "8"], copy)
+        if rc:
+            stage("pcb", "FAIL", time.time() - t0, "fixture_pcb: " + tail(out))
+            return
+        fx = tmp / "fixture"
+        for f in fx.glob("fixture.kicad_*"):
+            if f.suffix != ".kicad_prl":
+                shutil.copy2(f, board / f.name)
+        (board / "routing").mkdir(exist_ok=True)
+        shutil.copy2(fx / "routing" / "R1_spec.json", board / "routing" / "R1_spec.json")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    kp = copy / "kicad_project"
+    tools = kp / "tools"
+    nums, notes, ok = {}, [], True
+    t1 = time.time()
+    rc, out = run([kpy, str(tools / "route" / "netgroup.py"), "--board", str(board), "routing/R1_spec.json",
+                   "--timeout", "600"], kp)
+    nums["route_s"] = round(time.time() - t1, 2)
+    nums["iterations"] = sum(1 for ln in out.splitlines() if re.match(r"\s+iteration \d+:", ln))
+    plan = board / "routing" / "R1_plan.json"
+    if rc or not plan.exists():
+        stage("pcb", "FAIL", time.time() - t0, "netgroup: " + tail(out))
+        return
+    nums["plan_sha"] = hashlib.sha256(plan.read_bytes()).hexdigest()[:16]
+    outs = []
+    for k in (1, 2):
+        t1 = time.time()
+        rc, out = run([kpy, str(tools / "route" / "route.py"), "check", "--board", str(board), "routing/R1_plan.json"], kp)
+        nums[f"check{k}_s"] = round(time.time() - t1, 2)
+        nums[f"check{k}_kicad_cli"] = len(re.findall(r"^drc: .*: kicad-cli run,", out, re.M))
+        outs.append([ln for ln in out.splitlines() if not ln.startswith("drc:") and "property.h" not in ln])
+        # the scaffold guide's shape / via-link rows fail raw router output (the board session's
+        # next step); the stage judges that check RAN to its verdict, and the same verdict twice
+        verdict = next((ln for ln in out.splitlines() if ln.startswith("CHECK ")), None)
+        nums[f"check{k}_verdict"] = verdict
+        if rc not in (0, 1) or not verdict:
+            ok = False
+            notes.append(f"check {k}: exit {rc}: " + tail(out, 2))
+    if nums["check2_kicad_cli"] != 1:
+        ok = False
+        notes.append(f"the second check ran kicad-cli {nums['check2_kicad_cli']} times, not once")
+    if outs[0] != outs[1]:
+        ok = False
+        notes.append("the two checks printed different results")
+    t1 = time.time()
+    rc, out = run([kpy, str(tools / "route" / "route.py"), "audit", "--board", str(board)], kp)
+    nums["audit_s"] = round(time.time() - t1, 2)
+    if "AUDIT " not in out:
+        ok = False
+        notes.append("audit: " + tail(out, 2))
+    rows = {}
+    for jobs_ in ("1", ""):
+        env = dict(os.environ, HW_JOBS=jobs_) if jobs_ else {k: v for k, v in os.environ.items() if k != "HW_JOBS"}
+        t1 = time.time()
+        r = subprocess.run([sys.executable, "tools/review/snapshot.py", "--board", BOARD, "--kind", "pcb",
+                            "--id", f"RVfx{jobs_ or 'n'}"], cwd=copy, capture_output=True, text=True, env=env, timeout=1800)
+        nums["snapshot_serial_s" if jobs_ else "snapshot_parallel_s"] = round(time.time() - t1, 2)
+        summ = copy / "out" / "reviews" / board.name / f"RVfx{jobs_ or 'n'}-pcb" / "SUMMARY.md"
+        rows[jobs_] = [ln.split("|")[1:3] for ln in summ.read_text().splitlines() if ln.startswith("| ") and "---" not in ln] \
+            if summ.exists() else None
+        if r.returncode not in (0, 1) or not summ.exists():
+            ok = False
+            notes.append(f"snapshot (HW_JOBS={jobs_ or 'all'}): exit {r.returncode}: " + tail(r.stdout + r.stderr, 2))
+    if rows["1"] != rows[""]:
+        ok = False
+        notes.append("snapshot SUMMARY rows differ serial vs parallel")
+    stage("pcb", "PASS" if ok else "FAIL", time.time() - t0,
+          f"netgroup {nums['iterations']} iteration(s) {nums['route_s']} s (plan sha {nums['plan_sha'][:10]}); "
+          f"check {nums['check1_s']} s then {nums['check2_s']} s ({nums['check2_kicad_cli']} kicad-cli run the second time; "
+          f"{nums['check2_verdict']}); "
+          f"audit {nums['audit_s']} s; snapshot pcb serial {nums['snapshot_serial_s']} s, "
+          f"parallel {nums['snapshot_parallel_s']} s" + ("; " + "; ".join(notes) if notes else ""), **nums)
+
+
 def stage_lint(copy):
     t0 = time.time()
     rc, out = run([sys.executable, "tools/lint_docs.py"], copy)
@@ -575,6 +661,10 @@ def main():
         stage_fanout(tmp)
         stage_snapshot(copy, kcli) if board else stage("snapshot", "SKIP", 0.0, "no board")
         stage_pcb_tools(pcb)
+        if board and kcli and pcb:
+            stage_pcb(copy, board, a.quick)
+        else:
+            stage("pcb", "SKIP", 0.0, "needs a board, kicad-cli and pcbnew")
         stage_lint(copy)
     finally:
         if a.keep:

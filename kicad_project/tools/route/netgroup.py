@@ -107,15 +107,27 @@ When negotiation stalls it prints, per net, how many cells it can reach at
 all (`reach`): a net that reaches a few dozen cells against tens of
 thousands for the others is WALLED IN -- a placement or fanout defect to fix,
 not a route to keep negotiating for.  `--repair` re-routes the overlapping
-nets one at a time with the rest hard.  A stalled run writes
-<plan>.partial.json for a look (never for a gate).
+nets one at a time with the rest hard.
+
+<plan>.partial.json is written after EVERY iteration (whole, to a temp file
+renamed over it): the legs that closed, the open leg's latest iteration, its
+contested cells and, from iteration 3 of a leg, the `reach` table -- so a run
+killed by a timeout keeps all of it.  "state" says how the run left it:
+"running" (still going, or killed), "stalled", "stopped" (--timeout),
+"walled".  For a look with view.py --plan, never for a gate; a run that
+writes its plan removes it.  --timeout S stops between iterations when the
+next would not finish inside S seconds and leaves the partial as "stopped";
+use it instead of a `timeout` prefix.  The log is line-buffered, so a killed
+run's log is complete to its last line.
 """
 
 import argparse
 import collections
 import json
 import math
+import os
 import sys
+import time
 from array import array
 from pathlib import Path
 
@@ -148,7 +160,12 @@ def main():
                     help="when negotiation stalls, re-route the overlapping nets one at a time, the rest hard")
     ap.add_argument("--limit", type=int, default=900000,
                     help="A* expansions per route; a big window hits the default and reads as 'walled in'")
+    ap.add_argument("--timeout", type=float, default=0,
+                    help="seconds: stop between iterations when the next would not end inside it, "
+                         "partial written (use this, not a `timeout` prefix)")
     a = ap.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)   # a killed run's log ends at its last line, not its last buffer
+    t0 = time.monotonic()
     a.board = P.board_dir_arg(a.board)
 
     spec_path = Path(a.spec)
@@ -655,6 +672,36 @@ def main():
         return int(S["nets"][n]["legs"][i].get("stage", i))
     nstage = max(st_(n, i) for n in nets for i in range(len(S["nets"][n]["legs"]))) + 1
     out, own = {}, {}
+    pp = Path(S["plan"])
+    pp = (pp if pp.is_absolute() else Path(a.board) / pp).with_suffix(".partial.json")
+
+    def write_partial(last, bad, stage, iteration, reach_rows, state):
+        """Frozen legs + one iteration of the open leg, for a look (never for a gate).  Written
+        whole and renamed over the old one, so a run killed mid-write leaves the previous file."""
+        part = dict(group=S["group"] + "-partial", why="legs that closed, then the last iteration "
+                    "of the one that did not", state=state, leg=stage + 1, iteration=iteration,
+                    elapsed_s=round(time.monotonic() - t0, 1), closed_legs=stage,
+                    contested={n: [[k, *G.xy(c)] for k, c in v] for n, v in bad.items() if v},
+                    reach=reach_rows, tracks=[], vias=[], zones=[])
+        done = [(n, rv, "closed") for n, legs in out.items() for rv in legs]
+        for n, (runs, vias), tag in done + [(n, rv, "open") for n, rv in last.items()]:
+            for layer, cells in runs:
+                pts = [list(q) for q in G.polyline(cells)]
+                if len(pts) > 1:
+                    part["tracks"].append(dict(net=full[n], layer=layer, width=W, pts=pts, leg=tag))
+            for c in vias:
+                part["vias"].append(dict(net=full[n], at=list(G.xy(c)), pad=VIA, drill=DRILL, leg=tag))
+        tmp = pp.with_name(pp.name + ".tmp")
+        tmp.write_text(json.dumps(part, indent=1) + "\n")
+        os.replace(tmp, pp)
+
+    def reach_table(jobs):
+        rows = {}
+        for j in jobs:
+            r, hit = reach(G, j, LAYERS)
+            rows[j["net"]] = dict(cells=r, goals_hit=hit, goals=len(j["goals"]))
+        return rows
+
     li_plane = LAYERS.index(pl["layer"]) if pl else None
     for stage in range(nstage):
         jobs = []
@@ -833,10 +880,26 @@ def main():
             continue
         print(f"\n--- leg {stage + 1}: {' '.join(j['net'] for j in jobs)}")
         G.last = None                     # a stage that walls on its first pass leaves no "last" of its own
+        reach_rows, clock, stopped, itn = {}, [time.monotonic(), 0.0], [], [0]
+
+        def on_iter(it, paths_, bad_, stage=stage, jobs=jobs, reach_rows=reach_rows):
+            # reach depends only on the leg's fixed copper, so it is the same every iteration:
+            # taken once, from iteration 3 -- a leg that converges sooner never pays for it
+            if it >= 3 and not reach_rows and any(bad_.values()):
+                reach_rows.update(reach_table(jobs))
+            itn[0] = it
+            write_partial(paths_, bad_, stage, it, reach_rows, "running")
+            now = time.monotonic()
+            clock[1], clock[0] = max(clock[1], now - clock[0]), now
+            if a.timeout and now + 1.2 * clock[1] > t0 + a.timeout:
+                stopped.append(it)
+                return f"--timeout {a.timeout:g} s: the next iteration (up to {clock[1]:.0f} s) would not end inside it"
+            return None
+
         paths = G.negotiate(jobs, iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
                             hist_decay=a.hist_decay, seed=a.seed, layer_cost=S.get("layer_cost"),
-                            limit=a.limit)
-        if paths is None and getattr(G, "last", None) and a.repair:
+                            limit=a.limit, on_iter=on_iter)
+        if paths is None and getattr(G, "last", None) and a.repair and not stopped:
             # REPAIR: negotiation left a few overlaps.  Re-route the nets involved one at a time
             # with everything else HARD (pres=None) -- a stall is often one net that simply has
             # another way, which the ever-rising price no longer lets it try.
@@ -870,24 +933,15 @@ def main():
             for n, v in bad.items():
                 if v:
                     print(f"   {n}: {len(v)} contested cell(s): " + " ".join(f"{k}{G.xy(c)}" for k, c in v[:10]))
+            if not reach_rows:
+                reach_rows.update(reach_table(jobs))
             for j in jobs:
-                r, hit = reach(G, j, LAYERS)
-                print(f"   {j['net']:12s} reaches {r} cells; {hit} of {len(j['goals'])} goal cells")
-            print("NO SOLUTION at this leg")
+                r_ = reach_rows[j["net"]]
+                print(f"   {j['net']:12s} reaches {r_['cells']} cells; {r_['goals_hit']} of {r_['goals']} goal cells")
+            print("STOPPED at the timeout" if stopped else "NO SOLUTION at this leg")
             if last or out:                   # frozen legs + the last iteration, for a look (never for a gate)
-                part = dict(group=S["group"] + "-partial", why="legs that closed, then the last iteration "
-                            "of the one that did not", tracks=[], vias=[], zones=[], closed_legs=stage)
-                done = [(n, rv, "closed") for n, legs in out.items() for rv in legs]
-                for n, (runs, vias), tag in done + [(n, rv, "open") for n, rv in last.items()]:
-                    for layer, cells in runs:
-                        pts = [list(q) for q in G.polyline(cells)]
-                        if len(pts) > 1:
-                            part["tracks"].append(dict(net=full[n], layer=layer, width=W, pts=pts, leg=tag))
-                    for c in vias:
-                        part["vias"].append(dict(net=full[n], at=list(G.xy(c)), pad=VIA, drill=DRILL, leg=tag))
-                pp = Path(S["plan"])
-                pp = (pp if pp.is_absolute() else Path(a.board) / pp).with_suffix(".partial.json")
-                pp.write_text(json.dumps(part, indent=1) + "\n")
+                write_partial(last, bad, stage, itn[0], reach_rows,
+                              "stopped" if stopped else ("walled" if G.walled else "stalled"))
                 print(f"wrote {pp} (the last iteration, overlaps and all)")
             return 1
         for n, (runs, vias) in paths.items():
@@ -1023,6 +1077,9 @@ def main():
     print(f"\nwrote {p}: {len(plan['tracks'])} track runs, {len(plan['vias'])} vias"
           + (f" ({n_raw[0]} run(s) left unstraightened: straightening cut a via's halo)" if n_raw[0] else "")
           + (f" ({n_wide[0]} short leg(s) widened to a track width)" if n_wide[0] else ""))
+    if pp.exists():
+        pp.unlink()                    # an earlier run's partial would read as this run's state
+        print(f"removed {pp.name}: the plan supersedes it")
     return 0
 
 

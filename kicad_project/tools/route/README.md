@@ -34,6 +34,17 @@ typed, else inside the board folder (`routing/R1.json`).
 own DRC on it, schematic parity on. Any violation that is not already in the
 baseline fails the plan. The real board is never touched.
 
+**One kicad-cli run per check.** The baseline (the board as it is) is
+`tools/place/drccache.py`'s: a report cached under `routing/.drc_cache/`,
+keyed by the sha256 of every file the DRC reads (the board, project, rules,
+every schematic sheet, the library tables, `lib/`'s symbols and footprints,
+kicad-cli itself). The same board state is never run twice — the second
+`check` of a board, `apply`'s "before" count and `audit` all read it — and a
+miss runs concurrently with the scratch copy's DRC. stderr says which
+(`drc: ... from the cache`); stdout is what it was. `HW_DRC_CACHE=0` turns it
+off; the folder is safe to delete. `audit` runs `place.py drc`'s summary and
+`pour.py`'s report in-process, on the board it already loaded.
+
 ⚠ **One thing KiCad's DRC cannot see, and the gate checks itself: a short that
 KiCad renames away.** When a board is saved, `pcbnew` gives a track or via
 that touches a pad of *another* net — with no pad of its own net in the same
@@ -322,15 +333,17 @@ its docstring. What the spec has to be told:
   through which the only exits need a 90-degree turn (board2's R5: a
   pre-routed lane hard against the via row). Draw the fixed copper with
   `view.py` and free the lane; more `--limit` does not help.
-- **Run it under `timeout` with `PYTHONUNBUFFERED=1`** when stdout goes to a
-  file: a run the timeout kills leaves an EMPTY log otherwise (board2's R5
-  lost four 90-minute runs this way), and a stall is told from a slow
-  convergence only by the iteration lines.
-- **A timeout-killed run writes no partial** — and the partial is where the
-  contested cells are named. Size `--iters` so the run ENDS inside the
-  timeout (board2's R5: about 18 s an iteration for 20 nets on a 76 x 51 mm
-  window); a run that stops by itself prints the contested cells and `reach`
-  per net and writes `<plan>.partial.json` for `view.py --plan`.
+- **Bound a run with `--timeout S`, not a `timeout` prefix.** It stops
+  between iterations when the next one (sized by the slowest so far) would not
+  end inside S seconds, prints the contested cells and `reach` per net, and
+  leaves `<plan>.partial.json` with `"state": "stopped"`. The log is
+  line-buffered, so even a killed run's log ends at its last line.
+- **Every iteration writes `<plan>.partial.json`** (whole, renamed over the
+  old one): the closed legs, the open leg's latest iteration, `contested`
+  cells per net, `reach` per net from iteration 3, and `state` — `running`
+  (still going, or killed: board2's R5 lost four 90-minute runs before this),
+  `stopped`, `stalled`, `walled`. A run that writes its plan removes it. For
+  `view.py --plan`, never for a gate.
 - **What-if on a scratch board: copy it OUTSIDE kicad_project/** (the session
   scratchpad). `--board` takes a path, but `boardsel` refuses any folder
   inside kicad_project/ that is not a board's (tmpWork/ included). Copy the

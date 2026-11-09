@@ -14,7 +14,8 @@ the reference designators go.
     tools/kpy tools/place/place.py sync   --board board1
     tools/kpy tools/place/place.py labels --board board1 [--dry-run]
     tools/kpy tools/place/place.py park   --board board1 [--refs H1,H2]  # KiCad closed
-    tools/kpy tools/place/place.py drc    --board board1
+    tools/kpy tools/place/place.py drc    --board board1                  # DRC cached by content (drccache.py)
+    tools/kpy tools/place/place.py render --board board1 --refs U2,C10 [--side B]   # the area, as a PNG
     tools/kpy tools/place/place.py silk   --board board1 [--dry-run]       # KiCad closed
     tools/kpy tools/place/sites.py        --board board1 --ref C13 --box x0,y0,x1,y1
     tools/kpy tools/place/pack.py         --board board1 --spec pack.json
@@ -226,6 +227,14 @@ of `movable` parts against courtyard gaps, keep-outs, "pad within N mm of pad",
 "courtyard gap at least", and "gap to the nearest of a set within [lo, hi]".
 A run that reaches cost 0 satisfied all of them at once; the result is a plain
 plan for `check` to judge independently. The spec is in the module docstring.
+Its restarts run on every core (`tools/par.py`), chosen as the serial loop
+would choose them, so `HW_JOBS=1` gives the same plan.
+
+**`tools/par.py` is how a board tool uses several cores**: load the board
+once, fork, read in the children, return plain tuples, write only in the
+parent (pcbnew objects are neither picklable nor thread-safe). Results come
+back in job order; `HW_JOBS=1` forces serial; macOS is serial unless
+`HW_JOBS` is set.
 
 ## `schupdate.py`, `addfp.py` and `refresh.py` — the closed-board paths
 

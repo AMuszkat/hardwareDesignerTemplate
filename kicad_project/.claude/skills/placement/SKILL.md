@@ -62,17 +62,12 @@ it skips the schematic-parity test unless told otherwise, and an empty parity
 list reads like a pass. Last, render the area and look at it:
 
 ```
-kicad-cli pcb export pdf --layers F.Cu,F.SilkS,F.CrtYd,Edge.Cuts \
-    --mode-single --black-and-white -o out.pdf <board>.kicad_pcb
-tools/.venv/bin/python -c "import pymupdf as m; p=m.open('out.pdf')[0]; \
-  b=[v[1] for v in p.get_bboxlog()]; \
-  r=m.Rect(min(x[0] for x in b)-4, min(x[1] for x in b)-4, \
-      max(x[2] for x in b)+4, max(x[3] for x in b)+4); \
-  p.get_pixmap(matrix=m.Matrix(6,6), clip=r).save('out.png')"
+tools/kpy tools/place/place.py render --board <board> --refs <the group's refs> [--side B]
 ```
 
-(`pcb export pdf` has no fit-to-board option; the bbox crop above replaces it.
-PyMuPDF lives in `tools/.venv`, made by `tools/setup.sh`.)
+It writes `<board>/placement/render_<side>.png`: copper, silk, courtyard and
+outline of that side, cropped to the group's courtyards plus `--margin` mm
+(`--box X0,Y0,X1,Y1` for an area, nothing for the whole board).
 
 When the group's parts are placed, remove their reservation from
 `placement.json` `keepouts` and add the group under `groups`.

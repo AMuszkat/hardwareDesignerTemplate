@@ -22,8 +22,9 @@ Rules (follow exactly):
 
 1. First load the tool schemas with ToolSearch:
    `select:mcp__konnect__batch_delete,mcp__konnect__batch_delete_no_connect,mcp__konnect__set_schematic_page,mcp__konnect__batch_place_components,mcp__konnect__batch_edit_schematic_components,mcp__konnect__batch_add_wire,mcp__konnect__batch_add_junction,mcp__konnect__batch_add_no_connect,mcp__konnect__add_schematic_net_label,mcp__konnect__add_schematic_text,mcp__konnect__update_symbols_from_library,mcp__konnect__reset_schematic_field_positions,mcp__konnect__add_component_annotation`.
-2. Print the calls with Bash/python in chunks you can read, e.g.
-   `python3 -c "import json;d=json.load(open('<BOARD_DIR>/sch_plan/<STEM>.ops.json'));[print(i,c['tool'],json.dumps(c['args'],separators=(',',':'))) for i,c in enumerate(d['calls'][A:B],A)]"`.
+2. Print the calls in chunks you can read:
+   `tools/.venv/bin/python tools/sch/sch.py ops --board <BOARD> <STEM> A B`
+   (one line per call: index, tool, arguments as compact JSON).
    Make every call in order, with the arguments EXACTLY as written: same
    schematic path, same numbers, same strings, same rotations, label_type and
    shape. Never round, reorder within a call, invent, or skip. A long list

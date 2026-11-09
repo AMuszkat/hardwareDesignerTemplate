@@ -152,8 +152,10 @@ before drawing. Never draw a plan whose parity is not `IDENTICAL`.
 Render the preview and look at every sheet:
 
 ```
-kicad-cli sch export pdf -o /tmp/plan.pdf <board>/sch_plan/preview/<board>/<board>.kicad_sch
+tools/.venv/bin/python tools/sch/sch.py pdf --board <board>
 ```
+
+It writes `sch_plan/preview.pdf` and one `preview-N.png` per sheet beside it.
 
 ## 3. Draw, gate each sheet, then frame
 

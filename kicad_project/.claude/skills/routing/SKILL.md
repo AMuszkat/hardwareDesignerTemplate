@@ -85,7 +85,9 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 2. **Plan in a file**: `<board>/routing/Rn_<name>.json` (polylines, vias,
    zones, necks — format in the README). Draw it by hand, with `decap.py` for a
    decoupling ring, or with `netgroup.py` from a spec for a congested signal
-   group. It survives the session and can be re-gated.
+   group (bound a long run with its own `--timeout S`, never a `timeout`
+   prefix: it stops between iterations and every iteration leaves
+   `<plan>.partial.json`). It survives the session and can be re-gated.
 3. **Gate**: `route.py check`. KiCad's own DRC on a scratch copy with schematic
    parity on — any violation not in the baseline fails — then every rule of
    the guide: joints, edge, class width, planes, via caps, fields, keep-outs,
