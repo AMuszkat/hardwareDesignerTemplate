@@ -191,8 +191,11 @@ Konnect `save_project` first; there is no quit command over the IPC API, so
 `kill -TERM` the `kicad` process (KiCad does not rewrite project files on
 SIGTERM); confirm `pgrep -x kicad` is empty; only then remove the stale `~*.lck`
 files. Never remove a lock file while any KiCad process runs. Whether you may
-close KiCad yourself is the user's call — ask once, and record a standing
-permission in `ROUTING_PLAN.md` §4.
+close KiCad yourself is recorded once, in `kicad_project/project.json`
+(`close_kicad`, `./setup.sh init`), and printed in the session-start brief;
+without it, ask the user. The board session is headless by default
+(`kicad_project/CLAUDE.md`): `place.py apply`, `labels`, `silk` and the
+refresh tools run on the closed board.
 
 ## Rules
 

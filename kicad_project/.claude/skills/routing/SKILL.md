@@ -153,9 +153,13 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   `ROUTING_PLAN.md` §4.
 - **A rule that blocks the layout is a QUESTIONS.md item.** Never loosen a fab
   number or a gate to make a route fit; never tighten one on a guess.
-- **Close and reopen KiCad** only with the user's standing permission: Konnect
-  `save_project`, SIGTERM, confirm `pgrep -x kicad` is empty, then clear the
-  `~*.lck` files; `launch_kicad_ui` to reopen for a review.
+- **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
+  tools run on the closed board. Close KiCad yourself only with the standing
+  permission (`kicad_project/project.json` `close_kicad`, printed in the
+  session-start brief), your own project only: Konnect `save_project`,
+  SIGTERM, confirm `pgrep -x kicad` is empty, then clear the `~*.lck` files.
+  A project the user had open is reopened afterwards (`launch_kicad_ui`), and
+  you say so.
 
 ## Freerouting: available, not the default
 

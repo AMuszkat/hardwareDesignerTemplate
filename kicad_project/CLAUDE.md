@@ -132,12 +132,22 @@ can be live at once. Before any Konnect edit, `get_project_info`: if the open
 project is not your board's, do not touch it — tell the user. Never have two
 board sessions drive KiCad at the same time.
 
+**Headless by default.** Every PCB step runs through the `pcbnew` scripts on
+the closed board (`board_setup.py apply`, `place.py apply`, `route.py apply`
+and `rip`, `labels`, `silk`, `schupdate.py`, `refresh.py`). KiCad is opened
+only for a step the table above gives Konnect, or because the user wants to
+look.
+
 **Closing KiCad** whenever the work needs it: only when the open project is
 YOURS (`get_project_info`); Konnect `save_project` first, then `kill -TERM` the
 `kicad` process, confirm `pgrep -x kicad` is empty, and only then clear the
-`~*.lck` files it leaves behind in your own folder. Ask the user first unless
-they have said you may close it yourself. Killing KiCad while another board's
-project is open destroys that session's unsaved work.
+`~*.lck` files it leaves behind in your own folder. Whether you may do it
+without asking is recorded once, in `kicad_project/project.json`
+(`close_kicad`, set by `./setup.sh init`), and the session-start brief says
+which; without it, ask the user to save and close. No permission waives the
+guard: another board's project open means do nothing and tell the user —
+killing KiCad then destroys that session's unsaved work. A project the user
+had open is reopened after your closed-board step, and you say so.
 
 ## Footprints are yours
 

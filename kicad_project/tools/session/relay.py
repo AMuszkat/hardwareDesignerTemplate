@@ -144,6 +144,17 @@ def brief(side):
                      f"kicad_project/{folders[0] if folders else board + '_?'}/ and no other.")
     lines.append(f"[relay] The relay is {'ON' if on else 'OFF'} (kicad_project/relay.json; "
                  f"the user flips it with bin/relay on|off).")
+    if side == "board":
+        lines.append("[kicad] Headless by default: every PCB step runs through the pcbnew scripts on the "
+                     "CLOSED board; KiCad is opened only for a Konnect step (kicad_project/CLAUDE.md, "
+                     "which tool edits what) or because the user wants to look. Standing permission to "
+                     "close KiCad: " + ("YES (project.json close_kicad) -- your own project only, after "
+                                        "get_project_info and save_project, by SIGTERM; another board's "
+                                        "project open: do nothing and tell the user; a project the user "
+                                        "had open is reopened after the closed-board step, and you say so."
+                                        if p.get("close_kicad") else
+                                        "NO (project.json close_kicad; ./setup.sh init --close-kicad yes "
+                                        "sets it) -- ask the user to save and close it."))
     if on:
         lines.append("[relay] Follow kicad_project/RELAY_PROTOCOL.md. "
                      + ("Arm every live board session listed by ListAgents."
@@ -166,6 +177,9 @@ def init(argv):
     ap.add_argument("project")
     ap.add_argument("--permission-mode", default=None)
     ap.add_argument("--kicad-python", default=None)
+    ap.add_argument("--close-kicad", choices=["yes", "no"], default=None,
+                    help="the standing permission for a board session to close KiCad (its own project, "
+                         "after saving; never another board's) -- recorded once, here")
     a = ap.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9]{1,30}", a.project):
         sys.exit("project name: 2 to 31 letters and digits, starting with a letter "
@@ -174,7 +188,8 @@ def init(argv):
     data = {"project": a.project,
             "concept_session": f"{a.project}_Concept",
             "board_session_prefix": f"{a.project}_Kicad_",
-            "permission_mode": a.permission_mode or old.get("permission_mode", "default")}
+            "permission_mode": a.permission_mode or old.get("permission_mode", "default"),
+            "close_kicad": (a.close_kicad == "yes") if a.close_kicad else bool(old.get("close_kicad", False))}
     _save(PROJECT, data)
     local = _load(LOCAL, {}) or {}
     local["kicad_python"] = a.kicad_python or local.get("kicad_python", "/usr/bin/python3")
