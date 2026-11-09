@@ -23,6 +23,10 @@ repository (nothing here is written; the copy is deleted unless --keep):
              the drawing standard (check) on the preview, every pin connected,
              every part placed once; with kicad-cli the full proof (netlist
              parity, ERC) as the skill runs it
+  draw       board side, with kicad-cli: sch.py draw installs the proven
+             plan on a copy of the board (zero Konnect calls); drawn, parity,
+             parity --handoff and check pass on it; a re-plan (new UUIDs)
+             drawn again keeps every symbol UUID (S1)
   router     tools/route/maze.py on a synthetic window: a bundle of nets
              through a funnel past a via field, negotiated to no overlap;
              every joint 0 or 45 degrees; seconds per iteration
@@ -424,6 +428,43 @@ def stage_schematic(copy, board, kcli, stock):
           planner_output=report.get("planner_output"))
 
 
+def stage_draw(copy, board):
+    t0 = time.time()
+    tmp = Path(tempfile.mkdtemp(prefix="draw-"))
+    vpy = copy / "kicad_project" / "tools" / ".venv" / "bin" / "python"
+    py = str(vpy) if vpy.exists() else sys.executable
+    sch = str(copy / "kicad_project" / "tools" / "sch" / "sch.py")
+    try:
+        b = tmp / board.name
+        shutil.copytree(board, b, ignore=shutil.ignore_patterns("handoff.old", "*.kicad_pcb", "fixture.*"))
+        # the copy sits outside kicad_project/: its ${KIPRJMOD}/../tools must still find hw_sch
+        os.symlink(copy / "kicad_project" / "tools", tmp / "tools")
+        rc, out = run([py, sch, "draw", "--board", str(b)], copy)
+        t_draw = time.time() - t0
+        res = {"draw": (rc, tail(out, 1))}
+        for name, args, want in (("drawn", ["drawn"], "DRAWN AS PLANNED"), ("parity", ["parity"], "PARITY OK"),
+                                 ("parity --handoff", ["parity", "--handoff"], "HANDOFF PARITY OK"),
+                                 ("check", ["check"], "CHECKS PASS")):
+            r2, o2 = run([py, sch, *args, "--board", str(b)], copy)
+            res[name] = (0 if (r2 == 0 and want in o2) else 1, tail(o2, 1))
+        ids = lambda: sorted(re.findall(r'\(uuid "([0-9a-f-]{36})"\)\s*\(property "Reference" "([A-Z]+\d+)"',
+                                        "".join(p.read_text() for p in sorted(b.glob("*.kicad_sch")))))
+        sym_ids = set(re.findall(r'"([0-9a-f-]{36})"', "".join(p.read_text() for p in sorted(b.glob("*.kicad_sch")))))
+        r3, o3 = run([py, sch, "plan", "--board", str(b), "--handoff"], copy)
+        r4, o4 = run([py, sch, "draw", "--board", str(b)], copy)
+        kept = re.search(r"(\d+) symbol UUID\(s\) and (\d+) sheet UUID", o4)
+        res["redraw"] = (0 if r3 == 0 and r4 == 0 and kept and int(kept.group(1)) > 0 else 1,
+                         (kept.group(0) if kept else tail(o4, 1)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ok = all(v[0] == 0 for v in res.values())
+    stage("draw", "PASS" if ok else "FAIL", time.time() - t0,
+          f"draw {t_draw:.1f} s, zero Konnect calls: " + "; ".join(f"{k} {'ok' if v[0] == 0 else 'FAIL: ' + v[1]}"
+                                                                   for k, v in res.items())
+          + (f" ({res['redraw'][1]} carried over)" if res["redraw"][0] == 0 else ""),
+          draw_s=round(t_draw, 2), **{k.replace(" ", "_"): v[0] == 0 for k, v in res.items()})
+
+
 def stage_router(quick):
     t0 = time.time()
     sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
@@ -724,6 +765,7 @@ def main():
             stage_schematic(copy, board, kcli, stock)
         else:
             stage("schematic", "SKIP", 0.0, "no handoff to plan from")
+        stage_draw(copy, board) if (board and kcli and stock) else stage("draw", "SKIP", 0.0, "needs kicad-cli and KiCad's symbols")
         stage_router(a.quick)
         stage_fanout(tmp)
         stage_snapshot(copy, kcli) if board else stage("snapshot", "SKIP", 0.0, "no board")

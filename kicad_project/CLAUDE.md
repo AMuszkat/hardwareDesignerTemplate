@@ -101,21 +101,25 @@ looking like an open question, which is worse than a hole. `05_open.md`
 lists what is blocked and what is safe to start; `04_deliberate.md` lists
 choices a review will flag that are intentional — do not "fix" them.
 
-## KiCad files go through Konnect or pcbnew, never a text editor
+## Which tool edits which KiCad file — never a text editor
 
 `.kicad_sch`, `.kicad_pcb`, `.kicad_pro`, `.kicad_sym`, `.kicad_mod` and the
 library tables are object graphs with UUIDs (the `konnect` skill is the rule
-set). Two ways to change them (`fp.py` is the third, for footprint files
-only, and `sch.py frame` the fourth, for a schematic's section frames and
-title block only — graphics Konnect has no call for; both edit the parsed
-tree and have `kicad-cli` read back every file they write):
+set). Each kind of edit has one tool; the project's own tools are preferred
+where they prove what they write:
 
-- **Konnect MCP**, KiCad open, for interactive edits — one call per plan, so
-  one undo step.
-- **The scripts in `tools/`**, through `pcbnew` on the **closed** board, backup
-  first, read back afterwards — for anything bulk (Board Setup, placement
-  applies, routing groups). They run as `tools/kpy <script>`: KiCad's `pcbnew`
-  module imports only in the interpreter KiCad was built for.
+| edit | tool | why |
+|---|---|---|
+| a sheet's drawing: parts, wires, labels, frames, title block, DNP and BOM flags, Footprint fields | `tools/sch/sch.py plan` then `draw` | the plan is proven before a file is written; the write is proven after (parity, ERC, `check`, a kicad-cli resave that moves nothing), UUIDs kept |
+| a one-off fix on a drawn sheet (a jog moved to clear a text) | Konnect, KiCad open; then `sch.py drawn` | one undo step, no plan churn |
+| a library symbol | `tools/sch/symfields.py` (and Konnect's `create_symbol`) | Konnect cannot set field positions, pin lengths or delete a saved symbol |
+| a footprint file | `tools/fp/fp.py` | land hashed and signed |
+| Board Setup, a placement plan, a routing group, labels, a schematic re-link | the `pcbnew` scripts in `tools/` (`tools/kpy <script>`), KiCad **closed** | bulk, backup first, read back after |
+| a single interactive move with KiCad open | Konnect | one undo step |
+| any KiCad file by text editor | never | — |
+
+The `pcbnew` scripts run as `tools/kpy <script>`: KiCad's `pcbnew` module
+imports only in the interpreter KiCad was built for.
 
 Konnect's skills (`kicad-*`) are the tool manual; **this project's skills
 (`schematic`, `board-setup`, `footprint`, `placement`, `routing`) are the
@@ -163,8 +167,9 @@ laid out by `tools/sch/sch.py plan` — titled sections (an IC, its decoupling,
 its pull-ups, its crystal), each wired inside and joined to the others by
 labels, rails as power symbols, signals leaving a sheet through hierarchical
 labels, the smallest paper that fits — which proves its layout on a scratch
-copy (netlist parity, ERC, the gate) before Konnect draws it from the plan's
-call list; `sch.py frame` then writes the section frames and the title block.
+copy (netlist parity, ERC, the gate); `sch.py draw` then installs that proven
+preview as the board's sheets — frames, title block and flags included,
+UUIDs kept — and proves the write again.
 **`sch.py check` and `sch.py parity` pass before the schematic is requested
 for review** — the `schematic` skill. A finding is fixed, or waived with
 its reason in `<board>/schematic.json`; a collision is never waived.
