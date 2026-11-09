@@ -57,10 +57,12 @@ OPTIONS
     clearance "clr", for a track of "width").  A net's prelaid dog-bone (an
     extra_via inside the field) is a legal layer change for it; no new via is
     laid inside the field.  "open": [] keeps it shut on every layer;
-  a net's "avoid": [[x0, y0, x1, y1(, layer)], ...] prices those cells out for it
+  a net's "avoid": [[x0, y0, x1, y1(, layer(, cost))], ...] prices those cells out for it
     ("avoid_cost", default 1e4 per cell -- soft: negotiation outbids it; 1e8
-    makes it effectively hard for that net) -- a connector's pin field that
-    belongs to the nets ending there;
+    makes it effectively hard for that net; a 6th element prices that rectangle
+    alone, layer null for every layer) -- a connector's pin field that belongs
+    to the nets ending there, a differential pair's corridor no other net may
+    split while a soft courtyard price keeps necks short;
   a leg's "goal_layer" (default F.Cu) is the layer it must arrive on -- a
     through-hole pin walled in on F.Cu is reached on B.Cu;
   a leg's "to_xy": [x, y] ends it on a point, and "to_path": [[x, y], ...]
@@ -808,12 +810,13 @@ def main():
             # layer or on the one named -- a field that belongs to other nets (a connector's pins,
             # a lane kept for the stubs into a pull block)
             for r_ in S["nets"][n].get("avoid", []) + leg.get("avoid", []):
-                lays_ = [LAYERS.index(r_[4])] if len(r_) > 4 else range(len(LAYERS))
+                lays_ = [LAYERS.index(r_[4])] if len(r_) > 4 and r_[4] else range(len(LAYERS))
+                cost_ = float(r_[5]) if len(r_) > 5 else AVOID      # a rectangle's own price
                 cells_ = G.rect(*r_[:4])
                 for li_ in lays_:
                     arr_ = per[li_]
                     for c in cells_:
-                        arr_[c] += AVOID
+                        arr_[c] += cost_
             if pl:
                 for c in range(G.nx * G.ny):
                     if plane_bias[n][c]:
