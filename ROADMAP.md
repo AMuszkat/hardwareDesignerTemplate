@@ -52,6 +52,22 @@ fixtures (the `pcb` stage's board is `tests/fixture_pcb.py`'s).
 | V4 | Phase 0 PR | `snapshot --kind pcb` 6.6 s → 3.3 s; SUMMARY rows identical |
 | R8 | Phase 0 PR | no skill prescribes a bare kicad-cli, `python -c` or `timeout` line |
 | X3 | Phase 0 PR | `pack.py`, six restarts: 3.3 s → 0.8 s; plan identical to serial |
+| V2 | Phase 1 PR | unchanged board: 0 of 14 tiles changed; one added via: one region, at the via, top and bottom only; a scoped review flags a change outside its scope |
+| V3 | Phase 1 PR | a fixture review with Bash forbidden completed; a real 4-layer carrier measured in 0.7 s (3 pairs with skew, 14 layout rows) |
+| R7 | Phase 1 PR | the three historical failures (in-pad fanout, via-site shortage, reversed bundle) FAIL before copper; board2's row reproduces Q8's 9 sites for 11 pins |
+| H1 | Phase 1 PR | the guide's handoff rows written with no typing; a hand edit in the block fails the snapshot |
+| H2 | Phase 1 PR | a new board's `placement.json` passes `place.py check` after `place.py seed`, no hand edit |
+| S1, S3 | Phase 1 PR | draw 4.4 s, zero Konnect calls (the fixture plan replaces 54); every gate passes; a redraw keeps 16 symbol and 2 sheet UUIDs; `schupdate` re-links 0 of 15 |
+| R2 | Phase 2 PR | 16 nets: 14 iterations in 21 s (52.5 s full re-route, same count); PCB fixture plan identical, 29 s → 21 s; `--full` keeps the old hashes |
+| R3 | Phase 2 PR | opt-in (`--corridor`): identical plans, no measurable gain on the fixtures — A* already searches tightly there |
+| R5 | Phase 2 PR | `--seeds 4`: 82.7 s → 27.4 s, plan identical serial / forked; `--jacobi`: 16 nets 11.8 s on 8 cores, a different convergence; prelayout jobs concurrent. Not done: viafix's candidate search |
+| V1 | Phase 2 PR | the six files say one rule: milestones, a group on request, independence defined and claimed in `ROUTING_PLAN.md` §5 |
+| X1 | Phase 2 PR | `close_kicad` in `project.json`, asked once by `setup.sh init`, printed in every board brief |
+| X2 (B) | Phase 2 PR | `bin/board` and `bin/concept` print the relay-off line when a board exists; D waits, as decided |
+| S2 | Phase 3 PR | the fixture MCU's symbol from its pin table: 0 pin differences, the plan with it PASSES with no fix-up; a 124-pin table split 80 / 40 / 4 |
+| H3 | Phase 3 PR | `publish.py --selftest` on the fixture handoff with a NETS row deleted reported that hole (and 12 real fixture gaps), 4 min |
+| R4 | Phase 3 PR | the same routes both cores; 16 nets 52.5 s → 4.5 s (`--full`), 21 s → 1.0 s (default); PCB fixture 20 s → 2.2 s |
+| H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486. Not done: consumers unwired (one datasheet is the corpus); `pages` and `land` unrun here (no GPU, no Ollama) |
 
 ## Phase 0 — hours each, no behaviour change
 

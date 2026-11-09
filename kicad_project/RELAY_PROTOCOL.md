@@ -252,13 +252,17 @@ session builds on it — by the concept session's reviewer agents
 for the user. The user may still review anything at any time; a finding of
 theirs travels the same road as a reviewer's.
 
-1. **The board session finishes a change** — a set of sheets, a redraw, a
-   placement group, a routing group, the fixes for a review, and at the end
-   the fab release — and its own gates pass (its `schematic`, `placement`,
-   `routing` skill). It writes `## RVn` in `REVIEW.md` (format at the top of
-   that file), then rings `boardN RVn ready — schematic|pcb: <title>` (relay
-   on) or tells the user that line (relay off). Until the verdict it builds
-   nothing on the change; independent work may go on.
+1. **The board session finishes a change** — a set of sheets, a redraw, the
+   placement as a whole, a routing milestone (fanout and escape, buses,
+   power, pours, close-out), a single group it asks about, the fixes for a
+   review, and at the end the fab release — and its own gates pass (its
+   `schematic`, `placement`, `routing` skill). It writes `## RVn` in
+   `REVIEW.md` (format at the top of that file), then rings `boardN RVn
+   ready — schematic|pcb: <title>` (relay on) or tells the user that line
+   (relay off). Until the verdict it builds nothing on the change;
+   independent work may go on — a group that shares no corridor with the
+   change, uses none of the copper it reserved and moves no part it touched,
+   claimed in `ROUTING_PLAN.md` §5 and checked at the next milestone.
 2. **Concept reviews** (the `review-board` skill), on the ring or whenever
    the user asks — a review nobody requested is numbered `Mn`.
    `tools/review/snapshot.py` freezes the board and runs its own gates on

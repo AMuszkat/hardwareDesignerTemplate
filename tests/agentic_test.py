@@ -23,6 +23,12 @@ repository (nothing here is written; the copy is deleted unless --keep):
              the drawing standard (check) on the preview, every pin connected,
              every part placed once; with kicad-cli the full proof (netlist
              parity, ERC) as the skill runs it
+  draw       board side, with kicad-cli: sch.py draw installs the proven
+             plan on a copy of the board (zero Konnect calls); drawn, parity,
+             parity --handoff and check pass on it; a re-plan (new UUIDs)
+             drawn again keeps every symbol UUID (S1)
+  symgen     sch/symgen.py writes the fixture MCU's symbol from a pin table
+             (proven by a kicad-cli resave), and the plan with it PASSES (S2)
   router     tools/route/maze.py on a synthetic window: a bundle of nets
              through a funnel past a via field, negotiated to no overlap;
              every joint 0 or 45 degrees; seconds per iteration
@@ -36,6 +42,9 @@ repository (nothing here is written; the copy is deleted unless --keep):
              runs kicad-cli once: the DRC cache, R6), route.py audit, and the
              review snapshot --kind pcb serial and parallel (same SUMMARY rows,
              the wall clock of each: V4)
+  prelayout  tools/route/prelayout.py on tests/fixture_pcb.py --kind prelayout:
+             the in-pad BGA fanout, the via-site shortage and the reversed
+             bundle must each FAIL before any copper (R7)
   lint       tools/lint_docs.py on the scratch copy after the publish
 
 A stage is PASS, FAIL or SKIP (a dependency this machine lacks, named). The
@@ -139,6 +148,17 @@ LAYOUT = [
     ("Routing workmanship: joints 0 / 45 (no 90, no arcs); via to pad 0.15 mm, own net included; "
      "via links straight on the pad's axis, 45 only as a listed last resort; every copper-shape rule applies.",
      ["fixture"]),
+]
+FLOORPLAN_ZONES = [
+    {"name": "keep clear", "rect": [32.0, 23.0, 40.0, 28.0], "side": "F", "allow": [],
+     "note": "fixture: a reservation nothing stands in", "source": "fixture"},
+]
+WORKMANSHIP = [
+    ("joints", "0/45", "10_layout #3"),
+    ("copper to edge", "0.5 mm", "fixture"),
+    ("via to pad gap", "0.15 mm", "10_layout #3"),
+    ("45-degree via link", "last resort", "10_layout #3"),
+    ("copper shape", "on", "10_layout #3"),
 ]
 PINS = {
     "U1": {"1": "+5V", "2": "GND", "3": "+5V", "4": "NC", "5": "+3V3"},
@@ -410,7 +430,97 @@ def stage_schematic(copy, board, kcli, stock):
           planner_output=report.get("planner_output"))
 
 
-def stage_router(quick):
+def stage_draw(copy, board):
+    t0 = time.time()
+    tmp = Path(tempfile.mkdtemp(prefix="draw-"))
+    vpy = copy / "kicad_project" / "tools" / ".venv" / "bin" / "python"
+    py = str(vpy) if vpy.exists() else sys.executable
+    sch = str(copy / "kicad_project" / "tools" / "sch" / "sch.py")
+    try:
+        b = tmp / board.name
+        shutil.copytree(board, b, ignore=shutil.ignore_patterns("handoff.old", "*.kicad_pcb", "fixture.*"))
+        # the copy sits outside kicad_project/: its ${KIPRJMOD}/../tools must still find hw_sch
+        os.symlink(copy / "kicad_project" / "tools", tmp / "tools")
+        rc, out = run([py, sch, "draw", "--board", str(b)], copy)
+        t_draw = time.time() - t0
+        res = {"draw": (rc, tail(out, 1))}
+        for name, args, want in (("drawn", ["drawn"], "DRAWN AS PLANNED"), ("parity", ["parity"], "PARITY OK"),
+                                 ("parity --handoff", ["parity", "--handoff"], "HANDOFF PARITY OK"),
+                                 ("check", ["check"], "CHECKS PASS")):
+            r2, o2 = run([py, sch, *args, "--board", str(b)], copy)
+            res[name] = (0 if (r2 == 0 and want in o2) else 1, tail(o2, 1))
+        ids = lambda: sorted(re.findall(r'\(uuid "([0-9a-f-]{36})"\)\s*\(property "Reference" "([A-Z]+\d+)"',
+                                        "".join(p.read_text() for p in sorted(b.glob("*.kicad_sch")))))
+        sym_ids = set(re.findall(r'"([0-9a-f-]{36})"', "".join(p.read_text() for p in sorted(b.glob("*.kicad_sch")))))
+        r3, o3 = run([py, sch, "plan", "--board", str(b), "--handoff"], copy)
+        r4, o4 = run([py, sch, "draw", "--board", str(b)], copy)
+        kept = re.search(r"(\d+) symbol UUID\(s\) and (\d+) sheet UUID", o4)
+        res["redraw"] = (0 if r3 == 0 and r4 == 0 and kept and int(kept.group(1)) > 0 else 1,
+                         (kept.group(0) if kept else tail(o4, 1)))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ok = all(v[0] == 0 for v in res.values())
+    stage("draw", "PASS" if ok else "FAIL", time.time() - t0,
+          f"draw {t_draw:.1f} s, zero Konnect calls: " + "; ".join(f"{k} {'ok' if v[0] == 0 else 'FAIL: ' + v[1]}"
+                                                                   for k, v in res.items())
+          + (f" ({res['redraw'][1]} carried over)" if res["redraw"][0] == 0 else ""),
+          draw_s=round(t_draw, 2), **{k.replace(" ", "_"): v[0] == 0 for k, v in res.items()})
+
+
+MCU16_CSV = "number,name,type,group\n1,VDD,power_in,Power\n2,VSS,power_in,Power\n" + "".join(
+    f"{n},{nm},{t},IO\n" for n, nm, t in [(3, "OSC_IN", "input"), (4, "OSC_OUT", "output"), (5, "PA0", "bidirectional"),
+                                          (6, "PA2", "bidirectional"), (7, "PA3", "bidirectional"),
+                                          (8, "PB6", "bidirectional"), (9, "PB7", "bidirectional"), (10, "BOOT0", "input")]
+                                         + [(11 + k, f"PB{k}", "bidirectional") for k in range(6)])
+
+
+def stage_symgen(copy, board):
+    t0 = time.time()
+    tmp = Path(tempfile.mkdtemp(prefix="symgen-"))
+    vpy = copy / "kicad_project" / "tools" / ".venv" / "bin" / "python"
+    py = str(vpy) if vpy.exists() else sys.executable
+    tools = copy / "kicad_project" / "tools" / "sch"
+    try:
+        b = tmp / board.name
+        shutil.copytree(board, b, ignore=shutil.ignore_patterns("*.kicad_pcb", "fixture.*"))
+        os.symlink(copy / "kicad_project" / "tools", tmp / "tools")
+        (b / "mcu16.csv").write_text(MCU16_CSV)
+        rc, out = run([py, str(tools / "symgen.py"), "--board", str(b), str(b / "mcu16.csv"), "--name", "MCU16",
+                       "--lib", "agentic"], copy)
+        rc2, out2 = run([py, str(tools / "sch.py"), "plan", "--board", str(b), "--handoff"], copy)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ok = rc == 0 and rc2 == 0 and "PLAN PASSES" in out2
+    stage("symgen", "PASS" if ok else "FAIL", time.time() - t0,
+          f"{tail(out, 1)[:140]}; the plan with it: {tail(out2, 1)}", symgen_exit=rc, plan_exit=rc2)
+
+
+def stage_router(quick, rip="conflict"):
+    """The fixture routed by the active core; with the compiled core present, routed again by the
+    pure-Python search, and the two results must be identical (R4)."""
+    sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
+    import maze                                   # noqa: E402
+    core = maze._CORE
+    if core is None:
+        return _route_fixture(quick, rip, maze.CORE)
+    maze._CORE = None
+    try:
+        _route_fixture(quick, rip, "python")
+    finally:
+        maze._CORE = core
+    py = STAGES.pop()
+    _route_fixture(quick, rip, maze.CORE)
+    s = STAGES[-1]
+    same = s["numbers"].get("result_sha") == py["numbers"].get("result_sha")
+    s["detail"] += (f"; pure-Python search: {py['numbers'].get('route_s')} s, "
+                    + ("the SAME result" if same else f"a DIFFERENT result sha {py['numbers'].get('result_sha', '')[:10]}"))
+    s["numbers"].update(python_route_s=py["numbers"].get("route_s"), cores_identical=same)
+    if not same:
+        s["status"] = "FAIL"
+    print(f"  {'':10s} (router: {s['detail'].split('; pure-Python')[1].strip()})")
+
+
+def _route_fixture(quick, rip, core_name):
     t0 = time.time()
     sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
     import maze                                   # noqa: E402
@@ -438,7 +548,7 @@ def stage_router(quick):
     log = []
     t1 = time.time()
     paths = G.negotiate(jobs, iters=80, pres0=0.5, pres_mul=1.1, hist_inc=0.5, hist_decay=0.7, seed=1,
-                        log=log.append, via_cost=2.0, limit=400000)
+                        log=log.append, via_cost=2.0, limit=400000, rip=rip)
     t_route = time.time() - t1
     iters = sum(1 for ln in log if ln.strip().startswith("iteration"))
     if paths is None:
@@ -465,7 +575,7 @@ def stage_router(quick):
                     bad_joint += 1
     ok = conflicts == 0 and bad_joint == 0
     stage("router", "PASS" if ok else "FAIL", time.time() - t0,
-          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers; converged in {iters} iteration(s), {t_route:.1f} s "
+          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers, rip {rip}, core {core_name.split(' (')[0]}; converged in {iters} iteration(s), {t_route:.1f} s "
           f"({t_route / max(iters, 1):.2f} s/iteration); {nseg} segments, {nvia} vias; conflicts {conflicts}; "
           f"joints not 0/45: {bad_joint}; result sha {h.hexdigest()[:10]}",
           nets=n, cells=G.nx * G.ny, iterations=iters, route_s=round(t_route, 2),
@@ -560,6 +670,13 @@ def stage_pcb(copy, board, quick):
     kp = copy / "kicad_project"
     tools = kp / "tools"
     nums, notes, ok = {}, [], True
+    # H1: the handoff's rules.json into the guide's block, then proven current
+    rc, out = run([sys.executable, str(tools / "route" / "guide.py"), "sync", "--board", str(board)], kp)
+    rc2, out2 = run([sys.executable, str(tools / "route" / "guide.py"), "check", "--board", str(board)], kp)
+    nums["guide_sync"] = tail(out, 1)
+    if rc or rc2 or not (board / "handoff" / "rules.json").exists():
+        ok = False
+        notes.append(f"guide.py sync / check: {tail(out, 1)} / {tail(out2, 1)}")
     t1 = time.time()
     rc, out = run([kpy, str(tools / "route" / "netgroup.py"), "--board", str(board), "routing/R1_spec.json",
                    "--timeout", "600"], kp)
@@ -596,6 +713,21 @@ def stage_pcb(copy, board, quick):
     if "AUDIT " not in out:
         ok = False
         notes.append("audit: " + tail(out, 2))
+    # H2: the handoff's zones, hole-to-edge and layer / class tables seeded, and the placement
+    # checks with no hand edit
+    rc, out = run([kpy, str(tools / "place" / "place.py"), "seed", "--board", str(board)], kp)
+    (board / "placement" ).mkdir(exist_ok=True)
+    (board / "placement" / "empty.json").write_text("{}\n")
+    rc2, out2 = run([kpy, str(tools / "place" / "place.py"), "check", "--board", str(board), "placement/empty.json"], kp)
+    cfg = json.loads((board / "placement.json").read_text())
+    nums["seed"] = f"{len(cfg.get('keepouts', []))} keep-out(s), hole_to_edge {cfg.get('hole_to_edge')}"
+    nums["placement_check_exit"] = rc2
+    if rc or rc2 or cfg.get("hole_to_edge") is None or "BEGIN handoff/fab.json" not in (board / "ROUTING_PLAN.md").read_text():
+        ok = False
+        notes.append(f"seed / check: {tail(out, 2)} / exit {rc2}: {tail(out2, 2)}")
+    # a hand edit inside the generated block must fail the snapshot's guide-block gate
+    gp = board / "general_routing_guide.md"
+    gp.write_text(gp.read_text().replace("| via to pad gap | 0.15 mm |", "| via to pad gap | 0.1 mm |", 1))
     rows = {}
     for jobs_ in ("1", ""):
         env = dict(os.environ, HW_JOBS=jobs_) if jobs_ else {k: v for k, v in os.environ.items() if k != "HW_JOBS"}
@@ -612,12 +744,43 @@ def stage_pcb(copy, board, quick):
     if rows["1"] != rows[""]:
         ok = False
         notes.append("snapshot SUMMARY rows differ serial vs parallel")
+    gb = [r for r in (rows[""] or []) if r[0].strip() == "guide-block"]
+    nums["guide_block_after_hand_edit"] = gb[0][1].strip() if gb else None
+    if nums["guide_block_after_hand_edit"] != "FAIL":
+        ok = False
+        notes.append(f"a hand edit in the guide's rules.json block did not fail the snapshot: {gb}")
     stage("pcb", "PASS" if ok else "FAIL", time.time() - t0,
           f"netgroup {nums['iterations']} iteration(s) {nums['route_s']} s (plan sha {nums['plan_sha'][:10]}); "
           f"check {nums['check1_s']} s then {nums['check2_s']} s ({nums['check2_kicad_cli']} kicad-cli run the second time; "
           f"{nums['check2_verdict']}); "
           f"audit {nums['audit_s']} s; snapshot pcb serial {nums['snapshot_serial_s']} s, "
-          f"parallel {nums['snapshot_parallel_s']} s" + ("; " + "; ".join(notes) if notes else ""), **nums)
+          f"parallel {nums['snapshot_parallel_s']} s; guide {nums['guide_sync']}, a hand edit in it -> "
+          f"guide-block {nums['guide_block_after_hand_edit']}; seed: {nums['seed']}, place.py check exit {rc2}" + ("; " + "; ".join(notes) if notes else ""), **nums)
+
+
+def stage_prelayout():
+    t0 = time.time()
+    kpy = str(ROOT / "kicad_project" / "tools" / "kpy")
+    tmp = Path(tempfile.mkdtemp(prefix="prelayout-"))
+    try:
+        rc, out = run([kpy, str(ROOT / "tests" / "fixture_pcb.py"), str(tmp), "--kind", "prelayout"], ROOT)
+        if rc:
+            stage("prelayout", "FAIL", time.time() - t0, "fixture_pcb: " + tail(out))
+            return
+        rc, out = run([kpy, str(ROOT / "kicad_project" / "tools" / "route" / "prelayout.py"), "--board",
+                       str(tmp / "prelayout")], ROOT)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    want = {"fanout U1": False, "rows J3": False, "bundles J4-J5": False}
+    for ln in out.splitlines():
+        for k in want:
+            if ln.startswith(f"PRELAYOUT {k}") and ": FAIL" in ln:
+                want[k] = True
+    ok = rc == 1 and all(want.values())
+    stage("prelayout", "PASS" if ok else "FAIL", time.time() - t0,
+          "the three historical failures FAIL before routing: " + ", ".join(f"{k} {'FAIL' if v else 'MISSED'}"
+                                                                         for k, v in want.items())
+          + f" (exit {rc})", **{k.replace(" ", "_"): v for k, v in want.items()})
 
 
 def stage_lint(copy):
@@ -635,6 +798,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quick", action="store_true", help="a smaller router problem")
     ap.add_argument("--keep", action="store_true", help="keep the scratch copy and print its path")
+    ap.add_argument("--rip", choices=["conflict", "full"], default="conflict",
+                    help="the router stage's rip-up: conflict (the default) or full (the pre-R2 result)")
     ap.add_argument("--out", default=str(ROOT / "out" / "agentic"), help="where the report goes")
     a = ap.parse_args()
     t0 = time.time()
@@ -657,10 +822,13 @@ def main():
             stage_schematic(copy, board, kcli, stock)
         else:
             stage("schematic", "SKIP", 0.0, "no handoff to plan from")
-        stage_router(a.quick)
+        stage_draw(copy, board) if (board and kcli and stock) else stage("draw", "SKIP", 0.0, "needs kicad-cli and KiCad's symbols")
+        stage_symgen(copy, board) if (board and kcli and stock) else stage("symgen", "SKIP", 0.0, "needs kicad-cli")
+        stage_router(a.quick, a.rip)
         stage_fanout(tmp)
         stage_snapshot(copy, kcli) if board else stage("snapshot", "SKIP", 0.0, "no board")
         stage_pcb_tools(pcb)
+        stage_prelayout() if pcb else stage("prelayout", "SKIP", 0.0, "needs pcbnew")
         if board and kcli and pcb:
             stage_pcb(copy, board, a.quick)
         else:

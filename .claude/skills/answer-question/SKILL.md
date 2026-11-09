@@ -76,6 +76,9 @@ work is now wrong** (or "nothing") and the board gate that shows it
     .venv/bin/python tools/handoff/publish.py --board boardN
     .venv/bin/python tools/handoff/publish.py --check --all
 
+A question that showed a whole kind of fact missing (not one value) earns a
+`--selftest` too: what else of that kind is missing is cheaper found now.
+
 ## 5. Tell them
 
 - **Relay off:** tell the user, one line: `board1 rev 12 answers Q7, Q8;

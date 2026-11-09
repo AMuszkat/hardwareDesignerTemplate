@@ -1,9 +1,9 @@
 # `tools/route` — routing, one reviewed group at a time
 
 **Yours**, like `tools/place` and `tools/fp`. A board is routed in the groups
-`<board>/ROUTING_PLAN.md` lists, and **every group is reviewed before the
-next one starts** (the board's `REVIEW.md`; the verdict in
-`handoff/15_reviews.md`). These tools make a group cheap to propose, judge and undo.
+`<board>/ROUTING_PLAN.md` lists, **reviewed at milestones** — fanout and
+escape, buses, power, pours, close-out — and a group alone on request (the
+board's `REVIEW.md`; the verdict in `handoff/15_reviews.md`). These tools make a group cheap to propose, judge and undo.
 The workflow is the `routing` skill.
 
     tools/kpy tools/route/route.py status --board board1 [--nets]
@@ -20,6 +20,7 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
     tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
     tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
+    tools/kpy tools/route/prelayout.py --board board1 [--spec routing/prelayout.json]   # before the first group
     tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json] [--vias model.json] [--contested netgroup.log]
 
 `tools/kpy` only (they import `pcbnew`). `apply` and `rip` need KiCad
@@ -333,6 +334,46 @@ its docstring. What the spec has to be told:
   through which the only exits need a 90-degree turn (board2's R5: a
   pre-routed lane hard against the via row). Draw the fixed copper with
   `view.py` and free the lane; more `--limit` does not help.
+- **The search runs compiled when it can.** `route/_maze.c` is the same A*
+  (built by `tools/setup.sh` with the system C compiler into
+  `tools/.native/`, loaded through ctypes over the grid's own buffers): the
+  SAME routes, bit for bit — the agentic test routes its fixture both ways
+  and compares — about ten to forty times faster (16 nets: 52.5 s → 4.5 s
+  with `--full`, 21 s → 1.0 s by default; the PCB fixture 20 s → 2.2 s).
+  Every run's first line says which core is active (`router core: compiled
+  ...` or `python (...)`), and so does `route.py rules`; `HW_MAZE_CORE=python`
+  forces the Python one. A route with cross-square headings (`xdir`) uses the
+  Python search. No C compiler: the same routes, slower. Halo stamping and
+  the overlap count stay in Python: the profile puts the time in the search.
+- **Only the overlapping nets are ripped up** after the first iteration
+  (conflict-only PathFinder): the others keep their paths, and the rising
+  cost of the contested cells moves the overlapping nets round them. When
+  the overlap has not fallen for 4 iterations, one iteration re-routes every
+  net. `--full` re-routes every net every iteration — the router's result
+  before this, for a run that must reproduce an old plan. On the agentic
+  fixtures: 16 nets 52.5 s → 21 s in the same 14 iterations; the PCB
+  fixture's plan identical, 29 s → 21 s. Deterministic per seed either way.
+- **`--seeds N` tries N seeds at once** (forked, `tools/par.py`): every
+  seed negotiates the leg against the same frozen copper and the LOWEST seed
+  that converges is taken, whichever finished first — the same plan with
+  `HW_JOBS=1`, and seed 1's plan when seed 1 converges. When none does, seed
+  `--seed` runs again with its partial and stall report. On the PCB fixture
+  four seeds cost one run's wall clock (82.7 s serial, 27.4 s forked).
+- **`--jacobi` routes an iteration's nets in parallel**, each against the
+  congestion the iteration started with. A different convergence, not a
+  faster same one: two nets can take the same free lane and meet again next
+  iteration. On the 16-net router fixture it took 30 iterations (14
+  default) yet finished in 11.8 s on 8 cores (21 s default); on the PCB
+  fixture 41 iterations (3 default), 61 s against 21 s. Try it on a big
+  group that converges slowly; the same plan with `HW_JOBS=1`.
+- **`--corridor MM` bounds each net's search** to the box round its ends and
+  its last path, grown by MM (or 30 % of its span), doubled until it routes,
+  up to the whole window — so a corridor never walls in a net the window
+  would not. It is OFF by default: on the agentic fixtures (16 nets across a
+  funnel; the same bundle in a 90 x 70 mm window) A* already searched
+  tightly, the plans were identical and the time within noise. Use it when a
+  big window's nets hit `--limit` and read as walled in; a corridor can also
+  trade a better detour outside it for a worse path inside, so compare.
 - **Bound a run with `--timeout S`, not a `timeout` prefix.** It stops
   between iterations when the next one (sized by the slowest so far) would not
   end inside S seconds, prints the contested cells and `reach` per net, and
@@ -363,6 +404,34 @@ its docstring. What the spec has to be told:
   distance between the two limits, and give the leg its grid-aligned end.
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
+
+## `prelayout.py` — can it be routed, before any copper
+
+The tests the boards learned to run late, run at placement:
+`fanout.py` plan and layers per BGA, `escape_bound.py` per BGA and layer,
+`pourreach.py` for the rail vias, each fine-pitch row's via sites, and each
+connector pair's order inversions. One `PRELAYOUT <test> <target>: PASS |
+FAIL | TODO | WAIVED` line each; exit 1 on a FAIL or a TODO. It FINDS the
+candidates itself (36+ round pads on a grid; 8+ pads at <= 0.5 mm pitch;
+connectors joined by 4+ point-to-point nets), so leaving one out of
+`routing/prelayout.json` makes it TODO, not skipped. The spec is in the
+docstring.
+
+- **The via-site model** (a fine-pitch row): the links to a deeper via row
+  pass between the vias above, so k rows space a row's vias
+  `max(pad + clearance, pad + (k-1) * width + k * clearance)` apart, one via
+  per that / k along the row, adjacent rows
+  `sqrt((pad + clearance)^2 - pitch^2)` apart; every pin's via within
+  `lateral` of it. On board2's J1 (0.6 / 0.3 via, 0.2 gap and clearance, a
+  0.2 track, a 2.1 mm strip less 0.45 to the cut-out) that is two rows, one
+  via per 0.60 mm, and 9 sites for the 11 used pins over 4.0 mm — what Q8
+  found at R5.
+- **Inversions** are counted across the bundle (perpendicular to the line
+  between the connectors' centres) over the nets with exactly one pad on
+  each connector and none elsewhere: a net through a series part is not in
+  the count.
+- `tests/fixture_pcb.py --kind prelayout` is the three historical failures;
+  each must FAIL.
 
 ## `fanout.py` — where a BGA's vias go, and how many nets leave over several layers
 

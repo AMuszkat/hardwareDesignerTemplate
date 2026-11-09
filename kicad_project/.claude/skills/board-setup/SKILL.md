@@ -51,8 +51,9 @@ Read the whole output before going on:
 
 `apply` refuses while a KiCad lock file exists. The **whole project** must be
 closed, not just the PCB editor: KiCad rewrites `.kicad_pro` when the project
-closes, and that would undo the net classes. Ask the user to save and close
-it, unless they have said you may close KiCad yourself. Then:
+closes, and that would undo the net classes. Close it yourself when the
+session-start brief says the standing permission (`project.json`
+`close_kicad`) is YES; otherwise ask the user to save and close it. Then:
 
 1. Save everything open in KiCad (Konnect `save_project` for the board).
 2. Quit. There is no quit command over the IPC API; `kill -TERM` on the

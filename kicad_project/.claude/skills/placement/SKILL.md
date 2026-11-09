@@ -11,8 +11,10 @@ description: >
 
 # Placement, one group at a time
 
-A board is placed **group by group, and each group is reviewed** before the
-next: its request in `REVIEW.md`, the verdict in `handoff/15_reviews.md`. Tools: Konnect for moves and refreshes,
+A board is placed **group by group, and reviewed as a whole** once every
+group passes `place.py check` and `prelayout.py` (a group you are unsure of
+may be requested alone): the request in `REVIEW.md`, the verdict in
+`handoff/15_reviews.md`. Tools: Konnect for moves and refreshes,
 `tools/place/place.py` for checks (read `tools/place/README.md`), and
 `<board>/placement.json` for keep-outs and group lists. Every `tools/place`
 script runs as `tools/kpy tools/place/<script>.py` (it imports `pcbnew`).
@@ -23,9 +25,15 @@ script runs as `tools/kpy tools/place/<script>.py` (it imports `pcbnew`).
   `board-setup` skill). Placement against default rules is placement twice.
 - Read `handoff/10_layout.md` for the group (loop areas, "at the pin",
   sensitive zones, the deliberate choices in `04_deliberate.md`) and the
-  group's area in `handoff/11_floorplan.svg` if the handoff has one. Put the
-  floorplan's reservations into `placement.json` `keepouts` before the first
-  part moves.
+  group's area in `handoff/11_floorplan.svg` if the handoff has one.
+- `tools/kpy tools/place/place.py seed --board <board>` before the first part
+  moves, and after every handoff revision that touches the floorplan or
+  `14_fab.md`: it writes `handoff/floorplan.json`'s zones into
+  `placement.json` `keepouts`, 14_fab's hole-to-edge into `hole_to_edge`, and
+  the layer and class tables into `ROUTING_PLAN.md` §1 — nothing typed. A
+  reservation you delete once its part is placed is never put back. With no
+  `floorplan.json` published, a reservation that exists only in the SVG is a
+  question (ask for it as data), not a rectangle you measure off a picture.
 - `tools/kpy tools/place/place.py sync --board <board>` exits 0. If it does
   not, the board is not what the library says: fix that first (§4).
 
@@ -98,6 +106,27 @@ two rows of capacitors allow the via pad + two via-to-pad gaps (the guide's
 there without moving parts after the copper is laid — a placement decision
 the user makes, never an exception the routing session declares.
 
+## 1d. Can it be routed? The pre-routing gate
+
+Before the placement is requested for review, and again after any move near a
+BGA, a fine-pitch row or a bundle's ends:
+
+```
+tools/kpy tools/route/prelayout.py --board <board>
+```
+
+It finds the BGAs, the fine-pitch rows and the connector pairs a bundle joins
+by itself, and each is TODO (a failure) until `routing/prelayout.json`
+configures it from the handoff (the format is in its docstring) or waives it
+with a reason: the BGA's fanout model and layer split (`fanout.py`), its
+escape per layer (`escape_bound.py`), the rail vias' reach (`pourreach.py`),
+each fine-pitch row's via sites against the strip it has, and each bundle's
+order inversions against what its corridor's free layers can take. These
+are the tests board1 and board2 learned to run after copper was laid (seven
+fanout rounds, 48 inversions under a pour, a contact with no via site); a
+FAIL here is a placement change or a question, decided before the first
+group. **Every `PRELAYOUT` line goes into the placement review request.**
+
 ## 2. Spacing
 
 - Courtyards are IPC nominal, 0.25 mm beyond pads or body (`fp.py tidy
@@ -162,8 +191,11 @@ Konnect `save_project` first; there is no quit command over the IPC API, so
 `kill -TERM` the `kicad` process (KiCad does not rewrite project files on
 SIGTERM); confirm `pgrep -x kicad` is empty; only then remove the stale `~*.lck`
 files. Never remove a lock file while any KiCad process runs. Whether you may
-close KiCad yourself is the user's call — ask once, and record a standing
-permission in `ROUTING_PLAN.md` §4.
+close KiCad yourself is recorded once, in `kicad_project/project.json`
+(`close_kicad`, `./setup.sh init`), and printed in the session-start brief;
+without it, ask the user. The board session is headless by default
+(`kicad_project/CLAUDE.md`): `place.py apply`, `labels`, `silk` and the
+refresh tools run on the closed board.
 
 ## Rules
 
@@ -174,6 +206,8 @@ permission in `ROUTING_PLAN.md` §4.
    meet is a QUESTIONS.md item.
 4. **Deliberate positions stay** (`04_deliberate.md`) even when a compaction
    would like them elsewhere.
-5. **Each group stops for review**: with `place.py check` and `place.py drc`
-   clean, write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line). The next group starts on PASS;
-   routing starts after the last placement group passes (the `routing` skill).
+5. **The placement stops for review as a whole**: with every group's
+   `place.py check`, `place.py drc` and `prelayout.py` clean, write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line).
+   Until the verdict, build nothing on it; independent work (a group that
+   touches none of its parts or corridors) may go on. Routing starts after
+   the placement passes (the `routing` skill).

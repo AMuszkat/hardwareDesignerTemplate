@@ -2,7 +2,7 @@
 name: schematic
 description: >
   Draw or redraw a board's schematic to the project's drawing standard: plan
-  the layout from the netlist, prove it, draw it with Konnect, gate it.
+  the layout from the netlist, prove it, install it (sch.py draw), gate it.
   Triggers on "draw the schematic", "schematic", "redraw", "sheet", "make the
   schematic readable", "paper size", "title block", "schematic review",
   "check the schematic", "the sheets are hard to read".
@@ -94,24 +94,21 @@ wins where they disagree.
   (`74xGxx:74LVC2G07`'s power unit) is redrawn in the board library with the
   same pins and units as origin-anchored boxes.
 
-**Making a unit land at the origin with Konnect's `create_symbol`** — it
-takes a pin's x as its connection point and grows a body too narrow for the
-names, centred on what you asked, so the body rarely lands where the pins
-say. Two passes, no guessing: create with left pins at x = −2.54 and the
-first row at y = −2.54 (the top edge is then exactly 0); read the response's
-resolved left-pin x `lx`; the body's left edge is `lx + 2.54`; if that is
-not 0, `delete_symbol` (it finds only a symbol Konnect wrote and nothing has
-resaved since — after `symfields.py`, `symfields.py --delete`; `create_symbol`
-on a name already there adds a second copy) and create again with every pin's x shifted by
-−(lx + 2.54). Then:
+**A new or rebuilt symbol comes from its pin table**, not from Konnect's
+`create_symbol`:
 
 ```
-tools/.venv/bin/python tools/sch/symfields.py --board <board> SYMBOL ...    # fields above the corner
+tools/.venv/bin/python tools/sch/symgen.py --board <board> PINS.csv --name NAME [--ref U] [--footprint LIB:FP]
 ```
 
-Verify a rebuilt symbol against the old one pin by pin (number, name,
-type) before any sheet uses it: a rebuild is where a ball silently changes
-type.
+`PINS.csv` is `number,name,type,group[,side]`, typed from the datasheet's
+pin table (types by PIN NAME, never by its Function column). It draws every
+rule above the first time — units by group, at most 40 rows a side, the body
+at the origin sized from its pin names, pins long enough for their numbers,
+Reference and Value just above the corner — prints pin by pin how it differs
+from the symbol it replaces, and proves the write with a kicad-cli resave
+read back against the table. `symfields.py` remains for a stock symbol
+(`--derive`) and for fixing a symbol drawn before.
 
 ## 1. Before the first sheet
 
@@ -157,55 +154,32 @@ tools/.venv/bin/python tools/sch/sch.py pdf --board <board>
 
 It writes `sch_plan/preview.pdf` and one `preview-N.png` per sheet beside it.
 
-## 3. Draw, gate each sheet, then frame
+## 3. Draw: install the proven plan
 
-`get_project_info` first: the open project must be yours; the schematic
-editor stays closed while Konnect writes. **Before spawning any agent, load
-Konnect's `sch_components`, `sch_wiring` and `sch_batch` toolsets yourself**
-(`load_toolset`): an agent's tool list is fixed when it is spawned, so one
-started before them sees no `batch_add_wire` or `add_schematic_net_label`,
-and its own `load_toolset` does not reach it (board2: the first agent drew
-nothing; the one spawned after the load drew 720 of 720). Each sub-sheet is independent of
-the others until the root, so **draw them in parallel, one agent per sheet**,
-with the prompt in `draw_sheet.md` beside this skill (fill the placeholders).
-The root sheet is drawn last, by you, from its ops.json.
-
-Each agent makes the calls in `sch_plan/<sheet>.ops.json` **in order, with
-the arguments as written**, splitting only a long list across consecutive
-calls of the same tool, then gates its sheet:
+The plan's preview is the drawing — `PLAN PASSES` proved it — so it is
+installed as the board's sheets, not replayed through Konnect. KiCad must
+not hold the schematic open with unsaved edits (close the project, or File →
+Revert afterwards so it reads the new files):
 
 ```
-tools/.venv/bin/python tools/sch/sch.py drawn --board <board> <sheet>.kicad_sch   # 0 missing, 0 extra, fields as planned
+tools/.venv/bin/python tools/sch/sch.py draw --board <board>      # DRAW OK, or DRAW FAIL and the sheets restored
 ```
 
-The plan already carries the three calls Konnect needs and does not do by
-itself (the README's "What Konnect cannot do" has the whole list):
-`update_symbols_from_library` + `reset_schematic_field_positions` right after
-the parts are placed (a sheet keeps its old copy of a rebuilt symbol),
-`add_component_annotation` for a field the symbol does not have yet (MPN),
-and `import_sheet_pins` + `edit_sheet_pin` for a root sheet's
-left-edge pins (`add_sheet_pin` makes every pin face right, and KiCad then
-shorts a left pin to the right-edge pin at its height).
+`draw` (`tools/sch/draw.py`) carries every UUID the board already has over to
+the new sheets — the root's, each sheet symbol's, each symbol's by reference
+and unit — so the PCB's links survive a redraw; backs the sheets up under
+`.sch_backups/`; registers `hw_sch` if the board's `sym-lib-table` lacks it;
+has kicad-cli resave each file (nothing may move); then proves the write:
+parity with the plan and with the handoff, `check`, ERC no worse than the
+preview's, and, with a PCB, that every footprint still links to its symbol.
+The section frames, the title block, KiCad's DNP and Exclude-from-BOM flags
+and the Footprint fields come with the preview, so `frame`, `flags` and
+`footprints` have nothing left to do after a draw. Zero Konnect calls.
 
-Konnect has no call for a section frame or the title block, so those are
-written by the tool, graphics only, once every part is where the plan put it
-(it checks, and proves the netlist unchanged):
-
-```
-tools/.venv/bin/python tools/sch/sch.py frame --board <board>
-```
-
-KiCad must not have the sheets open with unsaved edits when `frame` runs;
-reopen the project (or File → Revert) afterwards so it reads the frames in.
-**Run `frame` before any post-draw Konnect fix** (§4): it refuses while a
-part is not where the plan put it, and a part moved to clear a finding is
-exactly that. It also puts each root sheet box's "File:" field under its own
-box (Konnect's `edit_sheet` leaves it where the old box ended).
-
-While a redraw is half done, the board's sheets are not one consistent
-netlist: a source re-read from them (`--from-sch`, a board build script)
-then has the wrong nets. Read it from the last plan's preview
-(`sch_plan/preview/<board>/`), which `plan` proved identical to its source.
+**Which tool edits what** (`kicad_project/CLAUDE.md` has the whole table): a
+sheet's drawing is `plan` then `draw`; a one-off fix on a drawn sheet (a jog
+moved to clear a text) is Konnect with KiCad open, one undo step, then
+`drawn`; a library symbol is `symfields.py`; never a text editor.
 
 ## 4. Prove what was drawn
 
@@ -215,44 +189,32 @@ tools/.venv/bin/python tools/sch/sch.py parity --board <board> --handoff    # HA
 tools/.venv/bin/python tools/sch/sch.py check  --board <board>              # CHECKS PASS
 ```
 
-plus ERC (`check` prints kicad-cli's). `parity` is the one that catches a
-root-sheet short (two interfaces merged); run it before `frame`. A finding
-after drawing is fixed with a Konnect edit (move, rotate, re-route a jog)
-and `check` again; `drawn` then reports that spot as planned-vs-drawn, which
+plus ERC (`check` prints kicad-cli's). `draw` ran them all; run them again
+after any hand fix. `parity` is the one that catches a root-sheet short (two
+interfaces merged). A finding after drawing is fixed with a Konnect edit
+(move, rotate, re-route a jog) and `check` again; `drawn` then reports that spot as planned-vs-drawn, which
 is expected — parity is the final word. A waiver (`<board>/schematic.json`,
 with a `why`) is for a choice that is right, such as a connector kept as one
 2 × 50 row; it is never for a collision.
 
-⚠ **A redraw gives every symbol a new UUID.** If the PCB already holds the
-parts, update it before any PCB work, KiCad closed:
-`tools/kpy tools/place/schupdate.py --board <board>` (Update PCB from
-Schematic with *Re-link by reference*, for the parts already there), then
-`board_setup.py apply` (net names may have changed) and `place.py drc`:
-schematic parity 0.
+`draw` keeps every symbol's UUID, so a redraw leaves the PCB linked
+(`draw` prints how many footprints still link). A part new to the schematic
+is still new to the PCB: `addfp.py` places it and
+`tools/kpy tools/place/schupdate.py --board <board>` links it, KiCad closed;
+then `board_setup.py apply` when net names changed, and `place.py drc`:
+schematic parity 0. A board drawn earlier by a Konnect replay keeps its UUIDs
+through its first `draw` too: they are matched by reference and unit.
 
-⚠ **KiCad's own DNP and Exclude-from-BOM flags are set by no Konnect call,
-and a redraw places every part again without them.** After the last redraw,
-before the review request:
-
-```
-tools/.venv/bin/python tools/sch/sch.py flags --board <board>     # KiCad closed
-```
-
-sets DNP on exactly the plan's DNP parts and Exclude from BOM on
-`schematic.json`'s `"exclude_from_bom"` globs (pad-only parts, fiducials,
-plated holes, test pads), parsed tree, netlist proven unchanged, read back.
-`drawn`, `parity` and `parity --handoff` fail, naming each part, until the
-DNP flags are right. A field named DNP is not the flag: write none.
+A field named DNP is not KiCad's DNP flag: write none. `sch.py flags` remains
+for a board drawn before `draw` existed.
 
 ## 5. Stop for review
 
-**A small edit after an answer is still a plan first.** For example, a pin taken off a net:
-1. `sch.py plan --handoff` re-makes `sch_plan/` against the new revision.
-2. Draw only what `drawn` then lists as missing or extra; the re-plan may move a neighbour's label too.
-3. Run `sch.py frame` for the title block's revision.
-
-A Konnect edit made straight on the sheet leaves `sch_plan/` describing the old drawing. `parity --handoff` passes,
-but plain `parity` fails, and replaying the plan would undo the edit (board2's RV17).
+**A small edit after an answer is a plan, then a draw.** For example, a pin taken off a net:
+`sch.py plan --handoff` re-makes `sch_plan/` against the new revision, then `sch.py draw` installs it
+(the title block's revision with it). A Konnect edit made straight on the sheet instead leaves
+`sch_plan/` describing the old drawing: `parity --handoff` passes, plain `parity` fails, and the next
+draw undoes the edit (board2's RV17).
 
 With `check`, both `parity` runs and ERC clean, the schematic is requested for
 review: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — schematic: <title>`; relay off: tell the user that line). Scope: the sheets this change touched ("all"

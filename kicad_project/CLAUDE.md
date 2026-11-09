@@ -101,21 +101,25 @@ looking like an open question, which is worse than a hole. `05_open.md`
 lists what is blocked and what is safe to start; `04_deliberate.md` lists
 choices a review will flag that are intentional — do not "fix" them.
 
-## KiCad files go through Konnect or pcbnew, never a text editor
+## Which tool edits which KiCad file — never a text editor
 
 `.kicad_sch`, `.kicad_pcb`, `.kicad_pro`, `.kicad_sym`, `.kicad_mod` and the
 library tables are object graphs with UUIDs (the `konnect` skill is the rule
-set). Two ways to change them (`fp.py` is the third, for footprint files
-only, and `sch.py frame` the fourth, for a schematic's section frames and
-title block only — graphics Konnect has no call for; both edit the parsed
-tree and have `kicad-cli` read back every file they write):
+set). Each kind of edit has one tool; the project's own tools are preferred
+where they prove what they write:
 
-- **Konnect MCP**, KiCad open, for interactive edits — one call per plan, so
-  one undo step.
-- **The scripts in `tools/`**, through `pcbnew` on the **closed** board, backup
-  first, read back afterwards — for anything bulk (Board Setup, placement
-  applies, routing groups). They run as `tools/kpy <script>`: KiCad's `pcbnew`
-  module imports only in the interpreter KiCad was built for.
+| edit | tool | why |
+|---|---|---|
+| a sheet's drawing: parts, wires, labels, frames, title block, DNP and BOM flags, Footprint fields | `tools/sch/sch.py plan` then `draw` | the plan is proven before a file is written; the write is proven after (parity, ERC, `check`, a kicad-cli resave that moves nothing), UUIDs kept |
+| a one-off fix on a drawn sheet (a jog moved to clear a text) | Konnect, KiCad open; then `sch.py drawn` | one undo step, no plan churn |
+| a library symbol | `tools/sch/symfields.py` (and Konnect's `create_symbol`) | Konnect cannot set field positions, pin lengths or delete a saved symbol |
+| a footprint file | `tools/fp/fp.py` | land hashed and signed |
+| Board Setup, a placement plan, a routing group, labels, a schematic re-link | the `pcbnew` scripts in `tools/` (`tools/kpy <script>`), KiCad **closed** | bulk, backup first, read back after |
+| a single interactive move with KiCad open | Konnect | one undo step |
+| any KiCad file by text editor | never | — |
+
+The `pcbnew` scripts run as `tools/kpy <script>`: KiCad's `pcbnew` module
+imports only in the interpreter KiCad was built for.
 
 Konnect's skills (`kicad-*`) are the tool manual; **this project's skills
 (`schematic`, `board-setup`, `footprint`, `placement`, `routing`) are the
@@ -128,12 +132,22 @@ can be live at once. Before any Konnect edit, `get_project_info`: if the open
 project is not your board's, do not touch it — tell the user. Never have two
 board sessions drive KiCad at the same time.
 
+**Headless by default.** Every PCB step runs through the `pcbnew` scripts on
+the closed board (`board_setup.py apply`, `place.py apply`, `route.py apply`
+and `rip`, `labels`, `silk`, `schupdate.py`, `refresh.py`). KiCad is opened
+only for a step the table above gives Konnect, or because the user wants to
+look.
+
 **Closing KiCad** whenever the work needs it: only when the open project is
 YOURS (`get_project_info`); Konnect `save_project` first, then `kill -TERM` the
 `kicad` process, confirm `pgrep -x kicad` is empty, and only then clear the
-`~*.lck` files it leaves behind in your own folder. Ask the user first unless
-they have said you may close it yourself. Killing KiCad while another board's
-project is open destroys that session's unsaved work.
+`~*.lck` files it leaves behind in your own folder. Whether you may do it
+without asking is recorded once, in `kicad_project/project.json`
+(`close_kicad`, set by `./setup.sh init`), and the session-start brief says
+which; without it, ask the user to save and close. No permission waives the
+guard: another board's project open means do nothing and tell the user —
+killing KiCad then destroys that session's unsaved work. A project the user
+had open is reopened after your closed-board step, and you say so.
 
 ## Footprints are yours
 
@@ -163,8 +177,9 @@ laid out by `tools/sch/sch.py plan` — titled sections (an IC, its decoupling,
 its pull-ups, its crystal), each wired inside and joined to the others by
 labels, rails as power symbols, signals leaving a sheet through hierarchical
 labels, the smallest paper that fits — which proves its layout on a scratch
-copy (netlist parity, ERC, the gate) before Konnect draws it from the plan's
-call list; `sch.py frame` then writes the section frames and the title block.
+copy (netlist parity, ERC, the gate); `sch.py draw` then installs that proven
+preview as the board's sheets — frames, title block and flags included,
+UUIDs kept — and proves the write again.
 **`sch.py check` and `sch.py parity` pass before the schematic is requested
 for review** — the `schematic` skill. A finding is fixed, or waived with
 its reason in `<board>/schematic.json`; a collision is never waived.
@@ -196,11 +211,17 @@ the verdict, build nothing on the change (independent work may go on).
 `RELAY_PROTOCOL.md` section 10 is the whole loop. The user may still review
 anything; a finding of theirs is fixed the same way.
 
-## Placement and routing are done in groups, and each group is reviewed
+## Placement and routing are done in groups, reviewed at milestones
 
-**One group is placed or routed, gated and rendered; then it STOPS for review
-(`REVIEW.md`, above). The next group does not start until the verdict is
-PASS.**
+**Reviews come at milestones**: placement as a whole, once every group
+passes `place.py check` and `prelayout.py`; routing at five — fanout and
+escape, buses, power, pours, close-out — plus the fixes for a CHANGES verdict
+and the fab release. A single group you are unsure of may be requested on its
+own, in the same `REVIEW.md` form. Until a verdict, build nothing on the
+change under review; **independent** work may go on: a group is independent when it shares no corridor with the change under review, uses none of the copper that change reserved, and moves no part that change touched — write that claim in
+`ROUTING_PLAN.md` §5 and the reviewer checks it at the next milestone.
+`route.py rip` removes exactly a group's copper, by its applied manifest, if
+a verdict undoes what was built beside it.
 `<board>/general_routing_guide.md` holds the rules (joints, polygons, copper
 shape, via links, pours); `<board>/ROUTING_PLAN.md` the groups and the status
 table.

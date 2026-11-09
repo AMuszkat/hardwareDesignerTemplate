@@ -56,7 +56,37 @@ What it took to make it converge (each line is a failure without it):
 import heapq
 import math
 import random
+import sys
 from array import array
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import par  # noqa: E402  (tools/par.py: fork, results in job order)
+
+
+# -- the compiled core (tools/route/_maze.c, built by tools/setup.sh into tools/.native/) ------
+# The same search, bit for bit (the agentic test compares both); HW_MAZE_CORE=python forces the
+# Python one.  CORE says which is active: every router run prints it.
+def _load_core():
+    import ctypes
+    import os
+    if os.environ.get("HW_MAZE_CORE", "").lower() == "python":
+        return None, "python (HW_MAZE_CORE=python)"
+    nat = Path(__file__).resolve().parent.parent / ".native"
+    for name in ("libmaze.so", "libmaze.dylib"):
+        f = nat / name
+        if f.exists():
+            try:
+                lib = ctypes.CDLL(str(f))
+                lib.maze_astar.restype = ctypes.c_long
+                lib.maze_core_version.restype = ctypes.c_char_p
+                return lib, f"compiled ({lib.maze_core_version().decode()}, {f.name})"
+            except OSError as e:
+                return None, f"python (could not load {f.name}: {e})"
+    return None, "python (no compiled core: kicad_project/tools/setup.sh builds it with a C compiler)"
+
+
+_CORE, CORE = _load_core()
 
 CLR = 0.15        # between the nets this router lays (Default class)
 PADCLR = 0.20     # to foreign pads and copper (the strictest class on the board)
@@ -319,15 +349,18 @@ class Grid:
 
     def route(self, net, src, src_layer, goals, goal_layer, allowed,
               via_cost=2.0, turn=0.4, limit=900000, pres=None, hmap=None,
-              layer_cost=None, via_mask=None, bias=None, start_dir=0, goal_dirs=None):
+              layer_cost=None, via_mask=None, bias=None, start_dir=0, goal_dirs=None, box=None):
         """goals: a cell, an (x, y) or a set of cells, all on goal_layer.
         pres=None: other nets' routed copper is an obstacle.  pres=p: it costs
         p per net overlapped, plus the cell's history (negotiation).
         start_dir: the heading the net ARRIVES at src with (its connector's last
         leg), so the first step obeys the turn rule too; 0 = free (a pad, a via).
         goal_dirs: headings the route may arrive at a goal with -- the copper
-        beyond the goal has a direction, and the joint there is a joint."""
+        beyond the goal has a direction, and the joint there is a joint.
+        box: (i0, j0, i1, j1) cell bounds the search may not leave (a corridor)."""
         nx, ny, step = self.nx, self.ny, self.step
+        bi0, bj0, bi1, bj1 = (max(0, box[0]), max(0, box[1]), min(nx - 1, box[2]), min(ny - 1, box[3])) \
+            if box else (0, 0, nx - 1, ny - 1)
         L = self.layers
         if isinstance(goals, tuple):
             goals = {self.cell(*goals)}
@@ -363,6 +396,14 @@ class Grid:
         dist = {(sc, l0, start_dir): 0.0 for l0 in li0s}
         par = {}
         hk = step if not self.diagonal else step * 0.7071     # L1 / sqrt(2) <= octile
+        if _CORE is not None and not any(xd) and (via_mask is None or isinstance(via_mask, (bytearray, bytes))):
+            got = self._route_native(L, st, sn, fx, dy, hs, cr, mfix, mdyn, mcore, vst, vfx, vdy, vhs,
+                                     vmfix, vmdyn, via_mask, ok_layer, lc, sc, li0s, start_dir, lig, goals,
+                                     goal_dirs, hmap, hk, soft, pres, via_cost, bias, limit, box,
+                                     (0.0, self.turn45, 1e9, 1e9, 1e9) if self.only45 else
+                                     (0.0, self.turn45, turn, self.turn135, 1e9))
+            if got is not NotImplemented:
+                return got
         heap = [(hmap[sc] * hk, 0.0, sc, l0, start_dir) for l0 in li0s]
         goal = None
         n_exp = 0
@@ -393,7 +434,7 @@ class Grid:
             xc = xd_l.get(c) if xd_l else None
             for di, dj, nd in moves:
                 ni, nj = i + di, j + dj
-                if not (0 <= ni < nx and 0 <= nj < ny):
+                if not (bi0 <= ni <= bi1 and bj0 <= nj <= bj1):
                     continue
                 nc = nj * nx + ni
                 if s_l[nc]:
@@ -492,6 +533,89 @@ class Grid:
             states.append(par[states[-1]])
         states.reverse()
         # -> per-layer cell runs and the vias between them
+        runs, vias = [], []
+        cur_l, cells = states[0][1], [states[0][0]]
+        for c, li, _dr in states[1:]:
+            if li != cur_l:
+                runs.append((L[cur_l], cells))
+                vias.append(c)
+                cur_l, cells = li, [c]
+            elif c != cells[-1]:
+                cells.append(c)
+        runs.append((L[cur_l], cells))
+        return runs, vias
+
+    def _route_native(self, L, st, sn, fx, dy, hs, cr, mfix, mdyn, mcore, vst, vfx, vdy, vhs, vmfix, vmdyn,
+                      via_mask, ok_layer, lc, sc, li0s, start_dir, lig, goals, goal_dirs, hmap, hk, soft,
+                      pres, via_cost, bias, limit, box, tcost):
+        """maze_astar in _maze.c; NotImplemented when an input is of a kind it does not take."""
+        import ctypes as C
+        nx, ny, nl = self.nx, self.ny, len(L)
+        n = nx * ny
+        U8, F32 = C.POINTER(C.c_uint8), C.POINTER(C.c_float)
+        if bias is not None:
+            arrs = bias if isinstance(bias, list) else [bias] * nl
+            if not all(isinstance(a, array) and a.typecode == "f" for a in arrs):
+                return NotImplemented
+        keep = []
+
+        def u8(buf):
+            if buf is None:
+                return None
+            if isinstance(buf, bytes):
+                buf = bytearray(buf)
+            keep.append(buf)
+            return C.cast((C.c_uint8 * len(buf)).from_buffer(buf), U8)
+
+        def f32(buf):
+            keep.append(buf)
+            return C.cast((C.c_float * len(buf)).from_buffer(buf), F32)
+
+        def mask(cells):
+            m = bytearray(n)
+            for c in cells:
+                m[c] = 1
+            return m
+
+        def u8s(bufs):
+            return (U8 * nl)(*[u8(b) for b in bufs])
+
+        hc = getattr(self, "_hmap_cache", None)
+        if hc is None or hc[0] is not hmap:
+            hc = (hmap, array("i", hmap))
+            self._hmap_cache = hc
+        gc = getattr(self, "_goal_cache", None)
+        if gc is None or gc[0] is not goals:
+            gc = (goals, mask(goals))
+            self._goal_cache = gc
+        gd = 0
+        for g_ in (goal_dirs or ()):
+            gd |= (1 << g_) if 1 <= g_ <= 8 else (1 << 15)   # [99]: a via only -- no heading matches
+        bx = (C.c_int32 * 4)(*(box if box else (0, 0, nx - 1, ny - 1)))
+        srcs = (C.c_int32 * len(li0s))(*([sc] * len(li0s)))
+        sls = (C.c_int8 * len(li0s))(*li0s)
+        cap = 2 * n + 64
+        oc, ol, od = (C.c_int32 * cap)(), (C.c_int8 * cap)(), (C.c_int8 * cap)()
+        hm = hc[1]
+        r = _CORE.maze_astar(
+            C.c_int(nx), C.c_int(ny), C.c_int(nl), bx,
+            u8s(st), u8s(sn), u8s(fx), u8s(dy), (F32 * nl)(*[f32(h) for h in hs]), u8s(cr),
+            u8s([mask(m) for m in mfix]), u8s([mask(m) for m in mdyn]), u8s([mask(m) for m in mcore]),
+            u8(vst), u8(vfx), u8(vdy), f32(vhs), u8(mask(vmfix)), u8(mask(vmdyn)), u8(via_mask),
+            (C.c_uint8 * nl)(*[1 if k else 0 for k in ok_layer]), (C.c_double * nl)(*lc),
+            (C.c_double * 5)(*tcost),
+            C.c_int(1 if self.diagonal else 0), C.c_int(1 if soft else 0),
+            C.c_int(1 if self.static_exact else 0), C.c_int(1 if self.fix_exact else 0),
+            C.c_double(pres if soft else 0.0), C.c_double(via_cost), C.c_double(hk),
+            C.cast((C.c_int32 * n).from_buffer(hm), C.POINTER(C.c_int32)), u8(gc[1]), C.c_int(lig), C.c_int(gd),
+            srcs, sls, C.c_int(len(li0s)), C.c_int(start_dir),
+            (F32 * nl)(*[f32(a) for a in (bias if isinstance(bias, list) else [bias] * nl)]) if bias is not None else None,
+            C.c_long(int(limit)), oc, ol, od, C.c_long(cap))
+        if r == -2 or r == -1:
+            return NotImplemented                     # the Python search: path too long, or no memory
+        if r == 0:
+            return None
+        states = [(oc[k], ol[k], od[k]) for k in range(r)]
         runs, vias = [], []
         cur_l, cells = states[0][1], [states[0][0]]
         for c, li, _dr in states[1:]:
@@ -604,13 +728,57 @@ class Grid:
                         seen.add((c, l2)); dq.append((c, l2))
         return seen
 
+    def _route_in_corridor(self, jb, prev, corridor, **kw):
+        args = (jb["net"], jb["src"], jb["src_layer"], jb["goals"], jb["goal_layer"], jb["allowed"])
+        opt = dict(via_mask=jb.get("via_mask"), bias=jb.get("bias"), start_dir=jb.get("start_dir", 0),
+                   goal_dirs=jb.get("goal_dirs"), **kw)
+        if not corridor:
+            return self.route(*args, **opt)
+        nx = self.nx
+        cells = [self.cell(*jb["src"])] + list(jb["goals"])
+        if prev:
+            cells += [c for _l, run in prev[0] for c in run] + list(prev[1])
+        ii, jj = [c % nx for c in cells], [c // nx for c in cells]
+        span = max(max(ii) - min(ii), max(jj) - min(jj))
+        m = max(int(corridor / self.step + 0.5), int(0.3 * span))
+        while True:
+            box = (min(ii) - m, min(jj) - m, max(ii) + m, max(jj) + m)
+            res = self.route(*args, box=box, **opt)
+            whole = box[0] <= 0 and box[1] <= 0 and box[2] >= nx - 1 and box[3] >= self.ny - 1
+            if res is not None or whole:
+                return res
+            m *= 2
+
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
-                  log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, **kw):
+                  log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4,
+                  corridor=None, jacobi=False, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
         Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
         after every iteration; a truthy return (a reason) stops an unconverged run there.
-        self.walled names the net that had no path at all (None otherwise)."""
+        self.walled names the net that had no path at all (None otherwise).
+
+        rip="conflict" (the default): after iteration 1 only the nets that overlap another are
+        ripped up and routed again -- the rest keep their paths, and their cells' rising
+        present and history costs still push the others round them.  When the overlap count has
+        not fallen for `stall` iterations, one iteration re-routes every net (a net that does
+        not overlap may have to move to make room).  rip="full" re-routes every net every
+        iteration (classic PathFinder; the result the router gave before conflict-only rip-up).
+        Deterministic per seed either way.
+
+        corridor=M (mm): each net's search stays inside the box round its source, its goals
+        and its previous path, grown by max(M, 30 % of the source-goal distance); a net that
+        finds no path there tries again in a box twice as wide, up to the whole window, so a
+        corridor never walls a net in that the window would not.  None: the whole window.
+
+        jacobi=True: the nets of one iteration are routed in parallel (tools/par.py, forked),
+        each against the congestion the iteration STARTED with -- not against the nets routed
+        before it in the same iteration (Gauss-Seidel, the default).  A different convergence:
+        two nets may both take the same free lane and meet there next iteration.  The same
+        result with HW_JOBS=1: a net routed in-process restores its old path before the next."""
         self.walled = None
+        if rip not in ("conflict", "full"):
+            raise ValueError(f"rip must be 'conflict' or 'full', got {rip!r}")
+        bad, best, since, full_next = {}, None, 0, False
         allgoals = set()
         for jb in jobs:
             allgoals |= set(jb["goals"])
@@ -622,13 +790,35 @@ class Grid:
         for it in range(1, iters + 1):
             if it > 1:
                 rnd.shuffle(jobs)                 # a fixed order lets two nets swap places for ever
-            for jb in jobs:
+            full = rip == "full" or it == 1 or full_next
+            full_next = False
+            todo = [jb for jb in jobs if full or jb["net"] not in paths or bad.get(jb["net"])]
+            if jacobi:
+                def one(jb, pres=pres):
+                    n = jb["net"]
+                    old = paths.get(n)
+                    self.unroute(n)
+                    res = self._route_in_corridor(jb, old, corridor, pres=pres, hmap=hm, **kw)
+                    self.unroute(n)
+                    if old:
+                        self.lay(n, *old)          # the next net sees the iteration's starting congestion
+                    return res
+                results = par.pmap(one, todo)
+                for jb, res in zip(todo, results):
+                    n = jb["net"]
+                    if res is None:
+                        log(f"   iteration {it}: {n} has no path even through the others -- walled in")
+                        self.walled = n
+                        return None
+                for jb, res in zip(todo, results):
+                    n = jb["net"]
+                    self.unroute(n)
+                    paths[n] = res
+                    self.lay(n, *res)
+            for jb in ([] if jacobi else todo):
                 n = jb["net"]
                 self.unroute(n)
-                res = self.route(n, jb["src"], jb["src_layer"], jb["goals"], jb["goal_layer"],
-                                 jb["allowed"], pres=pres, hmap=hm, via_mask=jb.get("via_mask"),
-                                 bias=jb.get("bias"), start_dir=jb.get("start_dir", 0),
-                                 goal_dirs=jb.get("goal_dirs"), **kw)
+                res = self._route_in_corridor(jb, paths.get(n), corridor, pres=pres, hmap=hm, **kw)
                 if res is None:
                     log(f"   iteration {it}: {n} has no path even through the others -- walled in")
                     self.walled = n
@@ -638,7 +828,14 @@ class Grid:
             bad = {n: self.conflicts(n, *paths[n]) for n in paths}
             nbad = sum(1 for v in bad.values() if v)
             ncell = sum(len(v) for v in bad.values())
-            log(f"   iteration {it}: pres {pres:.2f}, {nbad} nets overlap on {ncell} cells")
+            log(f"   iteration {it}: pres {pres:.2f}, {nbad} nets overlap on {ncell} cells"
+                + (" (all nets re-routed)" if full and rip != "full" and it > 1 else ""))
+            if best is None or ncell < best:
+                best, since = ncell, 0
+            else:
+                since += 1
+                if since >= stall:
+                    full_next, since = True, 0
             self.last = (dict(paths), bad)
             stop = on_iter(it, paths, bad) if on_iter else None
             if not ncell:

@@ -59,3 +59,32 @@ A fetch path that failed first and worked second — a portal, a viewer, a
 manufacturer's URL pattern — is a lesson for `tools/parts/datasheet.py` or
 this skill, and goes to the template (`kicad_project/SELF_IMPROVEMENT.md`).
 The PDF and its provenance stay in this project.
+
+## Extraction — candidates, never authority (optional)
+
+    ./setup.sh install-ml [--pages]                       # tools/parts/.venv-ml: Docling (+ ColQwen2.5)
+    python3 tools/parts/extract.py --check                # which stages this machine can run
+    python3 tools/parts/extract.py <MPN> [--pages 70-95]  # beside the PDF: .tables.json .pins.csv .pages.json .land.json
+    python3 tools/parts/validate_extract.py <MPN>.pins.csv <PINOUT.csv>
+
+`datasheet.py` starts `extract.py` in the background after filing a PDF when
+the venv exists (log in `out/extract/`; `HW_EXTRACT=0` turns it off), and
+`publish.py` copies and hashes its outputs beside the PDF into
+`handoff/datasheets/`. `tables` is Docling in text-layer mode (no OCR); its
+pin table reads every table whose header row (the first row, or one under a
+row of group labels) names a pin / ball column and a name column — a
+continuation on the next page takes the previous table's columns, a supply
+row's many balls each get its name, rows Docling merged are paired in order,
+footnote digits are dropped. `pages` (ColQwen2.5) indexes the pages for "pin
+assignment", "recommended land pattern", "absolute maximum ratings", "package
+outline"; `land` (Qwen2.5-VL-7B through Ollama) reads the land-pattern page.
+
+**Read by nothing until validated.** On the one hand-made pinout the
+projects have — the i.MX 8M Mini's 486 balls (`IMX8MMIEC` table 66, pages
+70-95, 2 min 53 s on 24 CPU cores) — the pin table matched 486 of 486. No
+consumer (`symgen.py`, `fp.py verify --against`, the reviewer checklist) is
+wired yet: one datasheet is the whole corpus, and `pages` and `land` have not
+run on a machine with a GPU or Ollama. Validate each on more filed
+datasheets before wiring it; a pinout typed from a datasheet is a new
+validation pair.
+

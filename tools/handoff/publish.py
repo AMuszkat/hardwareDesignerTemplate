@@ -180,6 +180,28 @@ class Board:
         rows("NETS", self.get("NETS", []), (4,))
         rows("CONNECTORS", self.get("CONNECTORS", []), (4,))
         rows("LAYOUT", self.get("LAYOUT", []), (2,))
+        rows("WORKMANSHIP", self.get("WORKMANSHIP", []), (3,))
+        for i, z in enumerate(self.get("FLOORPLAN_ZONES", [])):
+            bad = None
+            if not isinstance(z, dict) or not z.get("name"):
+                bad = "a dict with a name"
+            elif not (isinstance(z.get("rect"), (list, tuple)) and len(z["rect"]) == 4
+                      and all(v is None or isinstance(v, (int, float)) for v in z["rect"])):
+                bad = "rect [x0, y0, x1, y1] in mm (None = open)"
+            elif z.get("side", "F") not in ("F", "B", "both"):
+                bad = "side F, B or both"
+            elif not isinstance(z.get("allow", []), (list, tuple)):
+                bad = "allow, a list of refs"
+            if bad:
+                die(f"{self.id}: FLOORPLAN_ZONES[{i}] must be {bad}, got {z!r:.100}")
+        if self.get("WORKMANSHIP"):
+            # the board's own parser judges the rows: a form it cannot read stops here, not there
+            sys.path.insert(0, os.path.join(ROOT, "kicad_project", "tools", "route"))
+            import guide
+            try:
+                guide.validate([(r.strip().lower(), v.strip(), s_) for r, v, s_ in self.get("WORKMANSHIP")])
+            except SystemExit as e:
+                die(f"{self.id}.py WORKMANSHIP: {e}")
         F = self.get("FAB")
         if F:
             rows("FAB netclasses", F.get("netclasses", []), (6,))
@@ -285,6 +307,11 @@ class Board:
         if self.get("BOOT"):
             then.append("**`12_boot.md` before you draw the power-up chain** — "
                         "the ordered power-up table and what drives every enable.")
+        if self.get("WORKMANSHIP"):
+            then.append("**`rules.json` before the first routing group** — the routing "
+                        "workmanship as data (also the last table of `10_layout.md`); "
+                        "`tools/route/guide.py sync` writes it into your "
+                        "`general_routing_guide.md`, and the tools read it from here.")
         if self.fab:
             then.append("**`14_fab.md` before Board Setup** — the fab's rule "
                         "set, the stackup and the net classes, each with its "
@@ -407,6 +434,28 @@ class Board:
         if not self.get("LAYOUT"):
             L += ["None published yet — layout must not start until this "
                   "list exists.", ""]
+        Z = self.get("FLOORPLAN_ZONES", [])
+        if Z:
+            L += ["## Floorplan zones — `floorplan.json`", "",
+                  "Reservations, in mm from the board outline's top-left corner (— = open on that side): "
+                  "`floorplan.json` holds them and `tools/place/place.py seed` writes them into your "
+                  "`placement.json` keep-outs — never type them.", "",
+                  "| zone | x0 | y0 | x1 | y1 | side | may stand in it | note | source |",
+                  "|---|---|---|---|---|---|---|---|---|"]
+            for z in Z:
+                r = ["—" if v is None else f"{v:g}" for v in z["rect"]]
+                L.append(f"| {z['name']} | {' | '.join(r)} | {z.get('side', 'F')} | "
+                         f"{', '.join(z.get('allow', [])) or '—'} | {z.get('note', '')} | {z.get('source', '')} |")
+            L.append("")
+        W = self.get("WORKMANSHIP", [])
+        if W:
+            L += ["## Routing workmanship — `rules.json`", "",
+                  "The rules your routing tools read, as data: `rules.json` holds these rows, "
+                  "`tools/route/guide.py` reads it before your guide's own table, and "
+                  "`guide.py sync` writes it into `general_routing_guide.md` — never type them.", "",
+                  "| rule | setting | source |", "|---|---|---|"]
+            L += [f"| {r} | {v} | {s_} |" for r, v, s_ in W]
+            L.append("")
         return "\n".join(L)
 
     def text_md(self, attr, title, empty):
@@ -914,6 +963,17 @@ class Board:
                      "datasheet is NOT in this handoff (tools/parts/datasheet.py --refresh)")
         return out
 
+    SIDECARS = (".pins.csv", ".tables.json", ".pages.json", ".land.json")
+
+    @staticmethod
+    def _sidecars(m):
+        """tools/parts/extract.py's outputs beside a filed PDF: [(handoff name, repo path)].
+        Candidates, never authority; published and hashed WITH the PDF so a reader's copy
+        is the one the PDF's revision produced."""
+        base = m["path"][:-4] if m["path"].lower().endswith(".pdf") else m["path"]
+        return [(os.path.basename(base) + ext, base + ext) for ext in Board.SIDECARS
+                if os.path.exists(os.path.join(ROOT, base + ext))]
+
     @staticmethod
     def _ds_name(m):
         """The file name in handoff/datasheets/: the filed PDF's own name, which
@@ -1057,6 +1117,25 @@ class Board:
         if self.pinout:
             files["08_pin_accounting.md"] = self.pins_md()
         files["netlist.json"] = json.dumps(self.netlist(), indent=1, sort_keys=True) + "\n"
+        if self.get("FLOORPLAN_ZONES"):
+            files["floorplan.json"] = json.dumps(
+                {"origin": "the board outline's top-left corner, mm; null = open on that side",
+                 "zones": [{"name": z["name"], "rect": list(z["rect"]), "side": z.get("side", "F"),
+                            "allow": list(z.get("allow", [])), "note": z.get("note", ""),
+                            "source": z.get("source", "")} for z in self.get("FLOORPLAN_ZONES")]},
+                indent=1) + "\n"
+        if self.fab:
+            order, cons, stack, classes, _rules = self.fab_tables()
+            files["fab.json"] = json.dumps(
+                {"profile": self.fab.NAME, "example": bool(getattr(self.fab, "EXAMPLE", False)),
+                 "constraints": {n: {"value": v, "basis": b_} for n, v, b_ in cons},
+                 "stackup": [{"layer": a_, "material": m_, "carries": c_} for a_, m_, c_ in stack],
+                 "netclasses": [{"class": c_, "nets": n_, "track": t_, "clearance": k_, "via": v_, "note": o_}
+                                for c_, n_, t_, k_, v_, o_ in classes]},
+                indent=1) + "\n"
+        if self.get("WORKMANSHIP"):
+            files["rules.json"] = json.dumps([{"rule": r, "setting": v, "source": s_}
+                                              for r, v, s_ in self.get("WORKMANSHIP")], indent=1) + "\n"
         if self.get("BOOT"):
             files["12_boot.md"] = self.text_md("BOOT", "Boot sequence", "")
         fab = self.fab_md()
@@ -1080,6 +1159,7 @@ class Board:
         h.update({n: _h(rel) for n, rel in copies.items()})
         h.update({"datasheets/" + self._ds_name(m): _hb(open(os.path.join(ROOT, m["path"]), "rb").read())
                   for _, m in ds})
+        h.update({"datasheets/" + n_: _h(rel) for _, m in ds for n_, rel in self._sidecars(m)})
         return dict(sorted(h.items()))
 
     def publish(self):
@@ -1103,6 +1183,8 @@ class Board:
             for _, mm in ds:
                 shutil.copy2(os.path.join(ROOT, mm["path"]),
                              os.path.join(new, "datasheets", self._ds_name(mm)))
+                for n_, rel in self._sidecars(mm):
+                    shutil.copy2(os.path.join(ROOT, rel), os.path.join(new, "datasheets", n_))
             os.chmod(new, 0o775)
             before = set(self._listing())
             old = None
@@ -1239,6 +1321,55 @@ def _buses(names):
     return sorted(out)
 
 
+def selftest(bid, timeout=1800):
+    """The handoff-reader agent (.claude/agents/handoff-reader.md) on a COPY of the board's
+    handoff, in a scratch folder outside the repository -- no CLAUDE.md, no other file of the
+    project in reach: what a board session's first day would ask. Headless `claude -p`; the
+    reply goes to out/selftest/<board>-rev<R>.md. Returns the number of questions, or None."""
+    import shutil
+    import tempfile
+    b = Board(bid)
+    agent = os.path.join(ROOT, ".claude", "agents", "handoff-reader.md")
+    text = open(agent).read()
+    m = re.match(r"---\n(.*?)\n---\n(.*)", text, re.S)
+    if not m:
+        raise PublishError(f"{agent}: no frontmatter")
+    desc = re.search(r"description:\s*>?\s*\n?(.*?)\n(?=\w+:)", m.group(1), re.S)
+    desc = " ".join((desc.group(1) if desc else "Reads a board handoff.").split())
+    if not shutil.which("claude"):
+        raise PublishError("the claude CLI is not on PATH: spawn the handoff-reader agent from the session instead")
+    tmp = tempfile.mkdtemp(prefix=f"selftest-{bid}-")
+    try:
+        shutil.copytree(b.handoff, os.path.join(tmp, "handoff"),
+                        copy_function=lambda s_, d_: os.link(s_, d_) if s_.endswith(".pdf") else shutil.copy2(s_, d_))
+        man = json.load(open(os.path.join(b.handoff, "MANIFEST.json")))
+        rev = man.get("rev", "?")
+        prompt = (f"Your handoff folder is ./handoff/ (board {bid}, revision {rev}). Read it as your "
+                  "instructions say and reply in their format.")
+        agents = {"handoff-reader": {"description": desc, "prompt": m.group(2), "tools": ["Read", "Grep", "Glob"]}}
+        print(f"selftest {bid} rev {rev}: the handoff-reader agent, headless, on a copy in {tmp} ...", flush=True)
+        r = subprocess.run(["claude", "-p", prompt, "--agents", json.dumps(agents), "--agent", "handoff-reader",
+                            "--output-format", "text"], cwd=tmp, capture_output=True, text=True, timeout=timeout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    out_dir = os.path.join(ROOT, "out", "selftest")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, f"{bid}-rev{rev}.md")
+    with open(out, "w") as f:
+        f.write(r.stdout or "")
+        if r.returncode:
+            f.write(f"\n\n(claude exited {r.returncode}: {(r.stderr or '').strip()[-400:]})\n")
+    if r.returncode:
+        print(f"selftest {bid}: claude exited {r.returncode} -- {out}", file=sys.stderr)
+        return None
+    qs = re.findall(r"(?m)^###\s+Q\d+\s*[—-]\s*(.+)$", r.stdout or "")
+    blocking = [q for q in qs if "BLOCKING" in q.upper() and "NOT BLOCKING" not in q.upper()]
+    print(f"selftest {bid} rev {rev}: {len(qs)} question(s), {len(blocking)} blocking -> {os.path.relpath(out, ROOT)}")
+    for q in qs:
+        print(f"   {q.strip()}")
+    return len(qs)
+
+
 def main(argv):
     ap = argparse.ArgumentParser(
         description="Publish, or check, each board's handoff (see the module docstring).")
@@ -1246,6 +1377,10 @@ def main(argv):
     ap.add_argument("--all", action="store_true", help="every board in tools/handoff/boards/")
     ap.add_argument("--check", action="store_true",
                     help="publish nothing: say whether each handoff is fresh; exit 1 if not")
+    ap.add_argument("--selftest", action="store_true",
+                    help="publish nothing: the handoff-reader agent reads the published handoff as a "
+                         "board session's first day and lists every fact it lacks (headless claude -p; "
+                         "spends tokens); exit 1 on any question")
     a = ap.parse_args(argv)
     ids = board_ids()
     if a.board:
@@ -1263,6 +1398,9 @@ def main(argv):
               "(create one with ./setup.sh new-board)")
         return 0
     rc = 0
+    if a.selftest:
+        n = [selftest(bid) for bid in ids]
+        return 2 if any(x is None for x in n) else (1 if any(n) else 0)
     if a.check:
         res = []
         for bid in ids:

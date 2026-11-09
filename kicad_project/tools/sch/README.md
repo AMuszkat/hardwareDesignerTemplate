@@ -7,6 +7,8 @@ The `schematic` skill is the workflow; this is the tool.
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --netlist netlist.json   # a new board
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --handoff                # a new board, complete handoff
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --from-sch               # a redraw
+    tools/.venv/bin/python tools/sch/symgen.py --board board1 PINS.csv --name NAME  # a symbol from its pin table
+    tools/.venv/bin/python tools/sch/sch.py draw   --board board1                 # the proven plan installed
     tools/.venv/bin/python tools/sch/sch.py pdf    --board board1                 # the preview, PDF + PNGs
     tools/.venv/bin/python tools/sch/sch.py ops    --board board1 power 0 40      # a sheet's calls, in chunks
     tools/.venv/bin/python tools/sch/sch.py check  --board board1 [--json]
@@ -132,6 +134,38 @@ Outputs: `sch_plan/<sheet>.ops.json` — the Konnect calls for that sheet, in
 order, with complete arguments; `plan.json` (parts, sections and the title
 block, what `frame` writes); `netlist.json` (what `parity` compares the
 drawn board with); `preview/`.
+
+## The drawing (`draw`)
+
+`plan` proves its preview; `draw` (`draw.py`) installs it as the board's
+sheets, instead of a Konnect replay of `<sheet>.ops.json`:
+
+- **UUIDs carried over** from the board's current sheets: the root's, each
+  sheet symbol's (by its file), each sheet file's own, each symbol's (by
+  reference and unit). A footprint links to `/<sheet uuid>/<symbol uuid>`,
+  so a redraw leaves the PCB linked — `schupdate.py` finds nothing to
+  re-link, and `draw` prints how many footprints still link.
+- **Backup** under `.sch_backups/draw-<time>/`; `hw_sch` registered in the
+  board's `sym-lib-table` if it is missing; a missing `.kicad_pro` copied
+  from the preview's.
+- **A kicad-cli resave** of each file (`sch upgrade --force`): the board
+  holds KiCad's own text, and the resave must move neither the netlist nor a
+  UUID.
+- **Proven**: parity with the plan (DNP included), parity with the handoff
+  when its netlist is complete, `check` with the board's waivers, ERC no
+  worse than the preview's. A failure restores the backup (`DRAW FAIL`).
+
+The preview carries the section frames, the title block, KiCad's DNP flag,
+Exclude from BOM (`schematic.json`'s `exclude_from_bom` globs) and the
+Footprint field, so `frame`, `flags` and `footprints` stay only for a board
+drawn by the older Konnect replay. The `ops.json` call lists are still
+written: a one-off Konnect fix can take its arguments from them.
+
+- ⚠ **A named net a ladder closes on its own carries its label.** A row
+  wire with no label is a net KiCad names after a pin (`Net-(D1-A)`), and
+  `parity --handoff` then fails on the handoff's name for it. The planner
+  labels every named net; only an `N_` net (unnamed in the source) may stay
+  bare.
 
 ## The sheet gate (`drawn`)
 
