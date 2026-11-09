@@ -64,27 +64,46 @@ The PDF and its provenance stay in this project.
 
     ./setup.sh install-ml [--pages]                       # tools/parts/.venv-ml: Docling (+ ColQwen2.5)
     python3 tools/parts/extract.py --check                # which stages this machine can run
-    python3 tools/parts/extract.py <MPN> [--pages 70-95]  # beside the PDF: .tables.json .pins.csv .pages.json .land.json
-    python3 tools/parts/validate_extract.py <MPN>.pins.csv <PINOUT.csv>
+    python3 tools/parts/extract.py <MPN> [--pages 70-95|auto]  # beside the PDF: .tables.json .pins.csv .pages.json .land.json
+    python3 tools/parts/validate_extract.py <MPN>.pins.csv <PINOUT.csv>     # against a hand-made pinout
+    python3 tools/parts/validate_extract.py <MPN>.pins.csv --kicad <MPN>    # against KiCad's stock symbol
+    python3 tools/parts/kicad_pins.py <MPN>               # which stock symbol, its pins
+    python3 tools/parts/extract_corpus.py [-v]            # the extractor measured on 30 vendors' datasheets
 
 `datasheet.py` starts `extract.py` in the background after filing a PDF when
 the venv exists (log in `out/extract/`; `HW_EXTRACT=0` turns it off), and
 `publish.py` copies and hashes its outputs beside the PDF into
-`handoff/datasheets/`. `tables` is Docling in text-layer mode (no OCR); its
-pin table reads every table whose header row (the first row, or one under a
-row of group labels) names a pin / ball column and a name column — a
-continuation on the next page takes the previous table's columns, a supply
-row's many balls each get its name, rows Docling merged are paired in order,
-footnote digits are dropped. `pages` (ColQwen2.5) indexes the pages for "pin
-assignment", "recommended land pattern", "absolute maximum ratings", "package
-outline"; `land` (Qwen2.5-VL-7B through Ollama) reads the land-pattern page.
+`handoff/datasheets/`. `tables` is Docling in text-layer mode (no OCR); a PDF
+with no text layer (a scan) is skipped with one line. Past 40 pages it reads
+only the pin-table pages (`--pages auto`): the pages whose text names a pin
+table, the pages that continue one and up to two before it (the i.MX 8M Mini:
+24 of 96 pages, the 486 balls in 2 min). Its pin table reads every table
+whose header — up to three stacked rows — names a pin / ball / package column
+and a name column; one column per package ("Pin Number" over QFN | TQFP,
+"121 BGA | 64 LQFP") gives one set of pins each (`pins.csv`'s `package`
+column); a continuation takes the previous table's columns, a supply row's
+many balls each get its name, rows Docling merged are paired in order, a
+range ("DB6–DB1" over "2–7") is expanded, footnote digits are dropped.
+`pages` (ColQwen2.5) indexes the pages for "pin assignment", "recommended
+land pattern", "absolute maximum ratings", "package outline"; `land`
+(Qwen2.5-VL-7B through Ollama) reads the land-pattern page.
 
-**Read by nothing until validated.** On the one hand-made pinout the
-projects have — the i.MX 8M Mini's 486 balls (`IMX8MMIEC` table 66, pages
-70-95, 2 min 53 s on 24 CPU cores) — the pin table matched 486 of 486. No
-consumer (`symgen.py`, `fp.py verify --against`, the reviewer checklist) is
-wired yet: one datasheet is the whole corpus, and `pages` and `land` have not
-run on a machine with a GPU or Ollama. Validate each on more filed
-datasheets before wiring it; a pinout typed from a datasheet is a new
-validation pair.
+**Read by nothing: it has not passed.** Two ground truths: a board's
+hand-made PINOUT (the i.MX 8M Mini: 486 of 486), and KiCad's stock symbols,
+drawn by its librarians from the same PDFs — `extract_corpus.py` picks 3
+symbols a vendor from 10 vendors, fetches their datasheets into
+`out/extract_corpus/` (never the vendor store) and grades. 2026-11-09: 19 of
+30 fetched (ST, Silicon Labs and FTDI refuse even headless Chrome), 461 of 728
+pins named alike, 2 parts exact (MKL46Z256, MAX98396), five within 1–3 pins
+(mostly KiCad's renaming: `VDDA` for the datasheet's `VDDAD`, `EP` for
+"PowerPAD"). What it cannot read: a pinout that is only a drawing (ATmega324PB,
+ISSI SRAMs, LTC1562 — 4 of 19), prose in a table (MAX22208), rows Docling
+merges across pins (PIC18), a ball map grid (MSP430 YFF), a row naming eight
+pins with no per-pin order (MAX7221). So no consumer (`symgen.py`,
+`fp.py verify --against`, the reviewer checklist) is wired; re-run
+`extract_corpus.py` after any parser change and wire one only when it
+passes. `pages` ran once on CPU (2026-11-09, TPS51363, 33 pages, 606 s —
+about 18 s a page, so a long datasheet wants the GPU): all four queries on
+the right page (pin functions p7, absolute maximum p2, package outline p28,
+land pattern p29). `land` has not run (it needs Ollama).
 

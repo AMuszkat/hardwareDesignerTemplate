@@ -64,8 +64,11 @@ tools/kpy tools/route/route.py apply routing/viafix.json
 
 1. `route.py audit` — the counts as they are.
 2. `vianeed.py`, then `viafix.py` (`--push` when the ranking says tracks).
-   A full `--push` search over ~100 vias takes 20–30 minutes: run it in the
-   background; `--only UUID,..` re-runs the accepted list in seconds.
+   A full `--push` search over ~100 vias took 20–30 minutes before the fixer
+   cached its board scans (200 hemmed-in vias on the test fixture: 139 s →
+   20 s, the same plan). Run a long one in the background all the same;
+   `--only UUID,..` re-runs the accepted list in seconds. A result that looks
+   wrong: re-run with `HW_VF_CACHE=0` (no cache) — the plan must not change.
 3. `route.py check` on the plan: DRC (parity on), angles, edge, shape (0 new
    sites), vialink (no new site), the short test. Each regression points at
    a move: a new shape site → `--bar UUID:x,y` that place; a net losing

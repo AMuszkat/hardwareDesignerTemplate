@@ -59,15 +59,15 @@ fixtures (the `pcb` stage's board is `tests/fixture_pcb.py`'s).
 | H2 | Phase 1 PR | a new board's `placement.json` passes `place.py check` after `place.py seed`, no hand edit |
 | S1, S3 | Phase 1 PR | draw 4.4 s, zero Konnect calls (the fixture plan replaces 54); every gate passes; a redraw keeps 16 symbol and 2 sheet UUIDs; `schupdate` re-links 0 of 15 |
 | R2 | Phase 2 PR | 16 nets: 14 iterations in 21 s (52.5 s full re-route, same count); PCB fixture plan identical, 29 s → 21 s; `--full` keeps the old hashes |
-| R3 | Phase 2 PR | opt-in (`--corridor`): identical plans, no measurable gain on the fixtures — A* already searches tightly there |
-| R5 | Phase 2 PR | `--seeds 4`: 82.7 s → 27.4 s, plan identical serial / forked; `--jacobi`: 16 nets 11.8 s on 8 cores, a different convergence; prelayout jobs concurrent. Not done: viafix's candidate search |
+| R3 | Phase 2 PR | opt-in (`--corridor`): identical plans, no measurable gain on the fixtures — A* already searches tightly there. Re-measured 2026-11-09 on its own case (`fixture_pcb.py --kind sparse`: four 14 mm bundles in a 100 × 70 mm window): identical plan, 5.4–5.7 s against 5.6–6.8 s — still opt-in. Found there: R1's `reach` flood took 12 of 16 s of a converging run; capped once it holds a goal and 20 000 cells, the run is 17–24 s → 4.7–7.2 s, the same plan |
+| R5 | Phase 2 PR | `--seeds 4`: 82.7 s → 27.4 s, plan identical serial / forked; `--jacobi`: 16 nets 11.8 s on 8 cores, a different convergence; prelayout jobs concurrent. viafix: serial by nature (each fix changes the board the next via is judged on) and a forked candidate screen was slower (58 s → 65 s); the time was full-board scans repeated per candidate, now cached until the next edit — 200 vias `--push` 139 s → 20 s, 48 vias 8.3 s → 1.2 s, the same plan with the cache off (`vias` stage) |
 | V1 | Phase 2 PR | the six files say one rule: milestones, a group on request, independence defined and claimed in `ROUTING_PLAN.md` §5 |
 | X1 | Phase 2 PR | `close_kicad` in `project.json`, asked once by `setup.sh init`, printed in every board brief |
-| X2 (B) | Phase 2 PR | `bin/board` and `bin/concept` print the relay-off line when a board exists; D waits, as decided |
+| X2 (B) | Phase 2 PR | `bin/board` and `bin/concept` print the relay-off line when a board exists; D dropped 2026-11-09 by the user: the relay stays off by default |
 | S2 | Phase 3 PR | the fixture MCU's symbol from its pin table: 0 pin differences, the plan with it PASSES with no fix-up; a 124-pin table split 80 / 40 / 4 |
 | H3 | Phase 3 PR | `publish.py --selftest` on the fixture handoff with a NETS row deleted reported that hole (and 12 real fixture gaps), 4 min |
 | R4 | Phase 3 PR | the same routes both cores; 16 nets 52.5 s → 4.5 s (`--full`), 21 s → 1.0 s (default); PCB fixture 20 s → 2.2 s |
-| H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486. Not done: consumers unwired (one datasheet is the corpus); `pages` and `land` unrun here (no GPU, no Ollama) |
+| H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486, now from 24 of 96 pages (`--pages auto`). Widened 2026-11-09 against KiCad's stock symbols (`extract_corpus.py`, 19 vendor datasheets): 461 of 728 pins named alike, 2 parts exact after a multi-package parser — the gate fails, so the consumers stay unwired; drawn-only pinouts, prose tables and ball-map grids are what it cannot read. `pages` ran on CPU, 4 of 4 queries on the right page (TPS51363, 18 s a page); `land` unrun (Ollama not installed) |
 
 ## Phase 0 — hours each, no behaviour change
 
@@ -286,7 +286,9 @@ placed and routed through the scripts with KiCad opened only by the user.
 **Size:** half a day. **Gate:** decided — now tool.
 
 **X2 · The relay during a build.** Decided 2026-11-09: B now, D after one
-board has run under it. The switch stays the user's; a message still carries
+board has run under it. **D dropped 2026-11-09** (the user): `new-board`
+never turns the relay on; off stays the default (`RELAY_PROTOCOL.md` §0) and
+the switch the user's alone. The text of D is kept below as the record. The switch stays the user's; a message still carries
 no fact and waives no gate. **B, now:** `bin/board` and `bin/concept` print
 one line when the relay is off and a board folder exists — what the relay
 does and the command that turns it on — since with it off the user carries
@@ -297,7 +299,7 @@ seen to work on the user's machine, because the protocol's caution about a
 ring lost on a permission prompt is earned. **Where:** `bin/board`,
 `bin/concept`, `tools/session/relay.py brief`; later `setup.sh new-board`,
 `RELAY_PROTOCOL.md` §0 (the default). **Size:** 1 h now; 1 h later.
-**Gate:** B decided — tool; D waits on one board's run, then the user's word.
+**Gate:** B decided — tool, done; D dropped.
 
 ## Phase 3 — new mechanisms
 

@@ -9,6 +9,8 @@ What it holds (all in KiCad internal units, nm):
                                 of the two classes' clearances (KiCad's rule) -- [(shape, clearance, name, item)]
   blocked(path, w, ob)          the first obstacle a polyline of width w hits, or the board edge
   stacks(path, w, net, layer, rm)  a new segment lying on an old one of its own net (stacked copper)
+  freeze() / changed() / thaw()  cache tracks(), vias(), pads() and obstacles() until the next edit (changed());
+                                HW_VF_CACHE=0 turns it off -- the first thing to try when a fixer result looks wrong
   via_ctx / via_legal           is a via legal at a point on EVERY copper layer: clearances, holes (min_hole_to_hole),
                                 own-net pads >= GAP + 0.01, the edge, rule areas.  via_blockers() lists every reason
   route_to(A, firsts, T, ...)   0/45-degree paths of 1-3 segments by route.py's joint rules (the end on a via is free)
@@ -16,6 +18,7 @@ What it holds (all in KiCad internal units, nm):
 EDGE is the Edge.Cuts outline's box less the guide's "copper to edge" (a rectangular board; a board of another
 shape keeps its bounding box here, and KiCad's DRC judges the real outline in route.py check)."""
 import math
+import os
 import common as C
 pcbnew = C.pcbnew_module()                 # quiet import: wx debug lines stay off stderr
 import vialink as VL
@@ -69,11 +72,65 @@ def viakey(v): return (v.GetNetname(), v.GetPosition().x, v.GetPosition().y, v.G
 def polykey(d): ps = d.GetPolyShape(); return (d.GetNetname(), d.GetLayerName(), ps.CVertex(0).x, ps.CVertex(0).y)
 polys_all = lambda: [d for d in b.GetDrawings() if d.Type() == pcbnew.PCB_SHAPE_T and d.GetShape() == pcbnew.SHAPE_T_POLY and d.GetNetCode()]
 
-def tracks(net, lid): return [t for t in b.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T and t.GetNetname() == net and t.GetLayer() == lid]
+_FROZEN = None
+
+
+def freeze():
+    """From here to thaw(), tracks(), vias(), pads() and obstacles() scan the board once per key and reuse it: a
+    candidate search judges hundreds of places on one board state, and the scans were most of its time.  ⚠ Every edit
+    made while frozen calls changed() (shove.Undo does); nested freezes are one freeze."""
+    global _FROZEN
+    if os.environ.get("HW_VF_CACHE") == "0": return True    # off: every call scans (the reference the cache must match)
+    was = _FROZEN is not None
+    if not was: _FROZEN = {}
+    return was
+def thaw():
+    global _FROZEN
+    _FROZEN = None
+def changed():
+    """the board just changed: what a freeze holds is dropped, and the next call scans again (shove.Undo calls this;
+    so must any other edit made while frozen)"""
+    if _FROZEN is not None: _FROZEN.clear()
+def _memo(key, fn):
+    if _FROZEN is None: return fn()
+    if key not in _FROZEN: _FROZEN[key] = fn()
+    return _FROZEN[key]
+
+
+def tracks(net, lid):
+    return _memo(('t', net, lid), lambda: [t for t in b.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T and t.GetNetname() == net and t.GetLayer() == lid])
+def vias(net):
+    return _memo(('v', net), lambda: [x for x in b.GetTracks() if x.Type() == pcbnew.PCB_VIA_T and x.GetNetname() == net])
+def pads(net, lid):
+    return _memo(('p', net, lid), lambda: [q for f in b.GetFootprints() for q in f.Pads() if q.GetNetname() == net and q.IsOnLayer(lid)])
 def obstacles(net, lid, cx, cy, half=3.5):
+    return _memo(('o', net, lid, cx, cy, half), lambda: _obstacles(net, lid, cx, cy, half))
+def _items():
+    """every pad, track / via and net-tied polygon with its net and box, in board order: scanned once per freeze"""
+    def scan():
+        box = lambda o: (lambda bb: (bb.GetLeft(), bb.GetTop(), bb.GetRight(), bb.GetBottom()))(o.GetBoundingBox())
+        pads_ = [(q, f.GetReference(), q.GetNetname(), box(q)) for f in b.GetFootprints() for q in f.Pads()]
+        trks_ = [(t, t.GetNetname(), t.Type() == pcbnew.PCB_VIA_T, t.GetLayer(), box(t)) for t in b.GetTracks()]
+        polys_ = [(d, d.GetNetname(), d.GetLayer(), box(d)) for d in polys_all()]
+        return pads_, trks_, polys_
+    return _memo(('items',), scan)
+def _obstacles(net, lid, cx, cy, half):
     x0, y0, x1, y1 = cx - FM(half), cy - FM(half), cx + FM(half), cy + FM(half)
     inwin = lambda bb: bb.GetRight() >= x0 and bb.GetLeft() <= x1 and bb.GetBottom() >= y0 and bb.GetTop() <= y1
     ob = []
+    if _FROZEN is not None:                    # the same items in the same order, filtered from the frozen scan
+        inbox = lambda l_, t_, r_, b_: r_ >= x0 and l_ <= x1 and b_ >= y0 and t_ <= y1
+        pads_, trks_, polys_ = _items()
+        for q, ref, qn, bx in pads_:
+            if qn != net and inbox(*bx) and q.IsOnLayer(lid):
+                ob.append((q.GetEffectiveShape(lid), FM(max(clr(net), clr(qn))), ref + '.' + q.GetNumber(), q))
+        for t, tn, isvia, tl, bx in trks_:
+            if tn != net and inbox(*bx) and (isvia or tl == lid):
+                ob.append((t.GetEffectiveShape(lid), FM(max(clr(net), clr(tn))), sh(tn) + (' via' if isvia else ' track'), t))
+        for d, dn, dl, bx in polys_:
+            if dn != net and dl == lid and inbox(*bx):
+                ob.append((d.GetEffectiveShape(lid), FM(max(clr(net), clr(dn))), sh(dn) + ' polygon', d))
+        return ob
     for f in b.GetFootprints():
         for q in f.Pads():
             if q.IsOnLayer(lid) and q.GetNetname() != net and inwin(q.GetBoundingBox()):
@@ -96,11 +153,12 @@ def blocked(path, w, ob):
             if shp.Collide(seg, c - FM(0.001)): return name
     return None
 def stacks(path, w, net, lid, rm):
+    own = tracks(net, lid)
     for k in range(len(path) - 1):
         A_, B_ = path[k], path[k + 1]; d = (B_[0] - A_[0], B_[1] - A_[1]); L_ = math.hypot(*d)
         if L_ < 1: continue
         u_ = (d[0] / L_, d[1] / L_)
-        for o in tracks(net, lid):
+        for o in own:
             if uid(o) in rm: continue
             C_, D_ = P(o.GetStart()), P(o.GetEnd()); e = (D_[0] - C_[0], D_[1] - C_[1]); Le = math.hypot(*e)
             if Le < 1 or abs(u_[0] * e[1] / Le - u_[1] * e[0] / Le) > 0.009: continue
@@ -162,10 +220,11 @@ def route_to(A, firsts, T, w, ob, net, lid, rm, lam_min):
                     k2, k3 = kn2 // det2, mn2 // det2
                     if ok_len(k2, g2, max(w, FM(0.1))) and ok_len(k3, g3, FM(0.05)):
                         res.append([A, O1, (O1[0] + g2[0] * k2, O1[1] + g2[1] * k2), T])
-    good = []
+    good = []; was = freeze()                  # the paths are judged on one board state
     for path in res:
         if blocked(path, w, ob) or stacks(path, w, net, lid, rm): continue
         good.append((plen(path) / 1e6 + 0.15 * (len(path) - 2), path))
+    if not was: thaw()
     return sorted(good)
 
 def walk_out(t0, vp, r, net, lid, rm):

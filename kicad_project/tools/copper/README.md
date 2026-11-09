@@ -40,6 +40,18 @@ and `vialink` on every plan's scratch copy (a new site fails the plan).
 layer, 0/45 path search, re-attaching a track end) and `shove.py` (pushing
 other nets' tracks and vias, with undo) are the libraries behind the fixers.
 
+⚠ **The scan cache.** A via's candidate search judges hundreds of places on
+one board state, and scanning the whole board for each (a track list, the
+obstacles round a point) was nearly all of its time. `vfcore.freeze()` keeps
+those scans until the next edit: every edit made while frozen calls
+`vfcore.changed()` — `shove.Undo` does it for every push and undo, `viafix`
+for its apply and revert. A new edit path that skips it reads a stale board.
+`HW_VF_CACHE=0` turns the cache off; the timing test (`vias` stage) runs
+`viafix` both ways on `tests/fixture_pcb.py --kind vias` and requires the
+same plan. The search stays serial on purpose: each via's fix changes the
+board the next via is judged on, and forking a batch of candidates cost more
+than judging them once the scans were cached (measured: 58 s → 65 s forked).
+
 ## What the guide gives them
 
 | guide row | used by |
@@ -60,8 +72,8 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
 1. `route.py audit`: the counts as they are (the report quotes them before → after).
 2. `vianeed.py`: which vias a push can free, which need a part moved, which need the user.
 3. `viafix.py --push` (or `entryfix.py`): a plan. A full push search over a
-   hundred vias takes tens of minutes; `--only` the accepted list re-runs in
-   seconds. Search wide once, then iterate narrow with `--skip`, `--bar`, `--avoid`.
+   hundred vias took tens of minutes before the scan cache (the fixture's 200:
+   139 s → 20 s); `--only` the accepted list re-runs in seconds. Search wide once, then iterate narrow with `--skip`, `--bar`, `--avoid`.
 4. `route.py check` on the plan: DRC, angles, edge, shape (0 new), vialink
    (no new site), the short test. Each regression points at a move.
 5. Pictures: `cudump.py` before, `viafix --save routing/trial.kicad_pcb` (never beside the board: the tools want ONE .kicad_pcb there), `cudump.py`
