@@ -202,6 +202,10 @@ def main():
     pads, tracks, bvias, padbox = [], [], [], {}
     for ref, f in B.fps.items():
         for p in f.Pads():
+            if not list(p.GetLayerSet().CuStack()):
+                # a paste / mask aperture with no copper (a BergStak plug's stencil pads stacked on
+                # its real lands): not an obstacle -- taken as copper it sealed every J2 land
+                continue
             bb = p.GetBoundingBox()
             rec = dict(ref=ref, pad=p.GetNumber(), net=p.GetNetname().rsplit("/", 1)[-1],
                        tht=p.GetDrillSizeX() > 0, round=p.GetShape() == pcbnew.PAD_SHAPE_CIRCLE,
