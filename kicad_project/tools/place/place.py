@@ -957,7 +957,9 @@ def cmd_auto(a):
             cb = shift(cyr, x, y)
             if r not in overhang and r not in fixed and (cb[0] < o[0] or cb[1] < o[1] or cb[2] > o[2] or cb[3] > o[3]):
                 continue
-            if any(v["side"] == side and rgap(cb, v["box"]) < min_cy for v in near.values()):
+            # 1e-4 over the minimum: `check` measures the courtyard's own rectangles, this the
+            # shifted box -- a spot exactly at the gap rounds either way, and auto's output must pass check
+            if any(v["side"] == side and rgap(cb, v["box"]) < min_cy + 1e-4 for v in near.values()):
                 continue
             if any(rgap(cb, v) < 0 for v in near_avoid):
                 continue
