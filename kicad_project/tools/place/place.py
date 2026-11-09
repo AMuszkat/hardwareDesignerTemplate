@@ -246,10 +246,12 @@ class Board:
         claims the body's full length over bare legs.  A
         rectilinear polygon is cut into row strips on its own vertex grid; any
         other shape (a rect, a circle, a slanted polygon) falls back to its box,
-        which is conservative."""
+        which is conservative -- but a circle is judged as the circle it is (a test point next to a part: its box claims corners the circle never reaches, and `auto`, which measures the circle, then places what `check` refuses)."""
         box = self.courtyard(f)
         if not box:
             return []
+        if len(box) == 5:
+            return [box]                 # a circle stays a circle (rgap measures it; auto does too)
         box = box[:4]
         s = self.side(f)
         items = [g for g in f.GraphicalItems() if g.GetLayer() == self.CRT[s]]
