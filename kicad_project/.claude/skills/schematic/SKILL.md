@@ -94,24 +94,21 @@ wins where they disagree.
   (`74xGxx:74LVC2G07`'s power unit) is redrawn in the board library with the
   same pins and units as origin-anchored boxes.
 
-**Making a unit land at the origin with Konnect's `create_symbol`** — it
-takes a pin's x as its connection point and grows a body too narrow for the
-names, centred on what you asked, so the body rarely lands where the pins
-say. Two passes, no guessing: create with left pins at x = −2.54 and the
-first row at y = −2.54 (the top edge is then exactly 0); read the response's
-resolved left-pin x `lx`; the body's left edge is `lx + 2.54`; if that is
-not 0, `delete_symbol` (it finds only a symbol Konnect wrote and nothing has
-resaved since — after `symfields.py`, `symfields.py --delete`; `create_symbol`
-on a name already there adds a second copy) and create again with every pin's x shifted by
-−(lx + 2.54). Then:
+**A new or rebuilt symbol comes from its pin table**, not from Konnect's
+`create_symbol`:
 
 ```
-tools/.venv/bin/python tools/sch/symfields.py --board <board> SYMBOL ...    # fields above the corner
+tools/.venv/bin/python tools/sch/symgen.py --board <board> PINS.csv --name NAME [--ref U] [--footprint LIB:FP]
 ```
 
-Verify a rebuilt symbol against the old one pin by pin (number, name,
-type) before any sheet uses it: a rebuild is where a ball silently changes
-type.
+`PINS.csv` is `number,name,type,group[,side]`, typed from the datasheet's
+pin table (types by PIN NAME, never by its Function column). It draws every
+rule above the first time — units by group, at most 40 rows a side, the body
+at the origin sized from its pin names, pins long enough for their numbers,
+Reference and Value just above the corner — prints pin by pin how it differs
+from the symbol it replaces, and proves the write with a kicad-cli resave
+read back against the table. `symfields.py` remains for a stock symbol
+(`--derive`) and for fixing a symbol drawn before.
 
 ## 1. Before the first sheet
 

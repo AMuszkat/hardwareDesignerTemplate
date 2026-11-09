@@ -158,6 +158,16 @@ def venvs():
 
 def optional():
     """Only for a feature the user chooses per use: never counted as missing."""
+    nat = KP / "tools" / ".native"
+    if any((nat / n).exists() for n in ("libmaze.so", "libmaze.dylib")):
+        add("opt", "router core (C, compiled)", "kicad_project/tools/.native/ -- the router runs compiled")
+    else:
+        import shutil as _sh
+        cc = _sh.which("cc") or _sh.which("gcc") or _sh.which("clang")
+        add("OPT", "router core (C, compiled)", "not built -- the router runs in pure Python (the same routes, "
+            "about 10x slower)" + ("" if cc else "; no C compiler"),
+            "./setup.sh install" if cc else
+            "sudo apt install -y build-essential (macOS: xcode-select --install), then ./setup.sh install")
     rc, out = run(["sh", str(KP / "tools" / "render" / "setup.sh"), "--check"])
     line = (out.splitlines() or ["missing"])[-1]
     if line.startswith("ok "):

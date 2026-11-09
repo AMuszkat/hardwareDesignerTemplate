@@ -27,6 +27,8 @@ repository (nothing here is written; the copy is deleted unless --keep):
              plan on a copy of the board (zero Konnect calls); drawn, parity,
              parity --handoff and check pass on it; a re-plan (new UUIDs)
              drawn again keeps every symbol UUID (S1)
+  symgen     sch/symgen.py writes the fixture MCU's symbol from a pin table
+             (proven by a kicad-cli resave), and the plan with it PASSES (S2)
   router     tools/route/maze.py on a synthetic window: a bundle of nets
              through a funnel past a via field, negotiated to no overlap;
              every joint 0 or 45 degrees; seconds per iteration
@@ -465,7 +467,60 @@ def stage_draw(copy, board):
           draw_s=round(t_draw, 2), **{k.replace(" ", "_"): v[0] == 0 for k, v in res.items()})
 
 
+MCU16_CSV = "number,name,type,group\n1,VDD,power_in,Power\n2,VSS,power_in,Power\n" + "".join(
+    f"{n},{nm},{t},IO\n" for n, nm, t in [(3, "OSC_IN", "input"), (4, "OSC_OUT", "output"), (5, "PA0", "bidirectional"),
+                                          (6, "PA2", "bidirectional"), (7, "PA3", "bidirectional"),
+                                          (8, "PB6", "bidirectional"), (9, "PB7", "bidirectional"), (10, "BOOT0", "input")]
+                                         + [(11 + k, f"PB{k}", "bidirectional") for k in range(6)])
+
+
+def stage_symgen(copy, board):
+    t0 = time.time()
+    tmp = Path(tempfile.mkdtemp(prefix="symgen-"))
+    vpy = copy / "kicad_project" / "tools" / ".venv" / "bin" / "python"
+    py = str(vpy) if vpy.exists() else sys.executable
+    tools = copy / "kicad_project" / "tools" / "sch"
+    try:
+        b = tmp / board.name
+        shutil.copytree(board, b, ignore=shutil.ignore_patterns("*.kicad_pcb", "fixture.*"))
+        os.symlink(copy / "kicad_project" / "tools", tmp / "tools")
+        (b / "mcu16.csv").write_text(MCU16_CSV)
+        rc, out = run([py, str(tools / "symgen.py"), "--board", str(b), str(b / "mcu16.csv"), "--name", "MCU16",
+                       "--lib", "agentic"], copy)
+        rc2, out2 = run([py, str(tools / "sch.py"), "plan", "--board", str(b), "--handoff"], copy)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ok = rc == 0 and rc2 == 0 and "PLAN PASSES" in out2
+    stage("symgen", "PASS" if ok else "FAIL", time.time() - t0,
+          f"{tail(out, 1)[:140]}; the plan with it: {tail(out2, 1)}", symgen_exit=rc, plan_exit=rc2)
+
+
 def stage_router(quick, rip="conflict"):
+    """The fixture routed by the active core; with the compiled core present, routed again by the
+    pure-Python search, and the two results must be identical (R4)."""
+    sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
+    import maze                                   # noqa: E402
+    core = maze._CORE
+    if core is None:
+        return _route_fixture(quick, rip, maze.CORE)
+    maze._CORE = None
+    try:
+        _route_fixture(quick, rip, "python")
+    finally:
+        maze._CORE = core
+    py = STAGES.pop()
+    _route_fixture(quick, rip, maze.CORE)
+    s = STAGES[-1]
+    same = s["numbers"].get("result_sha") == py["numbers"].get("result_sha")
+    s["detail"] += (f"; pure-Python search: {py['numbers'].get('route_s')} s, "
+                    + ("the SAME result" if same else f"a DIFFERENT result sha {py['numbers'].get('result_sha', '')[:10]}"))
+    s["numbers"].update(python_route_s=py["numbers"].get("route_s"), cores_identical=same)
+    if not same:
+        s["status"] = "FAIL"
+    print(f"  {'':10s} (router: {s['detail'].split('; pure-Python')[1].strip()})")
+
+
+def _route_fixture(quick, rip, core_name):
     t0 = time.time()
     sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
     import maze                                   # noqa: E402
@@ -520,7 +575,7 @@ def stage_router(quick, rip="conflict"):
                     bad_joint += 1
     ok = conflicts == 0 and bad_joint == 0
     stage("router", "PASS" if ok else "FAIL", time.time() - t0,
-          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers, rip {rip}; converged in {iters} iteration(s), {t_route:.1f} s "
+          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers, rip {rip}, core {core_name.split(' (')[0]}; converged in {iters} iteration(s), {t_route:.1f} s "
           f"({t_route / max(iters, 1):.2f} s/iteration); {nseg} segments, {nvia} vias; conflicts {conflicts}; "
           f"joints not 0/45: {bad_joint}; result sha {h.hexdigest()[:10]}",
           nets=n, cells=G.nx * G.ny, iterations=iters, route_s=round(t_route, 2),
@@ -768,6 +823,7 @@ def main():
         else:
             stage("schematic", "SKIP", 0.0, "no handoff to plan from")
         stage_draw(copy, board) if (board and kcli and stock) else stage("draw", "SKIP", 0.0, "needs kicad-cli and KiCad's symbols")
+        stage_symgen(copy, board) if (board and kcli and stock) else stage("symgen", "SKIP", 0.0, "needs kicad-cli")
         stage_router(a.quick, a.rip)
         stage_fanout(tmp)
         stage_snapshot(copy, kcli) if board else stage("snapshot", "SKIP", 0.0, "no board")

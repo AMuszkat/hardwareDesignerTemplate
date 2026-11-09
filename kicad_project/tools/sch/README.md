@@ -7,6 +7,7 @@ The `schematic` skill is the workflow; this is the tool.
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --netlist netlist.json   # a new board
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --handoff                # a new board, complete handoff
     tools/.venv/bin/python tools/sch/sch.py plan   --board board1 --from-sch               # a redraw
+    tools/.venv/bin/python tools/sch/symgen.py --board board1 PINS.csv --name NAME  # a symbol from its pin table
     tools/.venv/bin/python tools/sch/sch.py draw   --board board1                 # the proven plan installed
     tools/.venv/bin/python tools/sch/sch.py pdf    --board board1                 # the preview, PDF + PNGs
     tools/.venv/bin/python tools/sch/sch.py ops    --board board1 power 0 40      # a sheet's calls, in chunks

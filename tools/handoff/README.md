@@ -30,6 +30,15 @@ and `08_pin_accounting` (only with a `PINOUT`), `04_deliberate`, `05_open`,
 `13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `15_reviews`, `netlist.json`, `rules.json` (with
 `WORKMANSHIP`), `CHANGELOG`, `MANIFEST.json`.
 
+`publish.py --board boardN --selftest` is the handoff's own measurement
+before a board session pays for it: the `handoff-reader` agent
+(`.claude/agents/handoff-reader.md`, Read / Grep / Glob only) runs headless
+(`claude -p --agent`) on a copy of the published folder in a scratch
+directory outside the repository — no CLAUDE.md, no other project file in
+reach — plans the schematic, placement and routing from it, and lists every
+missing or contradicted fact as QUESTIONS.md entries in
+`out/selftest/boardN-revR.md`. Exit 1 on any question. It spends tokens.
+
 `rules.json` is the routing workmanship as data: `WORKMANSHIP`'s (rule,
 setting, source) rows in the forms the board's `tools/route/guide.py` reads,
 validated by that parser at publish (a form it cannot read stops the

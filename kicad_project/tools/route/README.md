@@ -334,6 +334,17 @@ its docstring. What the spec has to be told:
   through which the only exits need a 90-degree turn (board2's R5: a
   pre-routed lane hard against the via row). Draw the fixed copper with
   `view.py` and free the lane; more `--limit` does not help.
+- **The search runs compiled when it can.** `route/_maze.c` is the same A*
+  (built by `tools/setup.sh` with the system C compiler into
+  `tools/.native/`, loaded through ctypes over the grid's own buffers): the
+  SAME routes, bit for bit — the agentic test routes its fixture both ways
+  and compares — about ten to forty times faster (16 nets: 52.5 s → 4.5 s
+  with `--full`, 21 s → 1.0 s by default; the PCB fixture 20 s → 2.2 s).
+  Every run's first line says which core is active (`router core: compiled
+  ...` or `python (...)`), and so does `route.py rules`; `HW_MAZE_CORE=python`
+  forces the Python one. A route with cross-square headings (`xdir`) uses the
+  Python search. No C compiler: the same routes, slower. Halo stamping and
+  the overlap count stay in Python: the profile puts the time in the search.
 - **Only the overlapping nets are ripped up** after the first iteration
   (conflict-only PathFinder): the others keep their paths, and the rising
   cost of the contested cells moves the overlapping nets round them. When

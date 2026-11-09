@@ -225,7 +225,24 @@ def _register(mpn, path, blob, url, source, mfr):
                "sha256": hashlib.sha256(blob).hexdigest()[:16],
                "fetched": time.strftime("%Y-%m-%d")}
     _save_index(ix)
+    _extract_later(mpn, path)
     return ix[mpn]
+
+
+def _extract_later(mpn, path):
+    """tools/parts/extract.py on the new PDF, detached (Docling takes minutes on a long datasheet):
+    its outputs land beside the PDF, its log in out/extract/<MPN>.log. Without the optional
+    tools/parts/.venv-ml, nothing runs and filing is unchanged. HW_EXTRACT=0 turns it off."""
+    venv = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv-ml", "bin", "python")
+    if os.environ.get("HW_EXTRACT", "1") == "0" or not os.path.exists(venv):
+        return
+    logs = os.path.join(market.ROOT, "out", "extract")
+    os.makedirs(logs, exist_ok=True)
+    log = os.path.join(logs, _safe(mpn) + ".log")
+    with open(log, "w") as f:
+        subprocess.Popen([venv, "-I", os.path.join(os.path.dirname(os.path.abspath(__file__)), "extract.py"),
+                          os.path.abspath(path)], stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
+    print(f"  extraction started in the background (tools/parts/extract.py) -> {os.path.basename(log)}")
 
 
 def get(mpn, refresh=False, url=None, path=None, mfr=None):
