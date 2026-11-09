@@ -342,6 +342,14 @@ its docstring. What the spec has to be told:
   before this, for a run that must reproduce an old plan. On the agentic
   fixtures: 16 nets 52.5 s → 21 s in the same 14 iterations; the PCB
   fixture's plan identical, 29 s → 21 s. Deterministic per seed either way.
+- **`--corridor MM` bounds each net's search** to the box round its ends and
+  its last path, grown by MM (or 30 % of its span), doubled until it routes,
+  up to the whole window — so a corridor never walls in a net the window
+  would not. It is OFF by default: on the agentic fixtures (16 nets across a
+  funnel; the same bundle in a 90 x 70 mm window) A* already searched
+  tightly, the plans were identical and the time within noise. Use it when a
+  big window's nets hit `--limit` and read as walled in; a corridor can also
+  trade a better detour outside it for a worse path inside, so compare.
 - **Bound a run with `--timeout S`, not a `timeout` prefix.** It stops
   between iterations when the next one (sized by the slowest so far) would not
   end inside S seconds, prints the contested cells and `reach` per net, and
