@@ -56,7 +56,12 @@ What it took to make it converge (each line is a failure without it):
 import heapq
 import math
 import random
+import sys
 from array import array
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import par  # noqa: E402  (tools/par.py: fork, results in job order)
 
 CLR = 0.15        # between the nets this router lays (Default class)
 PADCLR = 0.20     # to foreign pads and copper (the strictest class on the board)
@@ -630,7 +635,7 @@ class Grid:
 
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
                   log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4,
-                  corridor=None, **kw):
+                  corridor=None, jacobi=False, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
         Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
         after every iteration; a truthy return (a reason) stops an unconverged run there.
@@ -647,7 +652,13 @@ class Grid:
         corridor=M (mm): each net's search stays inside the box round its source, its goals
         and its previous path, grown by max(M, 30 % of the source-goal distance); a net that
         finds no path there tries again in a box twice as wide, up to the whole window, so a
-        corridor never walls a net in that the window would not.  None: the whole window."""
+        corridor never walls a net in that the window would not.  None: the whole window.
+
+        jacobi=True: the nets of one iteration are routed in parallel (tools/par.py, forked),
+        each against the congestion the iteration STARTED with -- not against the nets routed
+        before it in the same iteration (Gauss-Seidel, the default).  A different convergence:
+        two nets may both take the same free lane and meet there next iteration.  The same
+        result with HW_JOBS=1: a net routed in-process restores its old path before the next."""
         self.walled = None
         if rip not in ("conflict", "full"):
             raise ValueError(f"rip must be 'conflict' or 'full', got {rip!r}")
@@ -665,10 +676,31 @@ class Grid:
                 rnd.shuffle(jobs)                 # a fixed order lets two nets swap places for ever
             full = rip == "full" or it == 1 or full_next
             full_next = False
-            for jb in jobs:
+            todo = [jb for jb in jobs if full or jb["net"] not in paths or bad.get(jb["net"])]
+            if jacobi:
+                def one(jb, pres=pres):
+                    n = jb["net"]
+                    old = paths.get(n)
+                    self.unroute(n)
+                    res = self._route_in_corridor(jb, old, corridor, pres=pres, hmap=hm, **kw)
+                    self.unroute(n)
+                    if old:
+                        self.lay(n, *old)          # the next net sees the iteration's starting congestion
+                    return res
+                results = par.pmap(one, todo)
+                for jb, res in zip(todo, results):
+                    n = jb["net"]
+                    if res is None:
+                        log(f"   iteration {it}: {n} has no path even through the others -- walled in")
+                        self.walled = n
+                        return None
+                for jb, res in zip(todo, results):
+                    n = jb["net"]
+                    self.unroute(n)
+                    paths[n] = res
+                    self.lay(n, *res)
+            for jb in ([] if jacobi else todo):
                 n = jb["net"]
-                if not full and n in paths and not bad.get(n):
-                    continue                      # no overlap: its path stays
                 self.unroute(n)
                 res = self._route_in_corridor(jb, paths.get(n), corridor, pres=pres, hmap=hm, **kw)
                 if res is None:

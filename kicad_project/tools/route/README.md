@@ -342,6 +342,19 @@ its docstring. What the spec has to be told:
   before this, for a run that must reproduce an old plan. On the agentic
   fixtures: 16 nets 52.5 s → 21 s in the same 14 iterations; the PCB
   fixture's plan identical, 29 s → 21 s. Deterministic per seed either way.
+- **`--seeds N` tries N seeds at once** (forked, `tools/par.py`): every
+  seed negotiates the leg against the same frozen copper and the LOWEST seed
+  that converges is taken, whichever finished first — the same plan with
+  `HW_JOBS=1`, and seed 1's plan when seed 1 converges. When none does, seed
+  `--seed` runs again with its partial and stall report. On the PCB fixture
+  four seeds cost one run's wall clock (82.7 s serial, 27.4 s forked).
+- **`--jacobi` routes an iteration's nets in parallel**, each against the
+  congestion the iteration started with. A different convergence, not a
+  faster same one: two nets can take the same free lane and meet again next
+  iteration. On the 16-net router fixture it took 30 iterations (14
+  default) yet finished in 11.8 s on 8 cores (21 s default); on the PCB
+  fixture 41 iterations (3 default), 61 s against 21 s. Try it on a big
+  group that converges slowly; the same plan with `HW_JOBS=1`.
 - **`--corridor MM` bounds each net's search** to the box round its ends and
   its last path, grown by MM (or 30 % of its span), doubled until it routes,
   up to the whole window — so a corridor never walls in a net the window
