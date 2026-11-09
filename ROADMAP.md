@@ -67,7 +67,7 @@ fixtures (the `pcb` stage's board is `tests/fixture_pcb.py`'s).
 | S2 | Phase 3 PR | the fixture MCU's symbol from its pin table: 0 pin differences, the plan with it PASSES with no fix-up; a 124-pin table split 80 / 40 / 4 |
 | H3 | Phase 3 PR | `publish.py --selftest` on the fixture handoff with a NETS row deleted reported that hole (and 12 real fixture gaps), 4 min |
 | R4 | Phase 3 PR | the same routes both cores; 16 nets 52.5 s → 4.5 s (`--full`), 21 s → 1.0 s (default); PCB fixture 20 s → 2.2 s |
-| H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486. Not done: consumers unwired (one datasheet is the corpus); `pages` and `land` unrun here (no GPU, no Ollama) |
+| H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486, now from 24 of 96 pages (`--pages auto`). Widened 2026-11-09 against KiCad's stock symbols (`extract_corpus.py`, 19 vendor datasheets): 461 of 728 pins named alike, 2 parts exact after a multi-package parser — the gate fails, so the consumers stay unwired; drawn-only pinouts, prose tables and ball-map grids are what it cannot read. `pages` and `land` unrun (Ollama not installed) |
 
 ## Phase 0 — hours each, no behaviour change
 
