@@ -1142,32 +1142,39 @@ def cmd_drc(a):
     Board-only footprints listed under `fixed` in placement.json (the mounting
     holes) are expected as `extra_footprint` and do not fail the run. Anything
     else in the parity list exits 1."""
-    import collections
-    import subprocess
-    import tempfile
     board_dir = Path(a.board)
     pcb = boardsel.one_pcb(board_dir)
     if not pcb.with_suffix(".kicad_sch").exists():
         die(f"{pcb.with_suffix('.kicad_sch').name} is not beside the board: the parity test "
             "cannot run, and a run without it reads exactly like a pass", 4)
-    cfg_file = board_dir / "placement.json"
-    fixed = set((json.loads(cfg_file.read_text()) if cfg_file.exists() else {}).get("fixed", []))
-    with tempfile.TemporaryDirectory() as td:
-        out = Path(td) / "drc.json"
-        r = subprocess.run(["kicad-cli", "pcb", "drc", "--schematic-parity", "--format", "json",
-                            "-o", str(out), str(pcb)], capture_output=True, text=True)
-        if not out.exists():
-            die(f"kicad-cli pcb drc failed: {r.stderr.strip()[-300:]}", 4)
-        d = json.loads(out.read_text())
+    import drccache
+    d, msg = drccache.report(pcb, board_dir)
+    lines, rc = drc_summary(Board(a.board), d, msg)
+    if rc == 4:
+        die(lines[-1], 4)
+    for ln in lines:
+        print(ln)
+    return rc
+
+
+def drc_summary(B, d, msg):
+    """(lines, rc) of `place.py drc` for a loaded board, its DRC report and kicad-cli's
+    output: rc 0 clean parity, 1 a parity problem or thin silk, 4 the test did not run
+    (the reason is the last line).  `route.py audit` calls it in-process."""
+    import collections
+    if d is None:
+        return [f"kicad-cli pcb drc failed: {msg.strip()[-300:]}"], 4
     # kicad-cli says on STDERR when it could not build the schematic netlist --
     # and then writes an EMPTY parity list, which is indistinguishable from a pass.
-    msg = (r.stderr + r.stdout)
     if "parity" in msg.lower() and ("fail" in msg.lower() or "unable" in msg.lower()):
-        die("the schematic-parity test did NOT run: "
-            + " ".join(msg.split())[-300:] + " -- fix the schematic (annotate, ERC), then re-run", 4)
+        return ["the schematic-parity test did NOT run: " + " ".join(msg.split())[-300:]
+                + " -- fix the schematic (annotate, ERC), then re-run"], 4
+    cfg_file = Path(B.pcb).parent / "placement.json"
+    fixed = set((json.loads(cfg_file.read_text()) if cfg_file.exists() else {}).get("fixed", []))
+    out = []
     viol = collections.Counter(v["type"] for v in d.get("violations", []))
-    print("violations:", dict(viol) or "none")
-    print("unconnected:", len(d.get("unconnected_items", [])))
+    out.append(f"violations: {dict(viol) or 'none'}")
+    out.append(f"unconnected: {len(d.get('unconnected_items', []))}")
     bad = []
     for v in d.get("schematic_parity", []):
         who = " ".join(i.get("description", "") for i in v.get("items", []))
@@ -1176,17 +1183,15 @@ def cmd_drc(a):
             continue
         bad.append(f"{v['type']}: {v['description'][:90]} [{ref}]")
     n_ok = len(d.get("schematic_parity", [])) - len(bad)
-    print(f"schematic parity: {len(bad)} problem(s)"
-          + (f" ({n_ok} board-only footprint(s) from placement.json 'fixed' ignored)" if n_ok else ""))
-    for b in bad:
-        print("  PARITY", b)
+    out.append(f"schematic parity: {len(bad)} problem(s)"
+               + (f" ({n_ok} board-only footprint(s) from placement.json 'fixed' ignored)" if n_ok else ""))
+    out += ["  PARITY " + b for b in bad]
     # silk line width: KiCad's DRC tests text thickness, never a stroke's width
-    B = Board(a.board)
     floor, thin = thin_silk(B)
-    print(f"silk strokes under {floor:g} mm: {len(thin)}"
-          + (f" on {', '.join(sorted({r for r, *_ in thin}))} -- `place.py silk` (stock) / "
-             f"`fp.py tidy --silk-width` (library)" if thin else ""))
-    return 1 if bad or thin else 0
+    out.append(f"silk strokes under {floor:g} mm: {len(thin)}"
+               + (f" on {', '.join(sorted({r for r, *_ in thin}))} -- `place.py silk` (stock) / "
+                  f"`fp.py tidy --silk-width` (library)" if thin else ""))
+    return out, (1 if bad or thin else 0)
 
 
 def main():

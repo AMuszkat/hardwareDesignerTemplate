@@ -54,8 +54,13 @@ def main():
     ap.add_argument("--step", type=float, default=0.05, help="sampling step along tracks, mm")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
+    return report(P.Board(a.board), a)
 
-    B = P.Board(a.board)
+
+def report(B, a):
+    """The pour report for a board already loaded -- `route.py audit` calls it in-process
+    instead of loading pcbnew and the board again.  `a` carries main's options (tries, over,
+    field, step, board).  Refills B's zones in memory; never saves."""
     pn, b = B.pn, B.b
     mm = B.mm
     short = lambda n: n.split("/")[-1]

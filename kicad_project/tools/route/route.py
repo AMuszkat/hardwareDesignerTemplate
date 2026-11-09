@@ -73,6 +73,7 @@ boardsel = P.boardsel
 sys.path.insert(0, str(ROOT / "tools" / "route"))
 sys.path.insert(0, str(ROOT / "tools" / "copper"))
 import guide                                                # noqa: E402
+import drccache                                             # noqa: E402  (tools/place)
 
 
 def group_of(plan_path, plan):
@@ -401,14 +402,17 @@ class RBoard(Board):
 # DRC, through place.py's gate (schematic parity on)
 # ---------------------------------------------------------------------------
 
-def drc_report(pcb):
-    with tempfile.TemporaryDirectory() as td:
-        out = Path(td) / "drc.json"
-        r = subprocess.run(["kicad-cli", "pcb", "drc", "--schematic-parity", "--format", "json",
-                            "-o", str(out), str(pcb)], capture_output=True, text=True)
-        if not out.exists():
-            die(f"kicad-cli pcb drc failed: {r.stderr.strip()[-300:]}", 4)
-        return json.loads(out.read_text())
+def drc_report(pcb, cache=True):
+    """The board's DRC report.  A board's own file is cached by content (tools/place/drccache.py:
+    the same board state never runs kicad-cli twice); a scratch copy is run with cache=False."""
+    return drc_done(drccache.start(pcb, cache=cache))
+
+
+def drc_done(run):
+    rep, msg = run.result()
+    if rep is None:
+        die(f"kicad-cli pcb drc failed: {msg.strip()[-300:]}", 4)
+    return rep
 
 
 def viol_keys(rep):
@@ -898,11 +902,9 @@ def cmd_check(a, quiet=False):
         if k not in ("group", "why", "tracks", "vias", "zones", "necks", "accept", "edge_ok",
                      "rips", "ripvias", "polyrips", "polys", "thermals", "marks", "guides"):
             die(f"plan: unknown key {k!r}")
+    # the baseline: from the cache, else kicad-cli started NOW, running while the scratch is built
+    base_run = drccache.start(B.pcb)
     bad = rule_gates(B, plan) + edge_gate(B, plan)
-    base = drc_report(B.pcb)
-    base_keys = dict()
-    for k in viol_keys(base):
-        base_keys[k] = base_keys.get(k, 0) + 1
 
     with tempfile.TemporaryDirectory() as td:
         scratch = Path(td) / B.pcb.name
@@ -925,7 +927,8 @@ def cmd_check(a, quiet=False):
         bad += ["short: " + m for m in S.save(scratch)]
         copper_notes, cbad = copper_gates(B, S)
         bad += cbad
-        rep = drc_report(scratch)
+        rep = drc_report(scratch, cache=False)
+        base = drc_done(base_run)
         angle_note = "angles: the guide has no 'joints' row, not checked"
         if "angles" in B.gates:
             # whatever this plan adds to the corners already on the board
@@ -945,6 +948,9 @@ def cmd_check(a, quiet=False):
             angle_note = (f"angles: {a_checked} joints on the board with this plan, "
                           f"{len(a_now)} not at 0 or 45 degrees ({len(a_base)} before it)")
 
+    base_keys = dict()
+    for k in viol_keys(base):
+        base_keys[k] = base_keys.get(k, 0) + 1
     new = []
     seen = dict(base_keys)
     for k in viol_keys(rep):
@@ -1231,14 +1237,18 @@ def cmd_audit(a):
         rows.append((name, ok, detail))
         print(f"  {name:13s} {'PASS' if ok else 'FAIL'}  {detail}")
 
-    d = subprocess.run([sys.executable, str(ROOT / "tools" / "place" / "place.py"), "drc", "--board", str(a.board)],
-                       capture_output=True, text=True)
-    lines = [ln for ln in d.stdout.splitlines() if ln.strip()]
+    # place.py drc's summary, in-process: the board is loaded once, the report comes from the cache
+    # when this board state was checked before (drccache)
+    if not B.pcb.with_suffix(".kicad_sch").exists():
+        lines, rc = [f"{B.pcb.with_suffix('.kicad_sch').name} is not beside the board: the parity test "
+                     "cannot run, and a run without it reads exactly like a pass"], 4
+    else:
+        lines, rc = P.drc_summary(B, *drccache.report(B.pcb))
     viol = next((ln for ln in lines if ln.startswith("violations:")), "violations: ?")
     unc = next((ln for ln in lines if ln.startswith("unconnected:")), "unconnected: ?")
     par = next((ln for ln in lines if ln.startswith("schematic parity:")), "")
-    gate("drc", d.returncode == 0 and viol.strip() == "violations: none" and unc.strip() == "unconnected: 0",
-         f"{viol}; {unc}; {par}" if d.returncode != 4 else (d.stderr.strip().splitlines() or ["drc did not run"])[-1])
+    gate("drc", rc == 0 and viol.strip() == "violations: none" and unc.strip() == "unconnected: 0",
+         f"{viol}; {unc}; {par}" if rc != 4 else lines[-1])
     checked, viol_a = angle_gate(B.b, B.pn)
     if "angles" in G:
         gate("angles", not viol_a, f"{checked} joints, {len(viol_a)} not at 0/45 ({G['angles']['source']})")
@@ -1293,8 +1303,16 @@ def cmd_audit(a):
              f"({rule['source']})")
     pours = [z for z in B.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]
     if pours:
-        r = subprocess.run([sys.executable, str(ROOT / "tools" / "route" / "pour.py"), "--board", str(a.board)],
-                           capture_output=True, text=True)
+        # pour.py's report, in-process on the board already loaded: no second interpreter, pcbnew
+        # import or board load.  It refills the zones in memory, which is why it is the LAST gate
+        import argparse as _ap
+        import contextlib
+        import io
+        import pour as POUR
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            POUR.report(B, _ap.Namespace(board=a.board, tries=[], over=[], field=None, step=0.05))
+        r = _ap.Namespace(stdout=buf.getvalue())
         # one summary line per pour ("VBUS on F.Cu: 1 island(s), ..."); the per-island
         # detail lines ("island [0]: 1 via(s) ...") are not pours (board2 R3: a one-island
         # pour read as "2 pours, 1 in more than one island")

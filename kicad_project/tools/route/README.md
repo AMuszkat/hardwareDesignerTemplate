@@ -34,6 +34,17 @@ typed, else inside the board folder (`routing/R1.json`).
 own DRC on it, schematic parity on. Any violation that is not already in the
 baseline fails the plan. The real board is never touched.
 
+**One kicad-cli run per check.** The baseline (the board as it is) is
+`tools/place/drccache.py`'s: a report cached under `routing/.drc_cache/`,
+keyed by the sha256 of every file the DRC reads (the board, project, rules,
+every schematic sheet, the library tables, `lib/`'s symbols and footprints,
+kicad-cli itself). The same board state is never run twice — the second
+`check` of a board, `apply`'s "before" count and `audit` all read it — and a
+miss runs concurrently with the scratch copy's DRC. stderr says which
+(`drc: ... from the cache`); stdout is what it was. `HW_DRC_CACHE=0` turns it
+off; the folder is safe to delete. `audit` runs `place.py drc`'s summary and
+`pour.py`'s report in-process, on the board it already loaded.
+
 ⚠ **One thing KiCad's DRC cannot see, and the gate checks itself: a short that
 KiCad renames away.** When a board is saved, `pcbnew` gives a track or via
 that touches a pad of *another* net — with no pad of its own net in the same
