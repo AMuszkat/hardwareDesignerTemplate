@@ -496,6 +496,31 @@ def stage_symgen(copy, board):
 
 
 def stage_router(quick, rip="conflict"):
+    """The fixture routed by the active core; with the compiled core present, routed again by the
+    pure-Python search, and the two results must be identical (R4)."""
+    sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
+    import maze                                   # noqa: E402
+    core = maze._CORE
+    if core is None:
+        return _route_fixture(quick, rip, maze.CORE)
+    maze._CORE = None
+    try:
+        _route_fixture(quick, rip, "python")
+    finally:
+        maze._CORE = core
+    py = STAGES.pop()
+    _route_fixture(quick, rip, maze.CORE)
+    s = STAGES[-1]
+    same = s["numbers"].get("result_sha") == py["numbers"].get("result_sha")
+    s["detail"] += (f"; pure-Python search: {py['numbers'].get('route_s')} s, "
+                    + ("the SAME result" if same else f"a DIFFERENT result sha {py['numbers'].get('result_sha', '')[:10]}"))
+    s["numbers"].update(python_route_s=py["numbers"].get("route_s"), cores_identical=same)
+    if not same:
+        s["status"] = "FAIL"
+    print(f"  {'':10s} (router: {s['detail'].split('; pure-Python')[1].strip()})")
+
+
+def _route_fixture(quick, rip, core_name):
     t0 = time.time()
     sys.path.insert(0, str(ROOT / "kicad_project" / "tools" / "route"))
     import maze                                   # noqa: E402
@@ -550,7 +575,7 @@ def stage_router(quick, rip="conflict"):
                     bad_joint += 1
     ok = conflicts == 0 and bad_joint == 0
     stage("router", "PASS" if ok else "FAIL", time.time() - t0,
-          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers, rip {rip}; converged in {iters} iteration(s), {t_route:.1f} s "
+          f"{n} nets, {G.nx}x{G.ny} cells x 2 layers, rip {rip}, core {core_name.split(' (')[0]}; converged in {iters} iteration(s), {t_route:.1f} s "
           f"({t_route / max(iters, 1):.2f} s/iteration); {nseg} segments, {nvia} vias; conflicts {conflicts}; "
           f"joints not 0/45: {bad_joint}; result sha {h.hexdigest()[:10]}",
           nets=n, cells=G.nx * G.ny, iterations=iters, route_s=round(t_route, 2),

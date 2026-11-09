@@ -74,7 +74,25 @@ else
   bad "chrome" "install Google Chrome or Chromium (headless fallback for CAD and datasheet downloads)"
 fi
 
-# --- 4. optional: Blender, for render.py --engine blender only -------------------
+# --- 4. optional: the router's compiled core (route/_maze.c) ----------------------
+# Built with the system C compiler into .native/ (ignored by git: its own .gitignore). Without a
+# compiler the router runs its pure-Python search -- the same routes, about ten times slower --
+# and every router run says which core is active. No prebuilt binary is ever committed.
+CC_="${CC:-$(command -v cc || command -v gcc || command -v clang || true)}"
+if [ -n "$CC_" ]; then
+  mkdir -p .native && printf '*\n' > .native/.gitignore
+  case "$(uname -s)" in Darwin) lib=.native/libmaze.dylib; shared=-dynamiclib ;; *) lib=.native/libmaze.so; shared=-shared ;; esac
+  if "$CC_" -O2 -fPIC $shared -ffp-contract=off -fno-fast-math -o "$lib.tmp" route/_maze.c 2>/tmp/maze-cc.$$; then
+    mv "$lib.tmp" "$lib"; ok "router core (optional)" "compiled: $lib ($CC_)"
+  else
+    ok "router core (optional)" "the compile failed -- the router runs in pure Python: $(tail -1 /tmp/maze-cc.$$)"
+  fi
+  rm -f /tmp/maze-cc.$$
+else
+  ok "router core (optional)" "no C compiler -- the router runs in pure Python (about 10x slower). Debian/Ubuntu: sudo apt install -y build-essential; macOS: xcode-select --install"
+fi
+
+# --- 5. optional: Blender, for render.py --engine blender only -------------------
 b="$(sh ./render/setup.sh --check 2>/dev/null || true)"
 case "$b" in
   ok*) ok "blender (optional)" "${b#ok }" ;;

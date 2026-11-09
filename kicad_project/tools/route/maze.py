@@ -63,6 +63,31 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import par  # noqa: E402  (tools/par.py: fork, results in job order)
 
+
+# -- the compiled core (tools/route/_maze.c, built by tools/setup.sh into tools/.native/) ------
+# The same search, bit for bit (the agentic test compares both); HW_MAZE_CORE=python forces the
+# Python one.  CORE says which is active: every router run prints it.
+def _load_core():
+    import ctypes
+    import os
+    if os.environ.get("HW_MAZE_CORE", "").lower() == "python":
+        return None, "python (HW_MAZE_CORE=python)"
+    nat = Path(__file__).resolve().parent.parent / ".native"
+    for name in ("libmaze.so", "libmaze.dylib"):
+        f = nat / name
+        if f.exists():
+            try:
+                lib = ctypes.CDLL(str(f))
+                lib.maze_astar.restype = ctypes.c_long
+                lib.maze_core_version.restype = ctypes.c_char_p
+                return lib, f"compiled ({lib.maze_core_version().decode()}, {f.name})"
+            except OSError as e:
+                return None, f"python (could not load {f.name}: {e})"
+    return None, "python (no compiled core: kicad_project/tools/setup.sh builds it with a C compiler)"
+
+
+_CORE, CORE = _load_core()
+
 CLR = 0.15        # between the nets this router lays (Default class)
 PADCLR = 0.20     # to foreign pads and copper (the strictest class on the board)
 W = 0.2           # track it lays
@@ -371,6 +396,14 @@ class Grid:
         dist = {(sc, l0, start_dir): 0.0 for l0 in li0s}
         par = {}
         hk = step if not self.diagonal else step * 0.7071     # L1 / sqrt(2) <= octile
+        if _CORE is not None and not any(xd) and (via_mask is None or isinstance(via_mask, (bytearray, bytes))):
+            got = self._route_native(L, st, sn, fx, dy, hs, cr, mfix, mdyn, mcore, vst, vfx, vdy, vhs,
+                                     vmfix, vmdyn, via_mask, ok_layer, lc, sc, li0s, start_dir, lig, goals,
+                                     goal_dirs, hmap, hk, soft, pres, via_cost, bias, limit, box,
+                                     (0.0, self.turn45, 1e9, 1e9, 1e9) if self.only45 else
+                                     (0.0, self.turn45, turn, self.turn135, 1e9))
+            if got is not NotImplemented:
+                return got
         heap = [(hmap[sc] * hk, 0.0, sc, l0, start_dir) for l0 in li0s]
         goal = None
         n_exp = 0
@@ -500,6 +533,89 @@ class Grid:
             states.append(par[states[-1]])
         states.reverse()
         # -> per-layer cell runs and the vias between them
+        runs, vias = [], []
+        cur_l, cells = states[0][1], [states[0][0]]
+        for c, li, _dr in states[1:]:
+            if li != cur_l:
+                runs.append((L[cur_l], cells))
+                vias.append(c)
+                cur_l, cells = li, [c]
+            elif c != cells[-1]:
+                cells.append(c)
+        runs.append((L[cur_l], cells))
+        return runs, vias
+
+    def _route_native(self, L, st, sn, fx, dy, hs, cr, mfix, mdyn, mcore, vst, vfx, vdy, vhs, vmfix, vmdyn,
+                      via_mask, ok_layer, lc, sc, li0s, start_dir, lig, goals, goal_dirs, hmap, hk, soft,
+                      pres, via_cost, bias, limit, box, tcost):
+        """maze_astar in _maze.c; NotImplemented when an input is of a kind it does not take."""
+        import ctypes as C
+        nx, ny, nl = self.nx, self.ny, len(L)
+        n = nx * ny
+        U8, F32 = C.POINTER(C.c_uint8), C.POINTER(C.c_float)
+        if bias is not None:
+            arrs = bias if isinstance(bias, list) else [bias] * nl
+            if not all(isinstance(a, array) and a.typecode == "f" for a in arrs):
+                return NotImplemented
+        keep = []
+
+        def u8(buf):
+            if buf is None:
+                return None
+            if isinstance(buf, bytes):
+                buf = bytearray(buf)
+            keep.append(buf)
+            return C.cast((C.c_uint8 * len(buf)).from_buffer(buf), U8)
+
+        def f32(buf):
+            keep.append(buf)
+            return C.cast((C.c_float * len(buf)).from_buffer(buf), F32)
+
+        def mask(cells):
+            m = bytearray(n)
+            for c in cells:
+                m[c] = 1
+            return m
+
+        def u8s(bufs):
+            return (U8 * nl)(*[u8(b) for b in bufs])
+
+        hc = getattr(self, "_hmap_cache", None)
+        if hc is None or hc[0] is not hmap:
+            hc = (hmap, array("i", hmap))
+            self._hmap_cache = hc
+        gc = getattr(self, "_goal_cache", None)
+        if gc is None or gc[0] is not goals:
+            gc = (goals, mask(goals))
+            self._goal_cache = gc
+        gd = 0
+        for g_ in (goal_dirs or ()):
+            gd |= (1 << g_) if 1 <= g_ <= 8 else (1 << 15)   # [99]: a via only -- no heading matches
+        bx = (C.c_int32 * 4)(*(box if box else (0, 0, nx - 1, ny - 1)))
+        srcs = (C.c_int32 * len(li0s))(*([sc] * len(li0s)))
+        sls = (C.c_int8 * len(li0s))(*li0s)
+        cap = 2 * n + 64
+        oc, ol, od = (C.c_int32 * cap)(), (C.c_int8 * cap)(), (C.c_int8 * cap)()
+        hm = hc[1]
+        r = _CORE.maze_astar(
+            C.c_int(nx), C.c_int(ny), C.c_int(nl), bx,
+            u8s(st), u8s(sn), u8s(fx), u8s(dy), (F32 * nl)(*[f32(h) for h in hs]), u8s(cr),
+            u8s([mask(m) for m in mfix]), u8s([mask(m) for m in mdyn]), u8s([mask(m) for m in mcore]),
+            u8(vst), u8(vfx), u8(vdy), f32(vhs), u8(mask(vmfix)), u8(mask(vmdyn)), u8(via_mask),
+            (C.c_uint8 * nl)(*[1 if k else 0 for k in ok_layer]), (C.c_double * nl)(*lc),
+            (C.c_double * 5)(*tcost),
+            C.c_int(1 if self.diagonal else 0), C.c_int(1 if soft else 0),
+            C.c_int(1 if self.static_exact else 0), C.c_int(1 if self.fix_exact else 0),
+            C.c_double(pres if soft else 0.0), C.c_double(via_cost), C.c_double(hk),
+            C.cast((C.c_int32 * n).from_buffer(hm), C.POINTER(C.c_int32)), u8(gc[1]), C.c_int(lig), C.c_int(gd),
+            srcs, sls, C.c_int(len(li0s)), C.c_int(start_dir),
+            (F32 * nl)(*[f32(a) for a in (bias if isinstance(bias, list) else [bias] * nl)]) if bias is not None else None,
+            C.c_long(int(limit)), oc, ol, od, C.c_long(cap))
+        if r == -2 or r == -1:
+            return NotImplemented                     # the Python search: path too long, or no memory
+        if r == 0:
+            return None
+        states = [(oc[k], ol[k], od[k]) for k in range(r)]
         runs, vias = [], []
         cur_l, cells = states[0][1], [states[0][0]]
         for c, li, _dr in states[1:]:

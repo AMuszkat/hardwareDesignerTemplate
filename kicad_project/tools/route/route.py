@@ -1173,9 +1173,11 @@ def copper_gates(B, S):
 def cmd_rules(a):
     """What the guide's table switches on, each with its source."""
     B = RBoard(a.board)
+    import maze
+    print(f"  router core: {maze.CORE}")
     p = Path(a.board) / guide.FILE
-    if not p.exists():
-        print(f"no {guide.FILE} in {Path(a.board).name}/: `check` runs KiCad's DRC only")
+    if not p.exists() and guide.handoff_rows(a.board) is None:
+        print(f"no {guide.FILE} in {Path(a.board).name}/ and no handoff/rules.json: `check` runs KiCad's DRC only")
         return 0
     print("\n".join(guide.describe(B.gates)))
     lo, src = edge_min(B)

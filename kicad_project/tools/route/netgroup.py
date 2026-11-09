@@ -178,6 +178,7 @@ def main():
                          "partial written (use this, not a `timeout` prefix)")
     a = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)   # a killed run's log ends at its last line, not its last buffer
+    print(f"router core: {maze.CORE}")
     t0 = time.monotonic()
     a.board = P.board_dir_arg(a.board)
 
