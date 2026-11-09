@@ -84,6 +84,7 @@ for vu, ss in byvia.items():
     if (only and vu not in only) or vu in skipv: continue
     v = next((x for x in b.GetTracks() if uid(x) == vu), None)
     if v is None: continue
+    K.thaw(); K.freeze()                          # scans cached until an edit: pushes (shove.Undo) and the apply below call K.changed()
     net = v.GetNetname(); r = v.GetWidth(pcbnew.F_Cu) // 2; vp = P(v.GetPosition())
     if any(sh(net).startswith(x) for x in SKIPNET): log(v, f'skipped: {sh(net)} (a net whose via places another rule fixes)'); continue
     segs, pads = VL.tables(b)
@@ -214,18 +215,21 @@ for vu, ss in byvia.items():
                 b.Add(n_); n_.SetNet(b.FindNet(net)); added.append(n_)
         for (n, p, l_, Cx, sz), wx in zip(FR, WL): add([Np, Cx], wx, l_)
         for t_o, path, ch in re: add(path, t_o.GetWidth(), t_o.GetLayer())
+        K.changed()
         b.BuildConnectivity(); now_open = b.GetConnectivity().GetUnconnectedCount(False)
         if now_open > OPEN[0]:
             for n_ in added: b.Remove(n_)
             for c in removed: b.Add(c)
             if moved: v.SetPosition(V(*vp))
-            UND.rollback(m0); b.BuildConnectivity(); reasons['opens a connection'] += 1; continue
+            K.changed(); UND.rollback(m0); b.BuildConnectivity(); reasons['opens a connection'] += 1; continue
         MOVES.append(dict(uuid=vu, net=sh(net), pad=pname, old=[mm(vp[0]), mm(vp[1])], new=[mm(Np[0]), mm(Np[1])], how=how))
         log(v, f'FIX {pname}: {how}; link w {mm(wl):.2f}; {len(re)} track(s) re-attached; {len(vpolys)} polygon(s) and {len(dup)} duplicate(s) removed'
                + (f'; PUSHED other nets: {npush} edit(s)' if npush else ''))
         done = True; break
+    K.thaw()
     if not done: log(v, f'HAND: {pname}: no legal place ({", ".join(f"{k} x{n}" for k, n in reasons.most_common(4))})')
 
+K.thaw()
 after = {segkey(t) for t in b.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T}
 vafter = {viakey(v) for v in b.GetTracks() if v.Type() == pcbnew.PCB_VIA_T}
 pafter = {polykey(d) for d in polys_all()}

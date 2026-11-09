@@ -45,6 +45,10 @@ repository (nothing here is written; the copy is deleted unless --keep):
   prelayout  tools/route/prelayout.py on tests/fixture_pcb.py --kind prelayout:
              the in-pad BGA fanout, the via-site shortage and the reversed
              bundle must each FAIL before any copper (R7)
+  vias       tools/copper/viafix.py on tests/fixture_pcb.py --kind vias, with
+             and without --push, each with its scan cache on and off
+             (HW_VF_CACHE=0): the same plan and report either way (R5), every
+             via fixed under --push and none by the 45-degree last resort
   lint       tools/lint_docs.py on the scratch copy after the publish
 
 A stage is PASS, FAIL or SKIP (a dependency this machine lacks, named). The
@@ -783,6 +787,48 @@ def stage_prelayout():
           + f" (exit {rc})", **{k.replace(" ", "_"): v for k, v in want.items()})
 
 
+def stage_vias():
+    t0 = time.time()
+    kpy = str(ROOT / "kicad_project" / "tools" / "kpy")
+    tmp = Path(tempfile.mkdtemp(prefix="vias-"))
+    res, bad = {}, []
+    try:
+        rc, out = run([kpy, str(ROOT / "tests" / "fixture_pcb.py"), str(tmp), "--kind", "vias"], ROOT)
+        if rc:
+            stage("vias", "FAIL", time.time() - t0, "fixture_pcb: " + tail(out))
+            return
+        for mode, extra in (("plain", []), ("push", ["--push"])):
+            got = {}
+            for cache in ("1", "0"):
+                t1 = time.time()
+                r = subprocess.run([kpy, str(ROOT / "kicad_project" / "tools" / "copper" / "viafix.py"),
+                                    "--pcb", str(tmp / "vias" / "vias.kicad_pcb"), "--out", str(tmp / f"{mode}{cache}")] + extra,
+                                   cwd=str(ROOT), capture_output=True, text=True, timeout=1800,
+                                   env=dict(os.environ, HW_VF_CACHE=cache))
+                out = (r.stdout or "") + (r.stderr or "")
+                m = re.search(r"(\d+) vias fixed, (\d+) left", out)
+                if r.returncode or not m:
+                    stage("vias", "FAIL", time.time() - t0, f"viafix {mode} cache={cache}: " + tail(out))
+                    return
+                plan = json.loads((tmp / f"{mode}{cache}.json").read_text())
+                plan.pop("group", None)
+                rep = (tmp / f"{mode}{cache}_report.txt").read_text()
+                got[cache] = dict(s=round(time.time() - t1, 2), fixed=int(m.group(1)), left=int(m.group(2)),
+                                  diag=rep.count("45-DEGREE"), pushed=rep.count("PUSHED"), rep=rep,
+                                  hash=hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()[:10])
+            if got["1"]["hash"] != got["0"]["hash"] or got["1"]["rep"] != got["0"]["rep"]:
+                bad.append(f"{mode}: plan {got['1']['hash']} cached, {got['0']['hash']} uncached")
+            res[mode] = dict(got["1"], s0=got["0"]["s"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ok = not bad and res["push"]["fixed"] == 48 and res["push"]["left"] == 0 and res["push"]["diag"] == 0
+    stage("vias", "PASS" if ok else "FAIL", time.time() - t0,
+          "; ".join(f"{k}: {v['fixed']} fixed, {v['left']} left, {v['diag']} by 45 degrees, {v['pushed']} pushed, "
+                    f"{v['s0']} s uncached -> {v['s']} s cached, plan {v['hash']}" for k, v in res.items())
+          + ("; DIFFER " + "; ".join(bad) if bad else "; the same plan and report with the cache off"),
+          **{f"{k}_{f}": v[f] for k, v in res.items() for f in ("s", "s0", "fixed", "left", "diag", "pushed", "hash")})
+
+
 def stage_lint(copy):
     t0 = time.time()
     rc, out = run([sys.executable, "tools/lint_docs.py"], copy)
@@ -829,6 +875,7 @@ def main():
         stage_snapshot(copy, kcli) if board else stage("snapshot", "SKIP", 0.0, "no board")
         stage_pcb_tools(pcb)
         stage_prelayout() if pcb else stage("prelayout", "SKIP", 0.0, "needs pcbnew")
+        stage_vias() if pcb else stage("vias", "SKIP", 0.0, "needs pcbnew")
         if board and kcli and pcb:
             stage_pcb(copy, board, a.quick)
         else:

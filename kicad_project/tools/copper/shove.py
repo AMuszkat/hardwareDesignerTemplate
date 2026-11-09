@@ -45,17 +45,19 @@ def configure():
     FROZEN_BOXES = list(K.FIELDS)
 
 class Undo:
+    """every board edit a push makes goes through here, so a frozen vfcore cache (K.freeze) is dropped with it"""
     def __init__(self): self.log = []
     def mark(self): return len(self.log)
-    def remove(self, it): K.b.Remove(it); self.log.append(('rm', it, None))
-    def add(self, it): K.b.Add(it); self.log.append(('add', it, None))
-    def move(self, v, p): self.log.append(('pos', v, K.P(v.GetPosition()))); v.SetPosition(K.V(*map(int, p)))
+    def remove(self, it): K.b.Remove(it); self.log.append(('rm', it, None)); K.changed()
+    def add(self, it): K.b.Add(it); self.log.append(('add', it, None)); K.changed()
+    def move(self, v, p): self.log.append(('pos', v, K.P(v.GetPosition()))); v.SetPosition(K.V(*map(int, p))); K.changed()
     def rollback(self, m=0):
         while len(self.log) > m:
             op, it, old = self.log.pop()
             if op == 'rm': K.b.Add(it)
             elif op == 'add': K.b.Remove(it)
             else: it.SetPosition(K.V(*old))
+        K.changed()
 
 class _Box:
     def __init__(self, x0, y0, x1, y1): self.x0, self.y0, self.x1, self.y1 = x0, y0, x1, y1
@@ -101,10 +103,8 @@ def _diag(u): return abs(abs(u[0]) - abs(u[1])) < 1e-3
 def _at(node, net, lid, excl):
     """what sits at a track end: (segments ending there, anchor: 'via' / 'pad' / 'tee' / None)"""
     ends = [o for o in K.tracks(net, lid) if K.uid(o) not in excl and (_same(K.P(o.GetStart()), node) or _same(K.P(o.GetEnd()), node))]
-    if any(x.Type() == pcbnew.PCB_VIA_T and x.GetNetname() == net and K.dist(K.P(x.GetPosition()), node) <= x.GetWidth(pcbnew.F_Cu) / 2
-           for x in K.b.GetTracks()): return ends, 'via'
-    if any(q.GetNetname() == net and q.IsOnLayer(lid) and q.GetEffectivePolygon(lid).Contains(K.V(*map(int, node)))
-           for f in K.b.GetFootprints() for q in f.Pads()): return ends, 'pad'
+    if any(K.dist(K.P(x.GetPosition()), node) <= x.GetWidth(pcbnew.F_Cu) / 2 for x in K.vias(net)): return ends, 'via'
+    if any(q.GetEffectivePolygon(lid).Contains(K.V(*map(int, node))) for q in K.pads(net, lid)): return ends, 'pad'
     if any(K.uid(o) not in excl and not (_same(K.P(o.GetStart()), node) or _same(K.P(o.GetEnd()), node)) and o.HitTest(K.V(*map(int, node)), 1)
            for o in K.tracks(net, lid)): return ends, 'tee'
     return ends, None
@@ -226,11 +226,12 @@ def push_track(T, shape, snet, keep, U, depth, dirn=None):
     # each offset size in turn, both kinds; a local bump first when the shape is short beside the track
     bbx = shape.BBox(); ext = max(abs(_dot((bbx.GetWidth(), 0), t)), abs(_dot((0, bbx.GetHeight()), t))) + abs(_dot((bbx.GetWidth(), bbx.GetHeight()), t))
     local = ext < 0.5 * K.dist(A, B)
-    k = 1; tries = []
+    k = 1; tries = []; was = K.freeze()           # the offsets are judged on one board state
     while k * STEP <= MAXPUSH + 1e-9:
         d = K.FM(k * STEP); k += 1; sv = (n[0] * d, n[1] * d)
         pair = [_bump(T, shape, sv, c), _geometry(T, sv)] if local else [_geometry(T, sv), _bump(T, shape, sv, c)]
         tries += [g for g in pair if g is not None]
+    if not was: K.thaw()
     for remove, new in tries:
         if time.time() > _deadline[0]: return False
         if any(_coll(pcbnew.SHAPE_SEGMENT(K.V(*map(int, p[0])), K.V(*map(int, p[1])), ww), shape, c - K.FM(0.001)) for p, ww in new): continue
@@ -240,7 +241,7 @@ def push_track(T, shape, snet, keep, U, depth, dirn=None):
         for pts, ww in new:
             if K.dist(pts[0], pts[1]) < 1: continue
             x = pcbnew.PCB_TRACK(K.b); x.SetStart(K.V(*map(int, pts[0]))); x.SetEnd(K.V(*map(int, pts[1]))); x.SetWidth(ww); x.SetLayer(lid)
-            U.add(x); x.SetNet(K.b.FindNet(net)); made.append((pts, ww))
+            U.add(x); x.SetNet(K.b.FindNet(net)); K.changed(); made.append((pts, ww))
         off = lambda q: abs(_dot(_sub(q, A), n))                 # distance from T's old line
         changed = [(pts, ww) for pts, ww in made if off(pts[0]) > 1000 or off(pts[1]) > 1000]   # T's untouched pieces cannot newly hit
         if _cascade(changed, net, lid, keep + [(shape, snet)], U, depth, dirn=n): return True
@@ -283,7 +284,7 @@ def push_via(X, shape, snet, keep, U, depth, hole=None, dirn=None):
             for i in range(len(path) - 1):
                 if path[i] == path[i + 1]: continue
                 x = pcbnew.PCB_TRACK(K.b); x.SetStart(K.V(*map(int, path[i]))); x.SetEnd(K.V(*map(int, path[i + 1]))); x.SetWidth(t.GetWidth()); x.SetLayer(t.GetLayer())
-                U.add(x); x.SetNet(K.b.FindNet(net)); made.append(((path[i], path[i + 1]), t.GetWidth(), t.GetLayer()))
+                U.add(x); x.SetNet(K.b.FindNet(net)); K.changed(); made.append(((path[i], path[i + 1]), t.GetWidth(), t.GetLayer()))
         ok = True
         for pts, ww, lid in made:
             if not _cascade([(pts, ww)], net, lid, keep + [(shape, snet)], U, depth, dirn=u): ok = False; break

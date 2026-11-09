@@ -24,6 +24,13 @@ configures them in routing/prelayout.json --
   * J4 -> J5, ten nets between two headers in reversed order: 45 inversions
     in a corridor declared to take none (board2's R5).
 
+`--kind vias` writes OUT_DIR/vias/ instead: the via fixer's workload
+(tools/copper/viafix.py) -- a grid of 0603 resistors, each with a via joined
+to pad 1 by a crooked link (or touching it), the via tied on B.Cu to a
+second via of its net, and other nets' tracks hemming every pad in, so no
+place on an axis is free: the candidate search of each via goes deep, and
+`--push` shoves tracks for most of them (the via-links skill's slow case).
+
 Every footprint is board-only, so the schematic-parity test has nothing to
 compare against the empty schematic and passes: DRC judges copper only.
 Deterministic: the same arguments write the same board.
@@ -215,13 +222,104 @@ def make_prelayout(out):
     return d
 
 
+def make_vias(out, n=48):
+    import pcbnew
+    d = Path(out) / "vias"
+    (d / "routing").mkdir(parents=True, exist_ok=True)
+    pcb = d / "vias.kicad_pcb"
+    for f in d.glob("vias.*"):
+        f.unlink()
+    b = pcbnew.NewBoard(str(pcb))
+    mm = pcbnew.FromMM
+    V = lambda x, y: pcbnew.VECTOR2I(mm(x), mm(y))
+    cols = 8
+    rows = (n + cols - 1) // cols
+    W, H = 6.0 + cols * 6.0, 6.0 + rows * 5.0
+    for (x0, y0), (x1, y1) in zip([(0, 0), (W, 0), (W, H), (0, H)], [(W, 0), (W, H), (0, H), (0, 0)]):
+        s = pcbnew.PCB_SHAPE(b)
+        s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        s.SetStart(V(x0, y0))
+        s.SetEnd(V(x1, y1))
+        s.SetLayer(pcbnew.Edge_Cuts)
+        s.SetWidth(mm(0.1))
+        b.Add(s)
+    nets = {}
+
+    def net(name):
+        if name not in nets:
+            ni = pcbnew.NETINFO_ITEM(b, name)
+            b.Add(ni)
+            nets[name] = ni
+        return nets[name]
+
+    def track(nm, layer, pts, w=0.2):
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            t = pcbnew.PCB_TRACK(b)
+            t.SetStart(V(ax, ay))
+            t.SetEnd(V(bx, by))
+            t.SetWidth(mm(w))
+            t.SetLayer(layer)
+            b.Add(t)
+            t.SetNet(net(nm))
+
+    def via(nm, x, y):
+        v = pcbnew.PCB_VIA(b)
+        v.SetPosition(V(x, y))
+        v.SetWidth(mm(0.6))
+        v.SetDrill(mm(0.3))
+        b.Add(v)
+        v.SetNet(net(nm))
+
+    lib = stock_dir()
+    for k in range(n):
+        cx, cy = 6.0 + (k % cols) * 6.0, 5.0 + (k // cols) * 5.0
+        f = pcbnew.FootprintLoad(str(lib / "Resistor_SMD.pretty"), "R_0603_1608Metric")
+        f.SetFPID(pcbnew.LIB_ID("Resistor_SMD", "R_0603_1608Metric"))
+        f.SetReference(f"R{k + 1}")
+        f.SetValue("R_0603")
+        f.SetBoardOnly(True)
+        b.Add(f)
+        f.SetPosition(V(cx, cy))
+        nm = f"N{k}"
+        p1, p2 = f.FindPadByNumber("1"), f.FindPadByNumber("2")
+        p1.SetNet(net(nm))
+        p2.SetNet(net(f"M{k}"))
+        px, py = pcbnew.ToMM(p1.GetPosition().x), pcbnew.ToMM(p1.GetPosition().y)
+        if k % 3 == 2:                         # a via touching its pad, no link
+            vx, vy = px - 0.65, py + 0.35
+        else:                                  # a crooked link: off-axis, not 45 degrees
+            vx, vy = px - 1.0, py - 0.55 - 0.05 * (k % 4)
+            track(nm, pcbnew.F_Cu, [(px, py), (vx, vy)])
+        via(nm, vx, vy)
+        via(nm, vx - 1.2, vy + 1.6)            # the anchor its B.Cu track runs back to
+        track(nm, pcbnew.B_Cu, [(vx, vy), (vx - 1.2, vy + 1.2), (vx - 1.2, vy + 1.6)])
+        # other nets hem pad 1 in, close enough that every place on an axis within reach is blocked by a track --
+        # a wall to its left and a roof above on F.Cu, a floor under the pad's column on B.Cu: a free place needs a
+        # push (--push) or the last-resort 45-degree link
+        track(f"WALL{k}", pcbnew.F_Cu, [(px - 1.45, cy - 2.2), (px - 1.45, cy + 2.0)])
+        track(f"ROOF{k}", pcbnew.F_Cu, [(px - 1.3, py - 1.15), (px + 2.2, py - 1.15)])
+        track(f"FLOOR{k}", pcbnew.B_Cu, [(px + 0.3, cy - 2.2), (px + 0.3, cy + 2.0)])
+    pcbnew.SaveBoard(str(pcb), b)
+    (d / "vias.kicad_sch").write_text(EMPTY_SCH)
+    (d / "general_routing_guide.md").write_text(
+        "# Routing guide (fixture)\n\n| rule | setting | source |\n|---|---|---|\n"
+        "| joints | 0/45 | fixture |\n| copper to edge | 0.5 mm | fixture |\n"
+        "| via to pad gap | 0.15 mm | fixture |\n| 45-degree via link | last resort | fixture |\n")
+    return d
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
     ap.add_argument("--nets", type=int, default=8)
-    ap.add_argument("--kind", choices=["router", "prelayout"], default="router")
+    ap.add_argument("--kind", choices=["router", "prelayout", "vias"], default="router")
     a = ap.parse_args()
-    print(make_prelayout(a.out) if a.kind == "prelayout" else make(a.out, a.nets))
+    if a.kind == "prelayout":
+        print(make_prelayout(a.out))
+    elif a.kind == "vias":
+        print(make_vias(a.out, a.nets if a.nets != 8 else 48))
+    else:
+        print(make(a.out, a.nets))
 
 
 if __name__ == "__main__":
