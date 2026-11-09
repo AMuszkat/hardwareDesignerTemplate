@@ -135,6 +135,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "place"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import place as P  # noqa: E402
 import maze  # noqa: E402
+import par  # noqa: E402  (tools/par.py, on the path maze put it)
 from corners import straighten  # noqa: E402
 
 
@@ -160,6 +161,18 @@ def main():
                     help="when negotiation stalls, re-route the overlapping nets one at a time, the rest hard")
     ap.add_argument("--limit", type=int, default=900000,
                     help="A* expansions per route; a big window hits the default and reads as 'walled in'")
+    ap.add_argument("--full", action="store_true",
+                    help="re-route every net every iteration (classic PathFinder, the pre-R2 result); default: "
+                         "only the nets that overlap, all of them when the overlap stalls")
+    ap.add_argument("--jacobi", action="store_true",
+                    help="route an iteration's nets in parallel, each against the iteration's starting "
+                         "congestion (a different convergence; HW_JOBS=1 gives the same plan)")
+    ap.add_argument("--seeds", type=int, default=1,
+                    help="negotiate each leg with seeds SEED..SEED+N-1 in parallel; the lowest seed that "
+                         "converges wins (the same plan with HW_JOBS=1)")
+    ap.add_argument("--corridor", type=float, default=0,
+                    help="mm: each net searches the box round its ends and last path, grown by this (or 30%% "
+                         "of its span), widened x2 until it routes; 0 (default): the whole window")
     ap.add_argument("--timeout", type=float, default=0,
                     help="seconds: stop between iterations when the next would not end inside it, "
                          "partial written (use this, not a `timeout` prefix)")
@@ -896,9 +909,40 @@ def main():
                 return f"--timeout {a.timeout:g} s: the next iteration (up to {clock[1]:.0f} s) would not end inside it"
             return None
 
-        paths = G.negotiate(jobs, iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
-                            hist_decay=a.hist_decay, seed=a.seed, layer_cost=S.get("layer_cost"),
-                            limit=a.limit, on_iter=on_iter)
+        opts = dict(iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
+                    hist_decay=a.hist_decay, layer_cost=S.get("layer_cost"), limit=a.limit,
+                    rip="full" if a.full else "conflict", corridor=a.corridor or None, jacobi=a.jacobi)
+        won = None
+        if a.seeds > 1:
+            # each seed negotiates in a forked child against the same frozen copper; the lowest seed
+            # that converges wins, whichever finished first -- so HW_JOBS=1 gives the same plan
+            def try_seed(sd, jobs=jobs):
+                # in-process (HW_JOBS=1) the seeds share G: each leaves it as it found it -- history
+                # costs restored, its nets unrouted -- so serial and forked runs see the same start
+                saved = {k: array("f", v) for k, v in G.hist.items()}
+                lines = []
+                p_ = G.negotiate(jobs, seed=sd, log=lines.append, **opts)
+                for jb_ in jobs:
+                    G.unroute(jb_["net"])
+                for k, v in saved.items():
+                    G.hist[k][:] = v
+                return p_, sum(1 for ln in lines if "iteration" in ln)
+            got = par.pmap(try_seed, [a.seed + k for k in range(a.seeds)], note=f"leg {stage + 1}: seeds")
+            for k, (p_, n_it) in enumerate(got):
+                print(f"   seed {a.seed + k}: {'converged' if p_ else 'no solution'} after {n_it} iteration(s)")
+            won = next(((a.seed + k, p_) for k, (p_, _n) in enumerate(got) if p_), None)
+        if won:
+            print(f"   seed {won[0]} taken (the lowest that converged)")
+            paths = won[1]
+            for n_, rv_ in paths.items():
+                G.unroute(n_)
+                G.lay(n_, *rv_)
+            G.last = (dict(paths), {})
+            write_partial(paths, {}, stage, 0, reach_rows, "running")
+        else:
+            if a.seeds > 1:
+                print(f"   no seed converged: seed {a.seed} again, with its partial and its stall report")
+            paths = G.negotiate(jobs, seed=a.seed, on_iter=on_iter, **opts)
         if paths is None and getattr(G, "last", None) and a.repair and not stopped:
             # REPAIR: negotiation left a few overlaps.  Re-route the nets involved one at a time
             # with everything else HARD (pres=None) -- a stall is often one net that simply has

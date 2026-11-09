@@ -98,7 +98,11 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
 1. **Gates** (`SUMMARY.md`): every FAIL is a finding with its lines. DRC
    violations and schematic-parity problems are listed by type and count;
    *unconnected* is a finding only for the groups the scope says are routed.
-   A Board Setup difference from `14_fab.md` is always `must`. A placement
+   A Board Setup difference from `14_fab.md` is always `must`. A group
+   `ROUTING_PLAN.md` §5 says was built while an earlier change was under
+   review: check its *independent of* claim (no shared corridor, none of
+   that change's reserved copper, no part it touched); a false claim is
+   `must`. A placement
    request quotes `tools/route/prelayout.py`'s lines (in `REVIEW.md`): a
    FAIL or TODO there, or a request that lacks them, is `must` — the
    routing it would block has not started yet.

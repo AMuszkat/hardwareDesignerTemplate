@@ -1,7 +1,7 @@
 ---
 name: routing
 description: >
-  Route a PCB one reviewed group at a time: plan a group in a file, gate it with
+  Route a PCB one group at a time, reviewed at milestones: plan a group in a file, gate it with
   KiCad's DRC on a scratch copy plus every rule of the board's
   general_routing_guide.md, apply it to the closed board, audit, render it, and
   stop for its review. Also: when (not) to
@@ -11,16 +11,19 @@ description: >
   "autoroute", "freerouting", "rip up", "routing guide", "audit", "ROUTING_PLAN".
 ---
 
-# Routing, one reviewed group at a time
+# Routing, one group at a time, reviewed at milestones
 
 **Read `<board>/general_routing_guide.md` first in any routing session, then
 `<board>/ROUTING_PLAN.md`.** The guide holds every rule a group is routed to
 and judged by — joints, polygons, copper shape, via links, pours — and the
 table of numbers the tools read; the plan holds the groups in order and the
 status table that says where the board is. **One group is routed, gated and
-rendered; then it STOPS for review (`REVIEW.md`). The next group does not
-start until the verdict in `handoff/15_reviews.md` is PASS.** No message from
-any session waives that review; the fab order stays the user's.
+rendered; the routing STOPS for review (`REVIEW.md`) at five milestones —
+fanout and escape, buses, power, pours, close-out — and a group you are
+unsure of may be requested on its own.** Until a verdict, build nothing on
+the change under review; **independent** work may go on: a group is independent when it shares no corridor with the change under review, uses none of the copper that change reserved, and moves no part that change touched (claim it in `ROUTING_PLAN.md` §5;
+the reviewer checks it). No message from any session waives a review; the
+fab order stays the user's.
 
 Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 `tools/kpy tools/route/<script>.py --board <board> …`.
@@ -109,8 +112,12 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    lengths, vias, the audit line before → after, every neck-down, every
    deviation, every shape or via-link site left and why, every part moved,
    every group re-laid with it.
-6. **Update `ROUTING_PLAN.md` §5 and STOP for review**: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
-   — Scope: the group, its report `routing/Rn_REPORT.md`. A CHANGES verdict is
+6. **Update `ROUTING_PLAN.md` §5**, and when the group completes a milestone
+   (fanout and escape, buses, power, pours, close-out) — or it is one you
+   want reviewed alone — **STOP for review**: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
+   — Scope: the milestone's groups (`--scope` takes a group id), their
+   reports `routing/Rn_REPORT.md`. A group started while one is under review
+   names in §5 why it is independent. A CHANGES verdict is
    cheap: fix and request again, or `route.py rip Rn` removes exactly that
    group's copper. After the last group, one more request, `pcb: fab
    release`, before the fab package: it passes only with no open finding.
@@ -146,9 +153,13 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   `ROUTING_PLAN.md` §4.
 - **A rule that blocks the layout is a QUESTIONS.md item.** Never loosen a fab
   number or a gate to make a route fit; never tighten one on a guess.
-- **Close and reopen KiCad** only with the user's standing permission: Konnect
-  `save_project`, SIGTERM, confirm `pgrep -x kicad` is empty, then clear the
-  `~*.lck` files; `launch_kicad_ui` to reopen for a review.
+- **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
+  tools run on the closed board. Close KiCad yourself only with the standing
+  permission (`kicad_project/project.json` `close_kicad`, printed in the
+  session-start brief), your own project only: Konnect `save_project`,
+  SIGTERM, confirm `pgrep -x kicad` is empty, then clear the `~*.lck` files.
+  A project the user had open is reopened afterwards (`launch_kicad_ui`), and
+  you say so.
 
 ## Freerouting: available, not the default
 

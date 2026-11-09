@@ -56,7 +56,12 @@ What it took to make it converge (each line is a failure without it):
 import heapq
 import math
 import random
+import sys
 from array import array
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import par  # noqa: E402  (tools/par.py: fork, results in job order)
 
 CLR = 0.15        # between the nets this router lays (Default class)
 PADCLR = 0.20     # to foreign pads and copper (the strictest class on the board)
@@ -319,15 +324,18 @@ class Grid:
 
     def route(self, net, src, src_layer, goals, goal_layer, allowed,
               via_cost=2.0, turn=0.4, limit=900000, pres=None, hmap=None,
-              layer_cost=None, via_mask=None, bias=None, start_dir=0, goal_dirs=None):
+              layer_cost=None, via_mask=None, bias=None, start_dir=0, goal_dirs=None, box=None):
         """goals: a cell, an (x, y) or a set of cells, all on goal_layer.
         pres=None: other nets' routed copper is an obstacle.  pres=p: it costs
         p per net overlapped, plus the cell's history (negotiation).
         start_dir: the heading the net ARRIVES at src with (its connector's last
         leg), so the first step obeys the turn rule too; 0 = free (a pad, a via).
         goal_dirs: headings the route may arrive at a goal with -- the copper
-        beyond the goal has a direction, and the joint there is a joint."""
+        beyond the goal has a direction, and the joint there is a joint.
+        box: (i0, j0, i1, j1) cell bounds the search may not leave (a corridor)."""
         nx, ny, step = self.nx, self.ny, self.step
+        bi0, bj0, bi1, bj1 = (max(0, box[0]), max(0, box[1]), min(nx - 1, box[2]), min(ny - 1, box[3])) \
+            if box else (0, 0, nx - 1, ny - 1)
         L = self.layers
         if isinstance(goals, tuple):
             goals = {self.cell(*goals)}
@@ -393,7 +401,7 @@ class Grid:
             xc = xd_l.get(c) if xd_l else None
             for di, dj, nd in moves:
                 ni, nj = i + di, j + dj
-                if not (0 <= ni < nx and 0 <= nj < ny):
+                if not (bi0 <= ni <= bi1 and bj0 <= nj <= bj1):
                     continue
                 nc = nj * nx + ni
                 if s_l[nc]:
@@ -604,13 +612,57 @@ class Grid:
                         seen.add((c, l2)); dq.append((c, l2))
         return seen
 
+    def _route_in_corridor(self, jb, prev, corridor, **kw):
+        args = (jb["net"], jb["src"], jb["src_layer"], jb["goals"], jb["goal_layer"], jb["allowed"])
+        opt = dict(via_mask=jb.get("via_mask"), bias=jb.get("bias"), start_dir=jb.get("start_dir", 0),
+                   goal_dirs=jb.get("goal_dirs"), **kw)
+        if not corridor:
+            return self.route(*args, **opt)
+        nx = self.nx
+        cells = [self.cell(*jb["src"])] + list(jb["goals"])
+        if prev:
+            cells += [c for _l, run in prev[0] for c in run] + list(prev[1])
+        ii, jj = [c % nx for c in cells], [c // nx for c in cells]
+        span = max(max(ii) - min(ii), max(jj) - min(jj))
+        m = max(int(corridor / self.step + 0.5), int(0.3 * span))
+        while True:
+            box = (min(ii) - m, min(jj) - m, max(ii) + m, max(jj) + m)
+            res = self.route(*args, box=box, **opt)
+            whole = box[0] <= 0 and box[1] <= 0 and box[2] >= nx - 1 and box[3] >= self.ny - 1
+            if res is not None or whole:
+                return res
+            m *= 2
+
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
-                  log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, **kw):
+                  log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4,
+                  corridor=None, jacobi=False, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
         Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
         after every iteration; a truthy return (a reason) stops an unconverged run there.
-        self.walled names the net that had no path at all (None otherwise)."""
+        self.walled names the net that had no path at all (None otherwise).
+
+        rip="conflict" (the default): after iteration 1 only the nets that overlap another are
+        ripped up and routed again -- the rest keep their paths, and their cells' rising
+        present and history costs still push the others round them.  When the overlap count has
+        not fallen for `stall` iterations, one iteration re-routes every net (a net that does
+        not overlap may have to move to make room).  rip="full" re-routes every net every
+        iteration (classic PathFinder; the result the router gave before conflict-only rip-up).
+        Deterministic per seed either way.
+
+        corridor=M (mm): each net's search stays inside the box round its source, its goals
+        and its previous path, grown by max(M, 30 % of the source-goal distance); a net that
+        finds no path there tries again in a box twice as wide, up to the whole window, so a
+        corridor never walls a net in that the window would not.  None: the whole window.
+
+        jacobi=True: the nets of one iteration are routed in parallel (tools/par.py, forked),
+        each against the congestion the iteration STARTED with -- not against the nets routed
+        before it in the same iteration (Gauss-Seidel, the default).  A different convergence:
+        two nets may both take the same free lane and meet there next iteration.  The same
+        result with HW_JOBS=1: a net routed in-process restores its old path before the next."""
         self.walled = None
+        if rip not in ("conflict", "full"):
+            raise ValueError(f"rip must be 'conflict' or 'full', got {rip!r}")
+        bad, best, since, full_next = {}, None, 0, False
         allgoals = set()
         for jb in jobs:
             allgoals |= set(jb["goals"])
@@ -622,13 +674,35 @@ class Grid:
         for it in range(1, iters + 1):
             if it > 1:
                 rnd.shuffle(jobs)                 # a fixed order lets two nets swap places for ever
-            for jb in jobs:
+            full = rip == "full" or it == 1 or full_next
+            full_next = False
+            todo = [jb for jb in jobs if full or jb["net"] not in paths or bad.get(jb["net"])]
+            if jacobi:
+                def one(jb, pres=pres):
+                    n = jb["net"]
+                    old = paths.get(n)
+                    self.unroute(n)
+                    res = self._route_in_corridor(jb, old, corridor, pres=pres, hmap=hm, **kw)
+                    self.unroute(n)
+                    if old:
+                        self.lay(n, *old)          # the next net sees the iteration's starting congestion
+                    return res
+                results = par.pmap(one, todo)
+                for jb, res in zip(todo, results):
+                    n = jb["net"]
+                    if res is None:
+                        log(f"   iteration {it}: {n} has no path even through the others -- walled in")
+                        self.walled = n
+                        return None
+                for jb, res in zip(todo, results):
+                    n = jb["net"]
+                    self.unroute(n)
+                    paths[n] = res
+                    self.lay(n, *res)
+            for jb in ([] if jacobi else todo):
                 n = jb["net"]
                 self.unroute(n)
-                res = self.route(n, jb["src"], jb["src_layer"], jb["goals"], jb["goal_layer"],
-                                 jb["allowed"], pres=pres, hmap=hm, via_mask=jb.get("via_mask"),
-                                 bias=jb.get("bias"), start_dir=jb.get("start_dir", 0),
-                                 goal_dirs=jb.get("goal_dirs"), **kw)
+                res = self._route_in_corridor(jb, paths.get(n), corridor, pres=pres, hmap=hm, **kw)
                 if res is None:
                     log(f"   iteration {it}: {n} has no path even through the others -- walled in")
                     self.walled = n
@@ -638,7 +712,14 @@ class Grid:
             bad = {n: self.conflicts(n, *paths[n]) for n in paths}
             nbad = sum(1 for v in bad.values() if v)
             ncell = sum(len(v) for v in bad.values())
-            log(f"   iteration {it}: pres {pres:.2f}, {nbad} nets overlap on {ncell} cells")
+            log(f"   iteration {it}: pres {pres:.2f}, {nbad} nets overlap on {ncell} cells"
+                + (" (all nets re-routed)" if full and rip != "full" and it > 1 else ""))
+            if best is None or ncell < best:
+                best, since = ncell, 0
+            else:
+                since += 1
+                if since >= stall:
+                    full_next, since = True, 0
             self.last = (dict(paths), bad)
             stop = on_iter(it, paths, bad) if on_iter else None
             if not ncell:

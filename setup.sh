@@ -4,7 +4,7 @@
 #   ./setup.sh check                         every requirement, exit 1 on a missing one
 #   ./setup.sh install                       the project-local parts (venvs, freerouting,
 #                                            API key file, per-machine settings)
-#   ./setup.sh init <ProjectName> [--permission-mode MODE] [--kicad-python PATH]
+#   ./setup.sh init <ProjectName> [--permission-mode MODE] [--kicad-python PATH] [--close-kicad yes|no]
 #                                            name the project and its sessions
 #   ./setup.sh new-board <N> <slug> "<Title>" [--fab PROFILE]
 #                                            create boardN_<slug> on both sides, publish rev 1
@@ -132,13 +132,13 @@ KEYS
 
 cmd_init() {
   local name="${1:-}"; shift || true
-  [ -n "$name" ] || { echo "usage: ./setup.sh init <ProjectName> [--permission-mode MODE] [--kicad-python PATH]" >&2; exit 2; }
-  local mode="" kpy=""
+  [ -n "$name" ] || { echo "usage: ./setup.sh init <ProjectName> [--permission-mode MODE] [--kicad-python PATH] [--close-kicad yes|no]" >&2; exit 2; }
+  local mode="" kpy="" close=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --permission-mode|--kicad-python)
+      --permission-mode|--kicad-python|--close-kicad)
         [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
-        if [ "$1" = --permission-mode ]; then mode="$2"; else kpy="$2"; fi
+        case "$1" in --permission-mode) mode="$2" ;; --kicad-python) kpy="$2" ;; *) close="$2" ;; esac
         shift 2 ;;
       *) echo "unknown option $1" >&2; exit 2 ;;
     esac
@@ -157,8 +157,15 @@ cmd_init() {
     done
   fi
   [ -n "$kpy" ] || { echo "WARNING: no Python that imports pcbnew found; pass --kicad-python" >&2; kpy=/usr/bin/python3; }
+  # The board sessions work headless: they close KiCad (their own project, saved first) for every
+  # closed-board step. Asked once here, recorded in project.json, printed in every board session's brief.
+  if [ -z "$close" ] && [ -t 0 ] && ! grep -q '"close_kicad"' "$KP/project.json" 2>/dev/null; then
+    read -r -p "May a board session close KiCad by itself (its own project, after saving)? [y/N] " ans
+    case "$ans" in [yY]*) close=yes ;; *) close=no ;; esac
+  fi
   args=(init "$name" --kicad-python "$kpy")
   [ -n "$mode" ] && args+=(--permission-mode "$mode")
+  [ -n "$close" ] && args+=(--close-kicad "$close")
   python3 "$KP/tools/session/relay.py" "${args[@]}"
   cmd_render
   [ -d .git ] || git init -q && echo "git repository: $(git rev-parse --show-toplevel)"

@@ -305,20 +305,28 @@ def main():
             bad |= rc2 != 0
         say("fanout", ref, "FAIL" if bad else "PASS", "; ".join(w for w in why if w))
 
+    # escape_bound per BGA per layer and pourreach per layer are independent child processes:
+    # run together (threads only wait on them), reported in the spec's order
+    jobs = []
     for c in S.get("escape", []):
         tgt = f"{c['ref']}/{c['layer']}"
-        if waive("escape", tgt):
-            continue
-        rc, out = tool("escape_bound.py", ["--board", board, "--ref", c["ref"], "--layer", c["layer"], *c.get("args", [])],
-                       board)
-        say("escape", tgt, "PASS" if rc == 0 else "FAIL", last(out, r"bound|BOUND|excluded|short") or f"exit {rc}")
-
+        if not waive("escape", tgt):
+            jobs.append(("escape", tgt, "escape_bound.py",
+                         ["--board", board, "--ref", c["ref"], "--layer", c["layer"], *c.get("args", [])],
+                         r"bound|BOUND|excluded|short"))
     for c in S.get("pourreach", []):
         tgt = c["layer"]
-        if waive("pourreach", tgt):
-            continue
-        rc, out = tool("pourreach.py", ["--board", board, "--layer", c["layer"], *c.get("args", [])], board)
-        say("pourreach", tgt, "PASS" if rc == 0 else "FAIL", last(out, r"POURREACH") or f"exit {rc}")
+        if not waive("pourreach", tgt):
+            jobs.append(("pourreach", tgt, "pourreach.py", ["--board", board, "--layer", c["layer"], *c.get("args", [])],
+                         r"POURREACH"))
+    if jobs:
+        from concurrent.futures import ThreadPoolExecutor
+        import os
+        n = int(os.environ.get("HW_JOBS") or 0) or (os.cpu_count() or 1)
+        with ThreadPoolExecutor(max_workers=max(1, n)) as ex:
+            outs = list(ex.map(lambda j: tool(j[2], j[3], board), jobs))
+        for (test, tgt, _s, _a, pat), (rc, out) in zip(jobs, outs):
+            say(test, tgt, "PASS" if rc == 0 else "FAIL", last(out, pat) or f"exit {rc}")
 
     # fine-pitch rows
     conf = defaultdict(list)

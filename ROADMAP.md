@@ -58,6 +58,12 @@ fixtures (the `pcb` stage's board is `tests/fixture_pcb.py`'s).
 | H1 | Phase 1 PR | the guide's handoff rows written with no typing; a hand edit in the block fails the snapshot |
 | H2 | Phase 1 PR | a new board's `placement.json` passes `place.py check` after `place.py seed`, no hand edit |
 | S1, S3 | Phase 1 PR | draw 4.4 s, zero Konnect calls (the fixture plan replaces 54); every gate passes; a redraw keeps 16 symbol and 2 sheet UUIDs; `schupdate` re-links 0 of 15 |
+| R2 | Phase 2 PR | 16 nets: 14 iterations in 21 s (52.5 s full re-route, same count); PCB fixture plan identical, 29 s → 21 s; `--full` keeps the old hashes |
+| R3 | Phase 2 PR | opt-in (`--corridor`): identical plans, no measurable gain on the fixtures — A* already searches tightly there |
+| R5 | Phase 2 PR | `--seeds 4`: 82.7 s → 27.4 s, plan identical serial / forked; `--jacobi`: 16 nets 11.8 s on 8 cores, a different convergence; prelayout jobs concurrent. Not done: viafix's candidate search |
+| V1 | Phase 2 PR | the six files say one rule: milestones, a group on request, independence defined and claimed in `ROUTING_PLAN.md` §5 |
+| X1 | Phase 2 PR | `close_kicad` in `project.json`, asked once by `setup.sh init`, printed in every board brief |
+| X2 (B) | Phase 2 PR | `bin/board` and `bin/concept` print the relay-off line when a board exists; D waits, as decided |
 
 ## Phase 0 — hours each, no behaviour change
 

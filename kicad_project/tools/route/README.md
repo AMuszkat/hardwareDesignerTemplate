@@ -1,9 +1,9 @@
 # `tools/route` — routing, one reviewed group at a time
 
 **Yours**, like `tools/place` and `tools/fp`. A board is routed in the groups
-`<board>/ROUTING_PLAN.md` lists, and **every group is reviewed before the
-next one starts** (the board's `REVIEW.md`; the verdict in
-`handoff/15_reviews.md`). These tools make a group cheap to propose, judge and undo.
+`<board>/ROUTING_PLAN.md` lists, **reviewed at milestones** — fanout and
+escape, buses, power, pours, close-out — and a group alone on request (the
+board's `REVIEW.md`; the verdict in `handoff/15_reviews.md`). These tools make a group cheap to propose, judge and undo.
 The workflow is the `routing` skill.
 
     tools/kpy tools/route/route.py status --board board1 [--nets]
@@ -334,6 +334,35 @@ its docstring. What the spec has to be told:
   through which the only exits need a 90-degree turn (board2's R5: a
   pre-routed lane hard against the via row). Draw the fixed copper with
   `view.py` and free the lane; more `--limit` does not help.
+- **Only the overlapping nets are ripped up** after the first iteration
+  (conflict-only PathFinder): the others keep their paths, and the rising
+  cost of the contested cells moves the overlapping nets round them. When
+  the overlap has not fallen for 4 iterations, one iteration re-routes every
+  net. `--full` re-routes every net every iteration — the router's result
+  before this, for a run that must reproduce an old plan. On the agentic
+  fixtures: 16 nets 52.5 s → 21 s in the same 14 iterations; the PCB
+  fixture's plan identical, 29 s → 21 s. Deterministic per seed either way.
+- **`--seeds N` tries N seeds at once** (forked, `tools/par.py`): every
+  seed negotiates the leg against the same frozen copper and the LOWEST seed
+  that converges is taken, whichever finished first — the same plan with
+  `HW_JOBS=1`, and seed 1's plan when seed 1 converges. When none does, seed
+  `--seed` runs again with its partial and stall report. On the PCB fixture
+  four seeds cost one run's wall clock (82.7 s serial, 27.4 s forked).
+- **`--jacobi` routes an iteration's nets in parallel**, each against the
+  congestion the iteration started with. A different convergence, not a
+  faster same one: two nets can take the same free lane and meet again next
+  iteration. On the 16-net router fixture it took 30 iterations (14
+  default) yet finished in 11.8 s on 8 cores (21 s default); on the PCB
+  fixture 41 iterations (3 default), 61 s against 21 s. Try it on a big
+  group that converges slowly; the same plan with `HW_JOBS=1`.
+- **`--corridor MM` bounds each net's search** to the box round its ends and
+  its last path, grown by MM (or 30 % of its span), doubled until it routes,
+  up to the whole window — so a corridor never walls in a net the window
+  would not. It is OFF by default: on the agentic fixtures (16 nets across a
+  funnel; the same bundle in a 90 x 70 mm window) A* already searched
+  tightly, the plans were identical and the time within noise. Use it when a
+  big window's nets hit `--limit` and read as walled in; a corridor can also
+  trade a better detour outside it for a worse path inside, so compare.
 - **Bound a run with `--timeout S`, not a `timeout` prefix.** It stops
   between iterations when the next one (sized by the slowest so far) would not
   end inside S seconds, prints the contested cells and `reach` per net, and
