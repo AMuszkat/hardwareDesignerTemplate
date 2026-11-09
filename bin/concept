@@ -9,5 +9,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 relay="$root/kicad_project/tools/session/relay.py"
 name="$(python3 "$relay" name concept)"
 mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("permission_mode","default"))' "$root/kicad_project/project.json")"
+# The relay off with boards to build means the user carries every ring by hand: say so, once, at start.
+if ! python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled") else 1)' "$root/kicad_project/relay.json" 2>/dev/null \
+   && ls -d "$root/kicad_project"/board[0-9]*_*/ >/dev/null 2>&1; then
+  echo "relay OFF: you carry every review ring, answer and question between the sessions by hand." \
+       "bin/relay on lets them ring each other (kicad_project/RELAY_PROTOCOL.md)." >&2
+fi
 cd "$root"
 exec claude -n "$name" --permission-mode "$mode" --chrome "$@"

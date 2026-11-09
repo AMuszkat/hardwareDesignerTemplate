@@ -26,6 +26,12 @@ if [ -z "$folder" ]; then
 fi
 name="$(python3 "$kp/tools/session/relay.py" name "$board")"
 mode="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("permission_mode","default"))' "$kp/project.json")"
+# The relay off with boards to build means the user carries every ring by hand: say so, once, at start.
+if ! python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("enabled") else 1)' "$kp/relay.json" 2>/dev/null \
+   && ls -d "$kp"/board[0-9]*_*/ >/dev/null 2>&1; then
+  echo "relay OFF: you carry every review ring, answer and question between the sessions by hand." \
+       "bin/relay on lets them ring each other (kicad_project/RELAY_PROTOCOL.md)." >&2
+fi
 cd "$kp"
 export HW_BOARD="$board"
 if [ $# -eq 0 ]; then
