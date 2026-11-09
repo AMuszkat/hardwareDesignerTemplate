@@ -235,14 +235,26 @@ serial commit; `pack.py` restarts. **Done when:** `HW_JOBS=1` and parallel
 give identical plans for every sequential mode. **Size:** 2–3 days.
 **Gate:** tool.
 
-**X1 · The board session is headless by default.** `place.py apply`,
-`route.py apply` and `rip`, `labels`, `schupdate.py` and `board_setup.py
-apply` already want KiCad closed; with S1 the GUI is the user's viewer only.
-A standing permission to close KiCad is recorded once in
-`kicad_project/project.json` and read by the skills, instead of being asked
-every session. **Where:** `setup.sh init`, `project.json`, the `board-setup`,
-`placement`, `routing` skills, `kicad_project/CLAUDE.md`. **Size:** half a
-day. **Gate:** user.
+**X1 · The board session is headless by default.** Decided 2026-11-09
+(option C). The `pcbnew` scripts on the closed board are the normal path for
+every PCB step (`board_setup.py apply`, `place.py apply`, `route.py apply`
+and `rip`, `labels`, `silk`, `schupdate.py`, `refresh.py`); KiCad is opened
+only for a step that needs Konnect under the rule table of S1 (an
+interactive move, a one-off schematic fix, a library refresh) or because the
+user wants to look. A standing permission to close KiCad is recorded once in
+`kicad_project/project.json` by `setup.sh init` and printed in the
+session-start brief, instead of being asked per board and kept in
+`ROUTING_PLAN.md` §4. The guard stays in full and no permission waives it:
+close only after `get_project_info` shows this session's own project, only
+after `save_project`, by SIGTERM, lock files cleared only once no KiCad
+process remains; another board's project open means do nothing and tell the
+user. A session that closed a project the user had open reopens it after
+its closed-board step and says so. **Where:** `setup.sh init`,
+`project.json`, `tools/session/relay.py brief`, the `board-setup`,
+`placement`, `routing` skills, `kicad_project/CLAUDE.md` (the same paragraph
+S1 rewrites), the `ROUTING_PLAN.md` scaffold §4. **Done when:** a board is
+placed and routed through the scripts with KiCad opened only by the user.
+**Size:** half a day. **Gate:** decided — now tool.
 
 **X2 · The relay during a build.** The switch stays the user's. `bin/board`
 and `bin/concept` print one line when it is off, since with it off the user
