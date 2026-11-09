@@ -670,7 +670,7 @@ def main():
             if lay != "F.Cu":                 # a via of its own (an F.Cu candidate is a pad: no via in it)
                 G.unblock(["via"], {G.cell(x, y)})
             job = dict(net=n, src=(x, y), src_layer=lay, goals=leg_goals(leg0), start_dir=0)
-            r, hit = reach(G, job, LAYERS)
+            r, hit, _cap = reach(G, job, LAYERS, cap=0)     # only "does it reach": stop at the first goal cell
             if hit:
                 chosen = (x, y, lay)
                 break
@@ -712,8 +712,8 @@ def main():
     def reach_table(jobs):
         rows = {}
         for j in jobs:
-            r, hit = reach(G, j, LAYERS)
-            rows[j["net"]] = dict(cells=r, goals_hit=hit, goals=len(j["goals"]))
+            r, hit, capped = reach(G, j, LAYERS)
+            rows[j["net"]] = dict(cells=r, goals_hit=hit, goals=len(j["goals"]), capped=capped)
         return rows
 
     li_plane = LAYERS.index(pl["layer"]) if pl else None
@@ -982,7 +982,8 @@ def main():
                 reach_rows.update(reach_table(jobs))
             for j in jobs:
                 r_ = reach_rows[j["net"]]
-                print(f"   {j['net']:12s} reaches {r_['cells']} cells; {r_['goals_hit']} of {r_['goals']} goal cells")
+                print(f"   {j['net']:12s} reaches {r_['cells']}{'+' if r_.get('capped') else ''} cells; "
+                      f"{r_['goals_hit']}{'+' if r_.get('capped') else ''} of {r_['goals']} goal cells")
             print("STOPPED at the timeout" if stopped else "NO SOLUTION at this leg")
             if last or out:                   # frozen legs + the last iteration, for a look (never for a gate)
                 write_partial(last, bad, stage, itn[0], reach_rows,
@@ -1128,14 +1129,23 @@ def main():
     return 0
 
 
-def reach(G, job, LAYERS):
+REACH_CAP = 20000
+
+
+def reach(G, job, LAYERS, cap=REACH_CAP):
     """Flood fill from a job's source ignoring the other routed nets and the turn
-    rule: separates 'contested' from 'walled in'."""
+    rule: separates 'contested' from 'walled in'.  (cells, goal cells hit, capped):
+    the flood stops once it holds a goal cell and `cap` cells -- an open net is
+    told by "20000+" as well as by its whole window (a big window's flood was most
+    of a converging run's time: 12 of 16 s on tests/fixture_pcb.py --kind sparse)."""
     li = {k: i for i, k in enumerate(LAYERS)}
     own = G._own(job["net"])
     sl = job["src_layer"]
     starts = [(G.cell(*job["src"]), li[k]) for k in ([sl] if isinstance(sl, str) else sl)]
     seen, dq, nx, ny = set(starts), collections.deque(starts), G.nx, G.ny
+    gl = li[job.get("goal_layer", "F.Cu")]
+    goals = {(c, gl) for c in job["goals"]}
+    hit = len(goals & seen)
 
     def free(c, key):
         if G.static[key][c]:
@@ -1144,6 +1154,8 @@ def reach(G, job, LAYERS):
         return not (f and not (f == 1 and c in own["fixed"][key]))
 
     while dq:
+        if hit and len(seen) >= cap:          # reaches its goal (some goal cells sit where no flood goes) and is open
+            return len(seen), hit, True
         c, l = dq.popleft()
         i, j = c % nx, c // nx
         for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
@@ -1152,12 +1164,13 @@ def reach(G, job, LAYERS):
                 nc = nj * nx + ni
                 if free(nc, LAYERS[l]) and (nc, l) not in seen:
                     seen.add((nc, l)); dq.append((nc, l))
+                    hit += (nc, l) in goals
         if free(c, "via"):
             for l2 in range(len(LAYERS)):
                 if l2 != l and free(c, LAYERS[l2]) and (c, l2) not in seen:
                     seen.add((c, l2)); dq.append((c, l2))
-    gl = li[job.get("goal_layer", "F.Cu")]
-    return len(seen), sum(1 for c in job["goals"] if (c, gl) in seen)
+                    hit += (c, l2) in goals
+    return len(seen), hit, False
 
 
 if __name__ == "__main__":

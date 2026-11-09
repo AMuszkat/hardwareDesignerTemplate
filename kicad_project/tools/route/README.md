@@ -327,7 +327,10 @@ its docstring. What the spec has to be told:
 - **`reach()` separates contested from walled in.** When negotiation stalls it
   floods each net's reachable cells; a net that reaches a few dozen against tens
   of thousands for the others is a placement or fanout defect to report, not a
-  route to keep negotiating for.
+  route to keep negotiating for. The flood stops once it holds a goal cell and
+  20 000 cells (printed "20000+", `capped` in the partial): an open net needs
+  no more, and flooding a 100 × 70 mm window per net was most of a converging
+  run's time (12 of 16 s on `tests/fixture_pcb.py --kind sparse`).
 - **"walled in" with a big `reach` is the turn rule, not a wall.** `reach()`
   ignores the 0/45 joint rule; A* does not. A via that reaches 80 000 cells and
   still has "no path even through the others" is boxed in by fixed copper

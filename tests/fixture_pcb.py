@@ -24,6 +24,12 @@ configures them in routing/prelayout.json --
   * J4 -> J5, ten nets between two headers in reversed order: 45 inversions
     in a corridor declared to take none (board2's R5).
 
+`--kind sparse` writes OUT_DIR/sparse/ instead: local nets in a big window
+(the corridor search's case, ROADMAP R3) -- a 100 x 70 mm board, four
+bundles of N/2 nets, each between two 1 x N/2 headers 14 mm apart in its own
+quadrant, in reversed order (every pair crosses), and the spec's window the
+whole board, so an unbounded A* may wander 100 mm for a 14 mm net.
+
 `--kind vias` writes OUT_DIR/vias/ instead: the via fixer's workload
 (tools/copper/viafix.py) -- a grid of 0603 resistors, each with a via joined
 to pad 1 by a crooked link (or touching it), the via tied on B.Cu to a
@@ -222,6 +228,64 @@ def make_prelayout(out):
     return d
 
 
+def make_sparse(out, n=16):
+    import pcbnew
+    d = Path(out) / "sparse"
+    (d / "routing").mkdir(parents=True, exist_ok=True)
+    pcb = d / "sparse.kicad_pcb"
+    for f in d.glob("sparse.*"):
+        f.unlink()
+    b = pcbnew.NewBoard(str(pcb))
+    mm = pcbnew.FromMM
+    W, H = 100.0, 70.0
+    for (x0, y0), (x1, y1) in zip([(0, 0), (W, 0), (W, H), (0, H)], [(W, 0), (W, H), (0, H), (0, 0)]):
+        e = pcbnew.PCB_SHAPE(b)
+        e.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        e.SetStart(pcbnew.VECTOR2I(mm(x0), mm(y0)))
+        e.SetEnd(pcbnew.VECTOR2I(mm(x1), mm(y1)))
+        e.SetLayer(pcbnew.Edge_Cuts)
+        e.SetWidth(mm(0.1))
+        b.Add(e)
+    lib = stock_dir()
+
+    def place(fpname, ref, x, y):
+        f = pcbnew.FootprintLoad(str(lib / "Connector_PinHeader_2.54mm.pretty"), fpname)
+        f.SetFPID(pcbnew.LIB_ID("Connector_PinHeader_2.54mm", fpname))
+        f.SetReference(ref)
+        f.SetValue(fpname)
+        f.SetBoardOnly(True)
+        b.Add(f)
+        f.SetPosition(pcbnew.VECTOR2I(mm(x), mm(y)))
+        return f
+
+    k = max(2, n // 4)
+    hdr = f"PinHeader_1x{k:02d}_P2.54mm_Vertical"
+    spec_nets = {}
+    for q, (cx, cy) in enumerate([(25.0, 17.5), (75.0, 17.5), (25.0, 52.5), (75.0, 52.5)]):
+        y0 = cy - 2.54 * (k - 1) / 2
+        ja = place(hdr, f"J{2 * q + 1}", cx - 7.0, y0)
+        jb = place(hdr, f"J{2 * q + 2}", cx + 7.0, y0)
+        for i in range(k):
+            nm = f"Q{q}S{i}"
+            ni = pcbnew.NETINFO_ITEM(b, nm)
+            b.Add(ni)
+            pa, pb = ja.FindPadByNumber(str(i + 1)), jb.FindPadByNumber(str(k - i))
+            pa.SetNet(ni)
+            pb.SetNet(ni)
+            x, y = pcbnew.ToMM(pa.GetPosition().x), pcbnew.ToMM(pa.GetPosition().y)
+            gx, gy = (round(1.0 + round((v - 1.0) / 0.2) * 0.2, 4) for v in (x, y))
+            spec_nets[nm] = {"src": [gx, gy], "src_pad": [ja.GetReference(), str(i + 1)], "layer": ["F.Cu", "B.Cu"],
+                             "legs": [{"to": [jb.GetReference(), str(k - i)], "goal_layer": "F.Cu"}]}
+    pcbnew.SaveBoard(str(pcb), b)
+    (d / "sparse.kicad_sch").write_text(EMPTY_SCH)
+    spec = {"group": "R1", "why": "fixture: four local crossing bundles in one big window (R3)",
+            "plan": "routing/R1_plan.json", "window": [1.0, 1.0, W - 1.0, H - 1.0],
+            "pitch": 0.2, "width": 0.2, "clearance": 0.2, "padclr": 0.2, "via": [0.6, 0.3],
+            "layers": ["F.Cu", "B.Cu"], "edge": 0.5, "nets": spec_nets}
+    (d / "routing" / "R1_spec.json").write_text(json.dumps(spec, indent=1) + "\n")
+    return d
+
+
 def make_vias(out, n=48):
     import pcbnew
     d = Path(out) / "vias"
@@ -312,10 +376,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
     ap.add_argument("--nets", type=int, default=8)
-    ap.add_argument("--kind", choices=["router", "prelayout", "vias"], default="router")
+    ap.add_argument("--kind", choices=["router", "prelayout", "vias", "sparse"], default="router")
     a = ap.parse_args()
     if a.kind == "prelayout":
         print(make_prelayout(a.out))
+    elif a.kind == "sparse":
+        print(make_sparse(a.out, a.nets if a.nets != 8 else 16))
     elif a.kind == "vias":
         print(make_vias(a.out, a.nets if a.nets != 8 else 48))
     else:
