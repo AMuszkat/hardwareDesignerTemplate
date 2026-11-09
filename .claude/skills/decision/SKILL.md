@@ -71,6 +71,18 @@ saying **which drawn work is now wrong**, then
     .venv/bin/python tools/handoff/publish.py --board boardN
     .venv/bin/python tools/handoff/publish.py --check --all
 
+**Before a board session starts on it** (a new board, or a revision that
+adds a page, a connector or a block), self-test the handoff:
+
+    .venv/bin/python tools/handoff/publish.py --board boardN --selftest
+
+The `handoff-reader` agent reads a copy of the published folder, outside the
+repository, as a board session's first day would, and lists every fact it
+lacks as QUESTIONS.md-shaped entries (`out/selftest/boardN-revR.md`; about
+four minutes, headless `claude -p`, it spends tokens). Each one is a defect
+in the generator, fixed the way the `answer-question` skill fixes a real
+question — before the board session has to ask it.
+
 ## 6. `history/HISTORY.md`
 
 Append `### Decision D<n>, YYYY-MM-DD — <title>`: what was decided, the options that
