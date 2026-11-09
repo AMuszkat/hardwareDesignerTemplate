@@ -20,6 +20,7 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
     tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
     tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
+    tools/kpy tools/route/prelayout.py --board board1 [--spec routing/prelayout.json]   # before the first group
     tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json] [--vias model.json] [--contested netgroup.log]
 
 `tools/kpy` only (they import `pcbnew`). `apply` and `rip` need KiCad
@@ -363,6 +364,34 @@ its docstring. What the spec has to be told:
   distance between the two limits, and give the leg its grid-aligned end.
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
+
+## `prelayout.py` — can it be routed, before any copper
+
+The tests the boards learned to run late, run at placement:
+`fanout.py` plan and layers per BGA, `escape_bound.py` per BGA and layer,
+`pourreach.py` for the rail vias, each fine-pitch row's via sites, and each
+connector pair's order inversions. One `PRELAYOUT <test> <target>: PASS |
+FAIL | TODO | WAIVED` line each; exit 1 on a FAIL or a TODO. It FINDS the
+candidates itself (36+ round pads on a grid; 8+ pads at <= 0.5 mm pitch;
+connectors joined by 4+ point-to-point nets), so leaving one out of
+`routing/prelayout.json` makes it TODO, not skipped. The spec is in the
+docstring.
+
+- **The via-site model** (a fine-pitch row): the links to a deeper via row
+  pass between the vias above, so k rows space a row's vias
+  `max(pad + clearance, pad + (k-1) * width + k * clearance)` apart, one via
+  per that / k along the row, adjacent rows
+  `sqrt((pad + clearance)^2 - pitch^2)` apart; every pin's via within
+  `lateral` of it. On board2's J1 (0.6 / 0.3 via, 0.2 gap and clearance, a
+  0.2 track, a 2.1 mm strip less 0.45 to the cut-out) that is two rows, one
+  via per 0.60 mm, and 9 sites for the 11 used pins over 4.0 mm — what Q8
+  found at R5.
+- **Inversions** are counted across the bundle (perpendicular to the line
+  between the connectors' centres) over the nets with exactly one pad on
+  each connector and none elsewhere: a net through a series part is not in
+  the count.
+- `tests/fixture_pcb.py --kind prelayout` is the three historical failures;
+  each must FAIL.
 
 ## `fanout.py` — where a BGA's vias go, and how many nets leave over several layers
 

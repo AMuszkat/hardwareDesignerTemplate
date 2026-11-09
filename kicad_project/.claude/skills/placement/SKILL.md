@@ -98,6 +98,27 @@ two rows of capacitors allow the via pad + two via-to-pad gaps (the guide's
 there without moving parts after the copper is laid — a placement decision
 the user makes, never an exception the routing session declares.
 
+## 1d. Can it be routed? The pre-routing gate
+
+Before the placement is requested for review, and again after any move near a
+BGA, a fine-pitch row or a bundle's ends:
+
+```
+tools/kpy tools/route/prelayout.py --board <board>
+```
+
+It finds the BGAs, the fine-pitch rows and the connector pairs a bundle joins
+by itself, and each is TODO (a failure) until `routing/prelayout.json`
+configures it from the handoff (the format is in its docstring) or waives it
+with a reason: the BGA's fanout model and layer split (`fanout.py`), its
+escape per layer (`escape_bound.py`), the rail vias' reach (`pourreach.py`),
+each fine-pitch row's via sites against the strip it has, and each bundle's
+order inversions against what its corridor's free layers can take. These
+are the tests board1 and board2 learned to run after copper was laid (seven
+fanout rounds, 48 inversions under a pour, a contact with no via site); a
+FAIL here is a placement change or a question, decided before the first
+group. **Every `PRELAYOUT` line goes into the placement review request.**
+
 ## 2. Spacing
 
 - Courtyards are IPC nominal, 0.25 mm beyond pads or body (`fp.py tidy

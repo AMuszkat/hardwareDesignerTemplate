@@ -98,7 +98,10 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
 1. **Gates** (`SUMMARY.md`): every FAIL is a finding with its lines. DRC
    violations and schematic-parity problems are listed by type and count;
    *unconnected* is a finding only for the groups the scope says are routed.
-   A Board Setup difference from `14_fab.md` is always `must`.
+   A Board Setup difference from `14_fab.md` is always `must`. A placement
+   request quotes `tools/route/prelayout.py`'s lines (in `REVIEW.md`): a
+   FAIL or TODO there, or a request that lacks them, is `must` — the
+   routing it would block has not started yet.
 2. **Every `10_layout.md` row in scope**, one by one: fixed positions and
    rotations (connectors, holes, the outline, pin 1 where it says), keep-outs
    and cut-outs, parts that must sit within a distance of a pin, coupled

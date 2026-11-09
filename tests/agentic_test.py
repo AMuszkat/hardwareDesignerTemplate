@@ -36,6 +36,9 @@ repository (nothing here is written; the copy is deleted unless --keep):
              runs kicad-cli once: the DRC cache, R6), route.py audit, and the
              review snapshot --kind pcb serial and parallel (same SUMMARY rows,
              the wall clock of each: V4)
+  prelayout  tools/route/prelayout.py on tests/fixture_pcb.py --kind prelayout:
+             the in-pad BGA fanout, the via-site shortage and the reversed
+             bundle must each FAIL before any copper (R7)
   lint       tools/lint_docs.py on the scratch copy after the publish
 
 A stage is PASS, FAIL or SKIP (a dependency this machine lacks, named). The
@@ -620,6 +623,31 @@ def stage_pcb(copy, board, quick):
           f"parallel {nums['snapshot_parallel_s']} s" + ("; " + "; ".join(notes) if notes else ""), **nums)
 
 
+def stage_prelayout():
+    t0 = time.time()
+    kpy = str(ROOT / "kicad_project" / "tools" / "kpy")
+    tmp = Path(tempfile.mkdtemp(prefix="prelayout-"))
+    try:
+        rc, out = run([kpy, str(ROOT / "tests" / "fixture_pcb.py"), str(tmp), "--kind", "prelayout"], ROOT)
+        if rc:
+            stage("prelayout", "FAIL", time.time() - t0, "fixture_pcb: " + tail(out))
+            return
+        rc, out = run([kpy, str(ROOT / "kicad_project" / "tools" / "route" / "prelayout.py"), "--board",
+                       str(tmp / "prelayout")], ROOT)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    want = {"fanout U1": False, "rows J3": False, "bundles J4-J5": False}
+    for ln in out.splitlines():
+        for k in want:
+            if ln.startswith(f"PRELAYOUT {k}") and ": FAIL" in ln:
+                want[k] = True
+    ok = rc == 1 and all(want.values())
+    stage("prelayout", "PASS" if ok else "FAIL", time.time() - t0,
+          "the three historical failures FAIL before routing: " + ", ".join(f"{k} {'FAIL' if v else 'MISSED'}"
+                                                                         for k, v in want.items())
+          + f" (exit {rc})", **{k.replace(" ", "_"): v for k, v in want.items()})
+
+
 def stage_lint(copy):
     t0 = time.time()
     rc, out = run([sys.executable, "tools/lint_docs.py"], copy)
@@ -661,6 +689,7 @@ def main():
         stage_fanout(tmp)
         stage_snapshot(copy, kcli) if board else stage("snapshot", "SKIP", 0.0, "no board")
         stage_pcb_tools(pcb)
+        stage_prelayout() if pcb else stage("prelayout", "SKIP", 0.0, "needs pcbnew")
         if board and kcli and pcb:
             stage_pcb(copy, board, a.quick)
         else:
