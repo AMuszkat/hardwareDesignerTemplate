@@ -29,6 +29,7 @@ Start with `design/IMPLEMENTATION.md` and the sheets in `design/diagrams/`.
 | `tools/review/`, `.claude/agents/` | a board change frozen and gated (`snapshot.py`); the `schematic-reviewer` and `pcb-reviewer` agents that review it | concept |
 | `tools/parts/` | distributor market data and the datasheet fetcher | concept |
 | `tools/lint_docs.py`, `tools/status.py`, `tools/setup/`, `verify.sh` | doc lint, STATUS's generated block, machine setup, every check in one command | concept |
+| `tests/agentic_test.py` | the pipeline both sessions drive, end to end on a synthetic board in a scratch copy, each stage timed: the measurement harness and regression test for `ROADMAP.md` | concept |
 | `reference/` | `papers/`, `vendor/` (the datasheet store), `market/` (distributor cache), `sandbox/` — source material, never authority | — |
 | `out/` | study outputs; generated, disposable, gitignored | studies |
 | `kicad_project/boardN_*/` | KiCad files, `QUESTIONS.md`, `REVIEW.md`, `lib/`, plans — theirs; `handoff/` — ours, generated | board session |
@@ -176,6 +177,7 @@ The concept venv is `.venv` (`./setup.sh install`); matplotlib uses `Agg`.
     .venv/bin/python studies/run_all.py --check         # headline numbers vs baseline
     .venv/bin/python studies/run_all.py --docs          # doc lint
     ./verify.sh                                         # every check, before calling anything done
+    python3 tests/agentic_test.py [--quick] [--keep]     # the sessions' pipeline on a fixture board, timed (out/agentic/report.md)
     .venv/bin/python tools/diagrams/<generator>.py      # one sheet
     .venv/bin/python tools/handoff/publish.py --board board1   # publish (RELEASE_NOTE first)
     .venv/bin/python tools/handoff/publish.py --check --all    # fresh = the folder is what the sources render to now

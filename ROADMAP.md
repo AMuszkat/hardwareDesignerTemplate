@@ -365,6 +365,23 @@ day. **Gate:** tool.
 
 ## Measure before and after, per board
 
+`tests/agentic_test.py` is the harness: it runs the handoff publish, the
+schematic plan with its proof, the negotiated router on a fixed synthetic
+problem, the BGA fanout planner and the review snapshot on a scratch copy of
+the repository, times each stage and writes `out/agentic/report.md`. Run it
+before and after an item lands; the router stage's result hash must stay the
+same for every change that claims identical output (R2, R4, R5). Its
+baseline on the day the plan was written, without KiCad on the machine:
+
+| stage | result |
+|---|---|
+| handoff: new board, fixture design, publish, check | 0.6 s; netlist.json complete, 15 parts |
+| schematic: plan, preview, structural proof and check | 0.1 s; 53 Konnect calls replaced |
+| router: 16 nets, 115 × 58 cells × 2 layers, converged | 14 iterations, 94 s, 6.7 s per iteration |
+| fanout: 84-ball 0.5 mm BGA, plan and layers | 0.2 s; every inner-ring signal has a via |
+
+The per-board metrics the harness cannot take, from a real board's records:
+
 | metric | today's source |
 |---|---|
 | minutes from `PLAN PASSES` to `PARITY OK` | the schematic skill's figures |
