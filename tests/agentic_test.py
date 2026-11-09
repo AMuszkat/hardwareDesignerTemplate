@@ -143,6 +143,13 @@ LAYOUT = [
      "via links straight on the pad's axis, 45 only as a listed last resort; every copper-shape rule applies.",
      ["fixture"]),
 ]
+WORKMANSHIP = [
+    ("joints", "0/45", "10_layout #3"),
+    ("copper to edge", "0.5 mm", "fixture"),
+    ("via to pad gap", "0.15 mm", "10_layout #3"),
+    ("45-degree via link", "last resort", "10_layout #3"),
+    ("copper shape", "on", "10_layout #3"),
+]
 PINS = {
     "U1": {"1": "+5V", "2": "GND", "3": "+5V", "4": "NC", "5": "+3V3"},
     "C1": ("+5V", "GND"), "C2": ("+3V3", "GND"),
@@ -563,6 +570,13 @@ def stage_pcb(copy, board, quick):
     kp = copy / "kicad_project"
     tools = kp / "tools"
     nums, notes, ok = {}, [], True
+    # H1: the handoff's rules.json into the guide's block, then proven current
+    rc, out = run([sys.executable, str(tools / "route" / "guide.py"), "sync", "--board", str(board)], kp)
+    rc2, out2 = run([sys.executable, str(tools / "route" / "guide.py"), "check", "--board", str(board)], kp)
+    nums["guide_sync"] = tail(out, 1)
+    if rc or rc2 or not (board / "handoff" / "rules.json").exists():
+        ok = False
+        notes.append(f"guide.py sync / check: {tail(out, 1)} / {tail(out2, 1)}")
     t1 = time.time()
     rc, out = run([kpy, str(tools / "route" / "netgroup.py"), "--board", str(board), "routing/R1_spec.json",
                    "--timeout", "600"], kp)
@@ -599,6 +613,9 @@ def stage_pcb(copy, board, quick):
     if "AUDIT " not in out:
         ok = False
         notes.append("audit: " + tail(out, 2))
+    # a hand edit inside the generated block must fail the snapshot's guide-block gate
+    gp = board / "general_routing_guide.md"
+    gp.write_text(gp.read_text().replace("| via to pad gap | 0.15 mm |", "| via to pad gap | 0.1 mm |", 1))
     rows = {}
     for jobs_ in ("1", ""):
         env = dict(os.environ, HW_JOBS=jobs_) if jobs_ else {k: v for k, v in os.environ.items() if k != "HW_JOBS"}
@@ -615,12 +632,18 @@ def stage_pcb(copy, board, quick):
     if rows["1"] != rows[""]:
         ok = False
         notes.append("snapshot SUMMARY rows differ serial vs parallel")
+    gb = [r for r in (rows[""] or []) if r[0].strip() == "guide-block"]
+    nums["guide_block_after_hand_edit"] = gb[0][1].strip() if gb else None
+    if nums["guide_block_after_hand_edit"] != "FAIL":
+        ok = False
+        notes.append(f"a hand edit in the guide's rules.json block did not fail the snapshot: {gb}")
     stage("pcb", "PASS" if ok else "FAIL", time.time() - t0,
           f"netgroup {nums['iterations']} iteration(s) {nums['route_s']} s (plan sha {nums['plan_sha'][:10]}); "
           f"check {nums['check1_s']} s then {nums['check2_s']} s ({nums['check2_kicad_cli']} kicad-cli run the second time; "
           f"{nums['check2_verdict']}); "
           f"audit {nums['audit_s']} s; snapshot pcb serial {nums['snapshot_serial_s']} s, "
-          f"parallel {nums['snapshot_parallel_s']} s" + ("; " + "; ".join(notes) if notes else ""), **nums)
+          f"parallel {nums['snapshot_parallel_s']} s; guide {nums['guide_sync']}, a hand edit in it -> "
+          f"guide-block {nums['guide_block_after_hand_edit']}" + ("; " + "; ".join(notes) if notes else ""), **nums)
 
 
 def stage_prelayout():

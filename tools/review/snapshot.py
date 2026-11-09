@@ -491,6 +491,7 @@ def pcb(run, b, out):
     run.gate("route-status", kpy + [TOOLS / "route" / "route.py", "status", "--board", b],
              ok=lambda c, t: c in (0, 1), note="unrouted nets per group (information)")
     run.gate("route-edge", kpy + [TOOLS / "route" / "route.py", "edge", "--board", b])
+    run.gate("guide-block", ["python3", TOOLS / "route" / "guide.py", "check", "--board", b])
     run.gate("pcb-render", kpy + [TOOLS / "route" / "route.py", "render", "--board", b,
                                   "--out", out / "pcb"], note="pcb/top.png, bottom.png, inner.png")
     run.gate("measure", kpy + [Path(__file__).resolve().parent / "measure.py", b, out / "measurements.json"])

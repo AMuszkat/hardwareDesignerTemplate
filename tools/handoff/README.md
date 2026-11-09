@@ -27,7 +27,16 @@ The handoff itself: `00_READ_FIRST`, `01_components`, `02_nets`, `03_pinout.csv`
 and `08_pin_accounting` (only with a `PINOUT`), `04_deliberate`, `05_open`,
 `06_block_diagram.svg` and `11_floorplan.svg` (when the board names them),
 `07_answers`, `09_connectors`, `10_layout`, `12_boot` (with `BOOT`),
-`13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `15_reviews`, `netlist.json`, `CHANGELOG`, `MANIFEST.json`.
+`13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `15_reviews`, `netlist.json`, `rules.json` (with
+`WORKMANSHIP`), `CHANGELOG`, `MANIFEST.json`.
+
+`rules.json` is the routing workmanship as data: `WORKMANSHIP`'s (rule,
+setting, source) rows in the forms the board's `tools/route/guide.py` reads,
+validated by that parser at publish (a form it cannot read stops the
+publish). The board's tools read it before their guide's own table, and
+`guide.py sync` writes it into the guide as a marked block the review
+snapshot checks — a workmanship rule stated only as `LAYOUT` prose is typed
+twice and drifts; state it here too.
 
 `netlist.json` is the connectivity as data, for the board session's
 `tools/sch`: every part from the value bus, and pin -> net from the pinout

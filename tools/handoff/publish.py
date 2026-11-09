@@ -180,6 +180,15 @@ class Board:
         rows("NETS", self.get("NETS", []), (4,))
         rows("CONNECTORS", self.get("CONNECTORS", []), (4,))
         rows("LAYOUT", self.get("LAYOUT", []), (2,))
+        rows("WORKMANSHIP", self.get("WORKMANSHIP", []), (3,))
+        if self.get("WORKMANSHIP"):
+            # the board's own parser judges the rows: a form it cannot read stops here, not there
+            sys.path.insert(0, os.path.join(ROOT, "kicad_project", "tools", "route"))
+            import guide
+            try:
+                guide.validate([(r.strip().lower(), v.strip(), s_) for r, v, s_ in self.get("WORKMANSHIP")])
+            except SystemExit as e:
+                die(f"{self.id}.py WORKMANSHIP: {e}")
         F = self.get("FAB")
         if F:
             rows("FAB netclasses", F.get("netclasses", []), (6,))
@@ -285,6 +294,11 @@ class Board:
         if self.get("BOOT"):
             then.append("**`12_boot.md` before you draw the power-up chain** — "
                         "the ordered power-up table and what drives every enable.")
+        if self.get("WORKMANSHIP"):
+            then.append("**`rules.json` before the first routing group** — the routing "
+                        "workmanship as data (also the last table of `10_layout.md`); "
+                        "`tools/route/guide.py sync` writes it into your "
+                        "`general_routing_guide.md`, and the tools read it from here.")
         if self.fab:
             then.append("**`14_fab.md` before Board Setup** — the fab's rule "
                         "set, the stackup and the net classes, each with its "
@@ -407,6 +421,15 @@ class Board:
         if not self.get("LAYOUT"):
             L += ["None published yet — layout must not start until this "
                   "list exists.", ""]
+        W = self.get("WORKMANSHIP", [])
+        if W:
+            L += ["## Routing workmanship — `rules.json`", "",
+                  "The rules your routing tools read, as data: `rules.json` holds these rows, "
+                  "`tools/route/guide.py` reads it before your guide's own table, and "
+                  "`guide.py sync` writes it into `general_routing_guide.md` — never type them.", "",
+                  "| rule | setting | source |", "|---|---|---|"]
+            L += [f"| {r} | {v} | {s_} |" for r, v, s_ in W]
+            L.append("")
         return "\n".join(L)
 
     def text_md(self, attr, title, empty):
@@ -1057,6 +1080,9 @@ class Board:
         if self.pinout:
             files["08_pin_accounting.md"] = self.pins_md()
         files["netlist.json"] = json.dumps(self.netlist(), indent=1, sort_keys=True) + "\n"
+        if self.get("WORKMANSHIP"):
+            files["rules.json"] = json.dumps([{"rule": r, "setting": v, "source": s_}
+                                              for r, v, s_ in self.get("WORKMANSHIP")], indent=1) + "\n"
         if self.get("BOOT"):
             files["12_boot.md"] = self.text_md("BOOT", "Boot sequence", "")
         fab = self.fab_md()
