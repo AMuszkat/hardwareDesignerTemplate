@@ -29,7 +29,10 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 
 - Placement is agreed (the `placement` skill), and `board_setup.py check`
   exits 0 (the `board-setup` skill): the fab's rules are on the board.
-- **Fill the guide's table** from the handoff — the copper-to-edge minimum
+- **`tools/route/guide.py sync`** writes the handoff's `rules.json` (the
+  workmanship as data) into the guide's block; nothing there is typed, and
+  the review snapshot fails a block that differs from it. Then **fill the
+  guide's own table** with what `rules.json` does not carry — the copper-to-edge minimum
   with the outline tolerance, the via-to-pad gap, plane layers, no-via
   classes, layer-bound classes, a BGA field's via, keep-outs that forbid a
   class, ground beside, the thermal policy — **each row naming its handoff

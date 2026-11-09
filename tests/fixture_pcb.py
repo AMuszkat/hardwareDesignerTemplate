@@ -14,6 +14,16 @@ fixture.kicad_sch, and routing/R1_spec.json, a netgroup spec. The board:
   * four 0603 resistors between them on GND, obstacles in the bundle's way;
   * a GND pour on F.Cu in one corner, tied to a resistor (audit's pour gate).
 
+`--kind prelayout` writes OUT_DIR/prelayout/ instead: the three cases the
+pre-routing gate (tools/route/prelayout.py) must fail, with the spec that
+configures them in routing/prelayout.json --
+  * U1, a 0.5 mm BGA (100 balls, 11 x 11) whose every ball needs its own
+    via: most fall back into their pads (board1's in-pad fanout);
+  * J3, an 80-pin 0.4 mm board-to-board receptacle 2 mm from the edge with
+    every pin used: too few via sites (board2's Q8);
+  * J4 -> J5, ten nets between two headers in reversed order: 45 inversions
+    in a corridor declared to take none (board2's R5).
+
 Every footprint is board-only, so the schematic-parity test has nothing to
 compare against the empty schematic and passes: DRC judges copper only.
 Deterministic: the same arguments write the same board.
@@ -142,12 +152,76 @@ def make(out, n=8):
     return d
 
 
+def make_prelayout(out):
+    import pcbnew
+    d = Path(out) / "prelayout"
+    (d / "routing").mkdir(parents=True, exist_ok=True)
+    pcb = d / "prelayout.kicad_pcb"
+    for f in d.glob("prelayout.*"):
+        f.unlink()
+    b = pcbnew.NewBoard(str(pcb))
+    mm = pcbnew.FromMM
+    W, H = 60.0, 40.0
+    for (x0, y0), (x1, y1) in zip([(0, 0), (W, 0), (W, H), (0, H)], [(W, 0), (W, H), (0, H), (0, 0)]):
+        s = pcbnew.PCB_SHAPE(b)
+        s.SetShape(pcbnew.SHAPE_T_SEGMENT)
+        s.SetStart(pcbnew.VECTOR2I(mm(x0), mm(y0)))
+        s.SetEnd(pcbnew.VECTOR2I(mm(x1), mm(y1)))
+        s.SetLayer(pcbnew.Edge_Cuts)
+        s.SetWidth(mm(0.1))
+        b.Add(s)
+    lib = stock_dir()
+    nets = {}
+
+    def net(name):
+        if name not in nets:
+            nets[name] = pcbnew.NETINFO_ITEM(b, name)
+            b.Add(nets[name])
+        return nets[name]
+
+    def place(libname, fpname, ref, x, y, rot=0):
+        f = pcbnew.FootprintLoad(str(lib / f"{libname}.pretty"), fpname)
+        f.SetFPID(pcbnew.LIB_ID(libname, fpname))
+        f.SetReference(ref)
+        f.SetValue(fpname)
+        f.SetBoardOnly(True)
+        b.Add(f)
+        f.SetPosition(pcbnew.VECTOR2I(mm(x), mm(y)))
+        f.SetOrientationDegrees(rot)
+        return f
+
+    u1 = place("Package_BGA", "BGA-100_6.0x6.0mm_Layout11x11_P0.5mm_Ball0.3mm_Pad0.25mm_NSMD", "U1", 15.0, 15.0)
+    for p in u1.Pads():
+        p.SetNet(net(f"U1_{p.GetNumber()}"))
+    j3 = place("Connector_Hirose_DF40", "Hirose_DF40B(2.0)-80DS-0.4V_2x40-1MP_P0.4mm", "J3", 38.0, 37.0)
+    for p in j3.Pads():
+        if p.GetNumber() and p.GetNumber() != "MP":
+            p.SetNet(net(f"J3_{p.GetNumber()}"))
+    hdr = "PinHeader_1x10_P2.54mm_Vertical"
+    j4 = place("Connector_PinHeader_2.54mm", hdr, "J4", 4.0, 3.0)
+    j5 = place("Connector_PinHeader_2.54mm", hdr, "J5", W - 4.0, 3.0)
+    for k in range(10):
+        n = net(f"BUS{k}")
+        j4.FindPadByNumber(str(k + 1)).SetNet(n)
+        j5.FindPadByNumber(str(10 - k)).SetNet(n)
+    pcbnew.SaveBoard(str(pcb), b)
+    (d / "prelayout.kicad_sch").write_text(EMPTY_SCH)
+    spec = {"fanout": [{"ref": "U1", "plan": ["--via", "0.4,0.2", "--clearance", "0.0889", "--width", "0.0889"],
+                        "in_pad_ok": False, "why": "fixture: via-in-pad not ordered"}],
+            "rows": [{"ref": "J3", "pads": "outer", "side": "S", "via": [0.6, 0.3], "gap": 0.2, "clearance": 0.2,
+                      "width": 0.2, "edge": 0.45, "lateral": 0.6}],
+            "bundles": [{"a": "J4", "b": "J5", "max": 0, "why": "fixture: one free layer in the corridor"}]}
+    (d / "routing" / "prelayout.json").write_text(json.dumps(spec, indent=1) + "\n")
+    return d
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out")
     ap.add_argument("--nets", type=int, default=8)
+    ap.add_argument("--kind", choices=["router", "prelayout"], default="router")
     a = ap.parse_args()
-    print(make(a.out, a.nets))
+    print(make_prelayout(a.out) if a.kind == "prelayout" else make(a.out, a.nets))
 
 
 if __name__ == "__main__":

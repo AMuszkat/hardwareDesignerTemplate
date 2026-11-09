@@ -25,6 +25,8 @@ datasheet agrees. **Find what is wrong; do not fix anything.**
 - the snapshot directory `out/reviews/<board>/<id>-schematic/`:
   `SUMMARY.md` (the gates and their results), `gates/*.txt` (each gate's whole
   output), `erc.json`, `netlist.xml`, `bom.csv`, `schematic.pdf`;
+  - `changed.md` — **read it first**: what changed since the board's previous
+    schematic snapshot, per sheet, as regions and the tiles that show them;
   - `parts.csv` — every placed part: value, footprint, MPN, KiCad's DNP flag
     and a DNP field apart, the exclude flags; `pins.csv` — every pin: number,
     name, type, no-connect flag, net, value, sheet; `nets.csv` — every net
@@ -69,8 +71,9 @@ datasheet agrees. **Find what is wrong; do not fix anything.**
   *Not proven* at the end instead.
 - **Classify pins by PIN NAME**, never by a datasheet's Function column.
 - Look at every sheet you review: the whole page (`sheets/sheet-N.png`),
-  then every tile with parts or text on it (`sheets/tiles.md`) for what the
-  page is too small to show. A readability finding names the sheet, the tile
+  then the tiles `changed.md` lists as changed, then every other tile with
+  parts or text on it in scope (`sheets/tiles.md`) for what the page is too
+  small to show — every tile of every sheet for scope "all". A readability finding names the sheet, the tile
   and what collides.
 - Work through the whole checklist for the scope; with scope "all", the
   whole board. Then look for what the checklist does not name.

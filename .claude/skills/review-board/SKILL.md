@@ -32,7 +32,14 @@ the fab order (`kicad_project/RELAY_PROTOCOL.md`, "Reviews").
 
 ## 2. Freeze and gate
 
-    python3 tools/review/snapshot.py --board boardN --kind schematic|pcb --id RVn
+    python3 tools/review/snapshot.py --board boardN --kind schematic|pcb --id RVn [--scope S]
+
+A PCB request about one group passes `--scope`: the routing group's id (`R3`,
+its applied manifest's copper), a `placement.json` group's name, or
+`refs:A,B`; the PCB views are then tiled only round it and the sheet tiles
+skipped. A fab release, fixes across the board, or a request with no
+group: no `--scope` (everything). Every snapshot writes `changed.md` against
+the board's previous snapshot of the same kind; the reviewer reads it first.
 
 It copies the board into `out/reviews/<board>/<id>-<kind>/`, runs the board
 session's own gates on the copy and writes `SUMMARY.md`. Exit 1 is not a

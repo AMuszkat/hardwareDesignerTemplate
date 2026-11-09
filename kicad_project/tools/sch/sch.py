@@ -7,6 +7,7 @@
     tools/.venv/bin/python tools/sch/sch.py drawn  --board board1 [--plan DIR] [SHEET.kicad_sch ...]
     tools/.venv/bin/python tools/sch/sch.py frame  --board board1 [--plan DIR] [--remove]
     tools/.venv/bin/python tools/sch/sch.py parity --board board1 [--plan DIR | --handoff]
+    tools/.venv/bin/python tools/sch/sch.py draw   --board board1 [--plan DIR] [--dry-run]
     tools/.venv/bin/python tools/sch/sch.py pdf    --board board1 [--plan DIR] [--out FILE.pdf]
     tools/.venv/bin/python tools/sch/sch.py ops    --board board1 SHEET [FROM [TO]] [--plan DIR]
     tools/.venv/bin/python tools/sch/sch.py rules
@@ -44,6 +45,12 @@
           and Exclude from BOM on schematic.json's "exclude_from_bom" globs --
           the two booleans no Konnect call sets (parsed tree, netlist proven
           unchanged, read back; flags.py).
+  draw    install the plan's proven preview as the board's sheets (draw.py):
+          UUIDs carried over by refdes / unit / sheet file so the PCB's links
+          survive, backup under .sch_backups/, a kicad-cli resave that moves
+          nothing, then parity (plan, handoff), check and ERC -- a failing
+          proof restores the backup. Zero Konnect calls; frames, title block,
+          DNP flags and Footprint fields come with it.
   pdf     the plan's preview as a PDF (default <plan>/preview.pdf) and one PNG
           per page beside it (preview-N.png, when pdftoppm is installed): the
           sheets to look at before drawing.  Read-only on the board.
@@ -52,7 +59,7 @@
           (default: all), for reading a call list in chunks.
   rules   the rules and their numbers.
 
-Read-only on the board's KiCad files except `frame` and `flags`: plan writes under <out>
+Read-only on the board's KiCad files except `draw`, `frame` and `flags`: plan writes under <out>
 only (default <board>/sch_plan/). Konnect draws.
 """
 import argparse
@@ -336,6 +343,13 @@ def preview_root(plan_dir):
     return pros[0].with_suffix(".kicad_sch")
 
 
+def cmd_draw(a):
+    import draw
+    board = boardsel.resolve(a.board)
+    plan_dir = Path(a.plan) if a.plan else Path(board) / "sch_plan"
+    sys.exit(draw.run(board, plan_dir, a.dry_run))
+
+
 def cmd_pdf(a):
     import shutil
     import subprocess
@@ -421,6 +435,11 @@ def main():
     qg.add_argument("--plan")
     qg.add_argument("--handoff", action="store_true", help="against handoff/netlist.json")
     q.set_defaults(fn=cmd_parity)
+    dw = sub.add_parser("draw", help="install the plan's proven preview as the board's sheets")
+    dw.add_argument("--board")
+    dw.add_argument("--plan")
+    dw.add_argument("--dry-run", action="store_true")
+    dw.set_defaults(fn=cmd_draw)
     pd = sub.add_parser("pdf", help="the plan's preview as PDF and PNGs")
     pd.add_argument("--board")
     pd.add_argument("--plan")

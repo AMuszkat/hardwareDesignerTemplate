@@ -17,7 +17,7 @@ off), and build nothing on the change until the verdict.
     ## RV<n> — schematic | pcb: <what changed, one line>
     **Status:** requested | CHANGES (rev R) | PASS (rev R)
     **Scope:** the sheets / the group / the parts the change touched; "all" for everything.
-    **Gates:** each gate you ran and its last line (check, parity, parity --handoff, ERC; place.py drc, board_setup check, route gates).
+    **Gates:** each gate you ran and its last line (check, parity, parity --handoff, ERC; place.py drc, board_setup check, route gates; for placement, every `PRELAYOUT` line of `tools/route/prelayout.py`).
     **Waivers:** every waiver this change added, with its reason — or "none".
     **Replies:** after the verdict, one line per finding: `RV<n>.<k> fixed` | `RV<n>.<k> disputed — <reason>`.
 

@@ -189,10 +189,15 @@ def prop(name, val, x, y, angle=0, hide=False, justify=()):
     return f"\t\t(property {esc(name)} {esc(val)} (at {x:g} {y:g} {angle:g}){h} {FONT}{j}))\n"
 
 
+NO_BOM = ()          # schematic.json "exclude_from_bom" globs, set by write_all: the preview carries the flag
+
+
 def sym_text(e, ref, path, proj, dnp=False, extra=None):
+    import fnmatch
     lib = e.lib
+    no_bom = ref.startswith("#") or any(fnmatch.fnmatchcase(ref, g) for g in NO_BOM)
     out = [f"\t(symbol (lib_id {esc(e.lib_id)}) (at {e.x:g} {e.y:g} {e.rot:g}) (unit {e.unit})"
-           f" (exclude_from_sim no) (in_bom {'no' if ref.startswith('#') else 'yes'})"
+           f" (exclude_from_sim no) (in_bom {'no' if no_bom else 'yes'})"
            f" (on_board {'no' if ref.startswith('#') else 'yes'}) (dnp {'yes' if dnp else 'no'})\n"
            f"\t\t(uuid {esc(uid())})\n"]
     for name, val in (("Reference", ref), ("Value", e.value)):
@@ -258,7 +263,10 @@ def sheet_text(src, paper, items, lib_ids, path, file_uuid, proj, sheets=(), roo
 
 
 def write_all(src, plans, root, out, only=None):
+    global NO_BOM
     out = Path(out)
+    cfg = src.board / "schematic.json"
+    NO_BOM = tuple(json.loads(cfg.read_text()).get("exclude_from_bom", [])) if cfg.exists() else ()
     proj = src.root_name
     prev = out / "preview" / proj
     if prev.exists():

@@ -880,7 +880,9 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
             continue
         y = ry[net]
         outside = ctx.is_rail(net) or any((r, pn) not in here for r, pn in ctx.src.nets.get(net, []))
-        if outside:
+        # a NAMED net the ladder closes on its own still takes its label: a bare row wire is a net
+        # KiCad names after a pin ("Net-(D1-A)"), and the handoff's name for it is lost (parity --handoff)
+        if outside or not net.startswith("N_"):
             # the terminator at whichever end of the row has room for it
             kind_ = "hier" if ctx.kind(net) == "hier" else "label"
             boxes = [e.box() for e in blk.els] + [e.box() for e in blk.power]
