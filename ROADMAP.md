@@ -322,8 +322,18 @@ and diff `pins.csv` against the handoff's hand-made PINOUT CSVs — that corpus
 is the ground truth; keep the parser that matches. Licences: MIT and Apache
 2.0 only (Docling, Qwen VL, ColQwen, PaddleOCR-VL); GPL and AGPL parsers
 (Surya, Marker, Ultralytics) stay out, as Konnect does. `SETUP.md`: an
-optional GPU. **Size:** 1–2 weeks. **Gate:** user (the optional requirement),
-then tool.
+optional GPU. Decided 2026-11-09, all four parts: (a) the optional ML venv
+on the concept side, install completing without it; (b) all three models,
+installed in the order Docling, ColQwen2.5, Qwen2.5-VL-7B, served locally
+through Ollama (vLLM for batches), GPU recommended not required; (c) MIT
+and Apache 2.0 licences only; (d) outputs beside the PDF in the vendor
+store, indexed by `datasheet.py`, published and hashed with the PDF — and
+no consumer reads them until the extractor's pin tables have been diffed
+against the hand-made PINOUT CSVs already published; `land.json` is
+candidates, never authority. **Done when:** that diff matches on the
+datasheets already filed, and each consumer (S2, `fp.py verify --against`,
+the reviewer checklist, the page ranges) is wired in only after its input
+has passed. **Size:** 1–2 weeks. **Gate:** decided — now tool.
 
 **H3 · A handoff self-test agent.** `.claude/agents/handoff-reader.md`: a
 fresh-context agent with `omitClaudeMd: true` and Read, Grep and Glob only,
