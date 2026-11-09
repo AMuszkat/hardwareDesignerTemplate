@@ -34,7 +34,9 @@ the fab order (`kicad_project/RELAY_PROTOCOL.md`, "Reviews").
 
     python3 tools/review/snapshot.py --board boardN --kind schematic|pcb --id RVn [--scope S]
 
-A PCB request about one group passes `--scope`: the routing group's id (`R3`,
+PCB reviews come at milestones (the placement as a whole; routing's fanout
+and escape, buses, power, pours, close-out), plus a single group on request.
+A request about one group passes `--scope`: the routing group's id (`R3`,
 its applied manifest's copper), a `placement.json` group's name, or
 `refs:A,B`; the PCB views are then tiled only round it and the sheet tiles
 skipped. A fab release, fixes across the board, or a request with no

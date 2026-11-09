@@ -85,6 +85,11 @@ its fanout), then bulk, then pours and stitching, then close-out.
 
 ## 5. Status
 
-| group | state | open before → after | reviewed |
-|---|---|---|---|
-| R0 | not started | | |
+Milestones reviewed: fanout and escape, buses, power, pours, close-out. A
+group started while another change is under review says in *independent of*
+why it is: no shared corridor, none of that change's reserved copper, no part
+it touched. The reviewer checks the claim at the next milestone.
+
+| group | milestone | state | open before → after | independent of (why) | reviewed |
+|---|---|---|---|---|---|
+| R0 | — | not started | | | |

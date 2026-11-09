@@ -11,8 +11,10 @@ description: >
 
 # Placement, one group at a time
 
-A board is placed **group by group, and each group is reviewed** before the
-next: its request in `REVIEW.md`, the verdict in `handoff/15_reviews.md`. Tools: Konnect for moves and refreshes,
+A board is placed **group by group, and reviewed as a whole** once every
+group passes `place.py check` and `prelayout.py` (a group you are unsure of
+may be requested alone): the request in `REVIEW.md`, the verdict in
+`handoff/15_reviews.md`. Tools: Konnect for moves and refreshes,
 `tools/place/place.py` for checks (read `tools/place/README.md`), and
 `<board>/placement.json` for keep-outs and group lists. Every `tools/place`
 script runs as `tools/kpy tools/place/<script>.py` (it imports `pcbnew`).
@@ -201,6 +203,8 @@ permission in `ROUTING_PLAN.md` §4.
    meet is a QUESTIONS.md item.
 4. **Deliberate positions stay** (`04_deliberate.md`) even when a compaction
    would like them elsewhere.
-5. **Each group stops for review**: with `place.py check` and `place.py drc`
-   clean, write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line). The next group starts on PASS;
-   routing starts after the last placement group passes (the `routing` skill).
+5. **The placement stops for review as a whole**: with every group's
+   `place.py check`, `place.py drc` and `prelayout.py` clean, write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line).
+   Until the verdict, build nothing on it; independent work (a group that
+   touches none of its parts or corridors) may go on. Routing starts after
+   the placement passes (the `routing` skill).

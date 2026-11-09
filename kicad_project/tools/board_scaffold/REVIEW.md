@@ -6,11 +6,15 @@ frozen copy of your board, and publishes the verdict and the findings in
 whether the relay is on or off (`../RELAY_PROTOCOL.md`, "Reviews").
 
 **When:** after every schematic change (a set of sheets, a redraw, the fixes
-for a review) and every PCB change (a placement group, a routing group, the
-fixes for a review), once its own gates pass (the `schematic`, `placement` or
-`routing` skill) — and a last `pcb: fab release` before the fab package.
-Then ring concept with the request's line (relay on) or tell the user (relay
-off), and build nothing on the change until the verdict.
+for a review); for the PCB, the placement as a whole and each routing
+milestone (fanout and escape, buses, power, pours, close-out), a single group
+you want reviewed alone, the fixes for a review — once its own gates pass
+(the `schematic`, `placement` or `routing` skill) — and a last `pcb: fab
+release` before the fab package. Then ring concept with the request's line
+(relay on) or tell the user (relay off), and build nothing on the change
+until the verdict; independent work may go on (a group that shares no
+corridor with it, uses none of its copper and moves no part it touched —
+claimed in `ROUTING_PLAN.md` §5).
 
 **Format** — keep it exactly, the concept session scans for it:
 

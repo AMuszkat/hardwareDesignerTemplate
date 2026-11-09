@@ -5,7 +5,7 @@ Used by snapshot.py; plain python3, no pcbnew (the board file is read as text).
 SCOPE (snapshot.py --scope) -- the board area a PCB review is about, in board mm:
 
     all | fab          everything (the default; a fab release reads every tile)
-    R3                 a routing group: the copper its routing/R3.applied.json
+    R3  (or R3,R4)     a routing group (a milestone's groups): the copper its routing/R3.applied.json
                        manifest names (by UUID, read from the .kicad_pcb)
     <name>             a placement.json group: its parts
     refs:U1,C3         those parts
@@ -88,9 +88,16 @@ def union(boxes):
 
 
 def scope_box(board, scope, margin=MARGIN):
-    """(label, box in board mm or None for everything, note)."""
+    """(label, box in board mm or None for everything, note). A comma list of routing or placement
+    groups ("R3,R4", a milestone) is their union."""
     if not scope or scope.lower() in ("all", "fab", "fab release"):
         return (scope or "all"), None, "every tile"
+    if "," in scope and not scope.startswith(("refs:", "box:")):
+        got = [scope_box(board, s_.strip(), margin) for s_ in scope.split(",") if s_.strip()]
+        boxes = [g[1] for g in got if g[1]]
+        if len(boxes) < len(got):
+            return scope, None, "a group in it names no copper: every tile"
+        return scope, union(boxes), f"{len(got)} groups ({scope}) + {margin:g} mm"
     pcbs = sorted(Path(board).glob("*.kicad_pcb"))
     text = pcbs[0].read_text() if pcbs else ""
     bl = blocks(text)
