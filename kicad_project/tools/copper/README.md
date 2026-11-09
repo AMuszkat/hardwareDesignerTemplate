@@ -86,3 +86,11 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   over the gap, or KiCad measures 0.1457 where the polygon said 0.15.
 - A `pcbnew` wrapper is a new object on every lookup: compare items by
   `m_Uuid.AsString()`, never with `is`.
+- `shape.py` exempts a BGA field's courtyard by where a piece's CENTRE falls.
+  A short escape that only just leaves the field (a via on a site outside the
+  ball array, 0.3 mm from the edge, its track 0.3 mm past it) is one thin
+  piece from via edge to free end; its centre lands outside, and the whole
+  escape reads as a "nub". A routed escape, longer, centres inside and passes.
+  Board1 (R1, RV5.6) ended such laid exits 0.03 mm past the courtyard edge;
+  the false positive disappears anyway once the route continues. Read the
+  piece's extent in the report before "fixing" a nub at a field's edge.
