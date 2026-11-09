@@ -10,6 +10,16 @@ its `REVIEW.md` and `handoff/15_reviews.md`
     python3 tools/review/snapshot.py --board board1 --kind schematic --id RV3
     python3 tools/review/snapshot.py --board board1 --kind pcb       --id RV4 [--scope R3]
 
+**Measurements** (`measure.py`, a PCB snapshot's `measurements.json`): the
+frozen board measured with pcbnew, facts only — parts, `placement.json`
+groups with each member's gap to its nearest member, per-net lengths, widths
+and vias, pairs by name (`_P`/`_N`, `+`/`-`, `P`/`N`: lengths, skew,
+edge-to-edge gap, coupled length), pours and their islands, silk over mask
+openings, and per `10_layout.md` row the parts it names, the points it gives
+(nearest part, as board and as outline-relative coordinates), its stated
+distances and its parts' pairwise centre distance and pad gap. The
+pcb-reviewer reads it instead of measuring.
+
 **Scope and changes** (`changes.py`). `--scope` names what a PCB review is
 about — a routing group (the copper its `routing/<G>.applied.json` names, by
 UUID), a `placement.json` group, `refs:A,B`, or `box:X0,Y0,X1,Y1` — and the

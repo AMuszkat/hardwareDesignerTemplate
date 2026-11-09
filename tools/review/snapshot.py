@@ -86,7 +86,8 @@ SHEET_DPI, PCB_DPI = 300, 600          # 1.27 mm text = 15 px; a 0.5 mm pitch = 
 OVERLAP_MM = 12
 DRC_NOTE = re.compile(r"^drc: .*(: kicad-cli run,|from the cache)")
 # Rows that are outputs for the reader, not gates.
-EXPORTS = ("netlist", "bom", "sch-pdf", "sch-png", "pcb-render", "pins", "sheet-tiles", "pcb-tiles", "changes")
+EXPORTS = ("netlist", "bom", "sch-pdf", "sch-png", "pcb-render", "pins", "sheet-tiles", "pcb-tiles", "changes",
+           "measure")
 TMPWORK_README = """\
 tmpWork -- the reviewer's temporary workspace.
 
@@ -492,6 +493,7 @@ def pcb(run, b, out):
     run.gate("route-edge", kpy + [TOOLS / "route" / "route.py", "edge", "--board", b])
     run.gate("pcb-render", kpy + [TOOLS / "route" / "route.py", "render", "--board", b,
                                   "--out", out / "pcb"], note="pcb/top.png, bottom.png, inner.png")
+    run.gate("measure", kpy + [Path(__file__).resolve().parent / "measure.py", b, out / "measurements.json"])
 
 
 def main():
@@ -576,6 +578,9 @@ def main():
           "- `snap/<board>/` — the frozen board and its `handoff/` (with `datasheets/`); "
           "`gates/*.txt` — each gate's whole output."]
     if a.kind == "pcb":
+        L += ["- `measurements.json` — the board measured (measure.py): parts, groups, per-net lengths and "
+              "vias, pairs (skew, gap), pours and islands, silk over mask openings, and each "
+              "`10_layout.md` row's parts, points and distances. Read it instead of measuring."]
         L += ["- `pcb/top.png`, `bottom.png`, `inner.png` — each view whole; `pcb/tiles.md` and "
               "`pcb/tiles/` — the same views at full resolution."]
     L += ["- `tmpWork/` — the reviewer's ONLY scratch folder: temporary, anything in it may be "

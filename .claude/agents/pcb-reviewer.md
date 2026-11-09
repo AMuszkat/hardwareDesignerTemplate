@@ -36,6 +36,17 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
     `pcb/tiles/<view>-rRcC.png` — the same views at 600 dpi in overlapping
     tiles you see at full resolution; `pcb/tiles.md` — which parts each tile
     shows; `pcb/words.csv` — every text in a view and which tiles show it;
+  - `measurements.json` — the board measured for you (`tools/review/measure.py`,
+    all mm, KiCad board coordinates; `board.outline_origin` converts the
+    handoff's outline-relative ones): `parts` (position, rotation, side,
+    courtyard, group), `groups` (extent, each member's gap to its nearest
+    member), `nets` (length per layer, widths, vias, layers), `pairs` (each
+    length, skew, edge-to-edge gap min / median, coupled length), `pours`
+    (islands and areas), `silk_over_mask` (each overlap, part and pad), and
+    `layout_rows` — per `10_layout.md` row, the parts it names and where they
+    are, each point it gives and the nearest part to it, its stated
+    distances, and every pair of its parts' centre distance and nearest
+    pad-to-pad gap;
   - `parts.csv` — every part with KiCad's DNP and exclude flags (the BOM
     cannot tell the DNP flag from a field); `pins.csv` — every pin: name,
     type, no-connect flag, net;
@@ -55,20 +66,20 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   scratchpad**, whatever your environment says about one: a read outside the
   project stops for the user's approval.
 - **The snapshot already holds what a review needs, as files**: pins and
-  nets from `pins.csv` / `nets.csv`, the copper from the tiles. Use Read,
-  Grep and Glob; Bash for measuring the board (below) and for what they
-  cannot do. Never re-render or crop a view.
+  nets from `pins.csv` / `nets.csv`, every measurement from
+  `measurements.json`, the copper from the tiles. Use Read, Grep and Glob.
+  Never re-render or crop a view.
 
 ## Rules
 
 - **Read only.** Never write in `kicad_project/` or anywhere but your report
   and `tmpWork/`. Every tool runs on `snap/`. Never run Konnect, never open
   KiCad's GUI.
-- To measure the board, read it with KiCad's own module on the snapshot:
-  `kicad_project/tools/kpy - <<'EOF'` … `import pcbnew;
-  b = pcbnew.LoadBoard("<snap>/<board>/<board>.kicad_pcb")` … — positions,
-  rotations, layers, track widths and lengths, via counts, zone nets, pad
-  nets. Never `SaveBoard`.
+- **A number comes from `measurements.json`.** One it does not hold (a
+  clearance between two named items, a length along one route) may be
+  measured on `snap/` with `kicad_project/tools/kpy` and pcbnew — read only,
+  never `SaveBoard` — and is then listed in the report under *Measured by
+  hand*, so the snapshot learns to measure it.
 - **`handoff/10_layout.md` and `14_fab.md` are the brief; the datasheets in
   `handoff/datasheets/` the authority on parts and lands.** Quote the rule's
   row or the datasheet page with each finding. A finding the BOARD must act on
@@ -135,6 +146,10 @@ Write it to the path you were given, exactly in this shape:
 
     ## Not proven
     Suspicions without proof, each with what would prove it.
+
+    ## Measured by hand
+    Each number measurements.json did not hold and you measured on snap/
+    (what, how); "none" when there was none.
 
 - **severity:** `must` — a defect the board would be built with (an open, a
   short, a rule broken, a wrong land, a gate failing) or a contradiction of
