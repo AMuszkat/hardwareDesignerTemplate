@@ -3,7 +3,7 @@
 snapshot.py -- freeze a board's drawn work and run every gate on the copy, for a review.
 
     python3 tools/review/snapshot.py --board board1 --kind schematic --id RV3
-    python3 tools/review/snapshot.py --board board1 --kind pcb       --id RV4
+    python3 tools/review/snapshot.py --board board1 --kind pcb       --id RV4 [--scope R3]
 
 The concept session runs it before a reviewer agent (.claude/agents/) looks at
 a board; the `review-board` skill is the procedure, tools/review/README.md the
@@ -39,6 +39,13 @@ another's output (the sheet PNGs read the PDF) waits for it, and SUMMARY.md
 lists them in the same order either way. The board's DRC cache
 (routing/.drc_cache) is not copied: a review's DRC is its own run.
 
+--scope (tools/review/changes.py) names what a PCB review is about -- a
+routing group (its applied manifest's copper), a placement.json group, refs:
+or box: -- and the PCB views are tiled only inside it (plus 3 mm), the sheet
+tiles skipped; all / fab (the default) tiles everything. Every snapshot also
+diffs each page and view against the board's previous snapshot of the same
+kind and writes changed.md: the changed regions and the tiles that show them.
+
 Writes SUMMARY.md (one row per gate) beside the outputs. Exit 0 = every gate
 passed, 1 = a gate failed (the review starts from it), 2 = the snapshot itself
 could not be made.
@@ -60,6 +67,9 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import changes  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 KP = ROOT / "kicad_project"
 TOOLS = KP / "tools"
@@ -76,7 +86,7 @@ SHEET_DPI, PCB_DPI = 300, 600          # 1.27 mm text = 15 px; a 0.5 mm pitch = 
 OVERLAP_MM = 12
 DRC_NOTE = re.compile(r"^drc: .*(: kicad-cli run,|from the cache)")
 # Rows that are outputs for the reader, not gates.
-EXPORTS = ("netlist", "bom", "sch-pdf", "sch-png", "pcb-render", "pins", "sheet-tiles", "pcb-tiles")
+EXPORTS = ("netlist", "bom", "sch-pdf", "sch-png", "pcb-render", "pins", "sheet-tiles", "pcb-tiles", "changes")
 TMPWORK_README = """\
 tmpWork -- the reviewer's temporary workspace.
 
@@ -301,10 +311,11 @@ def pdf_words(pdf):
             for i, p in enumerate(t.split("<page ")[1:], 1)}
 
 
-def pictures(out_dir, what, sources, dpi, parts, crop):
+def pictures(out_dir, what, sources, dpi, parts, crop, scope=None):
     """sources: [(name, pdf, page, title)]. Every page as tiles in out_dir/tiles/, with
     out_dir/tiles.md (which parts each tile shows) and out_dir/words.csv (every text, where
-    it is, which tiles show it). Returns the number of tiles."""
+    it is, which tiles show it). `scope`: a box in points the tiles stay inside.
+    Returns (number of tiles, {source name: [(tile name, box in points)]})."""
     tdir = out_dir / "tiles"
     tdir.mkdir(parents=True, exist_ok=True)
     mm = 25.4 / 72
@@ -314,11 +325,13 @@ def pictures(out_dir, what, sources, dpi, parts, crop):
          f"so it is seen at full resolution; neighbours overlap by {OVERLAP_MM} mm or more. Positions are mm "
          f"from the page's top-left corner; *texts* counts the words on a tile (0: nothing but lines, or "
          f"blank). Any text on a page: `grep -w <text> words.csv`.", ""]
-    rows, words, total = [], {}, 0
+    rows, words, total, by = [], {}, 0, {}
     for name, pdf, page, title in sources:
         size = pdf_pages(pdf)[page - 1]
         box = (ink_box(pdf, page) if crop else None) or (0, 0, *size)
-        made = tile(pdf, page, box, dpi, tdir, name)
+        box = changes.clip(box, scope)
+        made = tile(pdf, page, box, dpi, tdir, name) if box else []
+        by[name] = made
         total += len(made)
         ws = words.setdefault(pdf, pdf_words(pdf)).get(page, [])
         L += [f"## {name} — {title}", "",
@@ -336,7 +349,7 @@ def pictures(out_dir, what, sources, dpi, parts, crop):
     (out_dir / "tiles.md").write_text("\n".join(L))
     with open(out_dir / "words.csv", "w", newline="") as f:
         csv.writer(f).writerows([("page", "x_mm", "y_mm", "tiles", "text")] + rows)
-    return total
+    return total, by
 
 
 def columns(f):
@@ -405,8 +418,10 @@ def pin_table(out):
     return refs, len(rows), len(nets), n_dnp
 
 
-def reader(run, out, kind):
-    """Everything the reviewer reads as a file, so it never needs a shell or a folder outside this one."""
+def reader(run, out, kind, scope=None):
+    """Everything the reviewer reads as a file, so it never needs a shell or a folder outside this one.
+    scope: (label, box in board mm or None, note) from changes.scope_box."""
+    label, sbox, note = scope or ("all", None, "every tile")
     refs = set()
     if (out / "netlist.xml").exists():
         refs, n_pins, n_nets, n_dnp = pin_table(out)
@@ -416,18 +431,31 @@ def reader(run, out, kind):
         run.skip("sheet-tiles", "poppler-utils (pdftoppm, pdftotext, pdfinfo) not installed")
         return
     pdf = out / "schematic.pdf"
+    srcs, tiles = [], {}
     if pdf.exists():
         root = ET.parse(out / "netlist.xml").getroot() if (out / "netlist.xml").exists() else None
         title = {int(s.get("number")): f"{s.get('name')} ({s.findtext('title_block/source')})"
                  for s in (root.iter("sheet") if root is not None else [])}
-        n = pictures(out / "sheets", "the schematic", [(f"p{i}", pdf, i, title.get(i, "")) for i in
-                                                      range(1, len(pdf_pages(pdf)) + 1)], SHEET_DPI, refs, False)
-        run.rows.append(("sheet-tiles", "done", f"{n} tiles at {SHEET_DPI} dpi", "sheets/tiles.md"))
+        pages = [(f"p{i}", pdf, i, title.get(i, "")) for i in range(1, len(pdf_pages(pdf)) + 1)]
+        srcs += [(n_, f_, p_) for n_, f_, p_, _t in pages]
+        if kind == "pcb" and sbox:
+            run.skip("sheet-tiles", f"a PCB review scoped to {label}: the sheets are whole in sheets/sheet-N.png")
+        else:
+            n, by = pictures(out / "sheets", "the schematic", pages, SHEET_DPI, refs, False)
+            tiles.update(by)
+            run.rows.append(("sheet-tiles", "done", f"{n} tiles at {SHEET_DPI} dpi", "sheets/tiles.md"))
     views = [(v, out / "pcb" / f"{v}.pdf", 1, v) for v in ("top", "bottom", "inner")
              if (out / "pcb" / f"{v}.pdf").exists()]
     if kind == "pcb" and views:
-        n = pictures(out / "pcb", "the PCB (top, bottom, inner copper)", views, PCB_DPI, refs, True)
-        run.rows.append(("pcb-tiles", "done", f"{n} tiles at {PCB_DPI} dpi", "pcb/tiles.md"))
+        n, by = pictures(out / "pcb", "the PCB (top, bottom, inner copper)" + (f", scope {label}" if sbox else ""),
+                         views, PCB_DPI, refs, True, changes.to_points(sbox))
+        tiles.update(by)
+        srcs += [(n_, f_, p_) for n_, f_, p_, _t in views]
+        run.rows.append(("pcb-tiles", "done", f"{n} tiles at {PCB_DPI} dpi" + (f" inside {note}" if sbox else ""),
+                         "pcb/tiles.md"))
+    if srcs:
+        run.rows.append(("changes", "done", changes.report(out, kind, srcs, tiles, f"{label} — {note}" if sbox else note),
+                         "changed.md"))
 
 
 def exports(run, out, root_sch):
@@ -472,6 +500,8 @@ def main():
     ap.add_argument("--kind", required=True, choices=["schematic", "pcb"])
     ap.add_argument("--id", help="the request id in the board's REVIEW.md (RVn); default: a timestamp")
     ap.add_argument("--out", help="default: out/reviews/<board>/<id>-<kind>/")
+    ap.add_argument("--scope", help="pcb: a routing group (R3), a placement.json group, refs:A,B or "
+                    "box:X0,Y0,X1,Y1 -- tiles only there; all / fab (default) tiles everything")
     a = ap.parse_args()
     if not shutil.which("kicad-cli"):
         die("kicad-cli is not on PATH")
@@ -501,7 +531,7 @@ def main():
     man = b / "handoff" / "MANIFEST.json"
     rev = json.loads(man.read_text()).get("rev") if man.exists() else None
     (out / "manifest.json").write_text(json.dumps(
-        {"board": src.name, "kind": a.kind, "id": rid, "handoff_rev": rev,
+        {"board": src.name, "kind": a.kind, "id": rid, "handoff_rev": rev, "scope": a.scope or "all",
          "taken": datetime.datetime.now().isoformat(timespec="seconds"), "files": files}, indent=1))
 
     if a.kind == "pcb" and not list(b.glob("*.kicad_pcb")):
@@ -519,7 +549,8 @@ def main():
     run.wait()                                  # the reader's inputs: netlist, PDFs, renders
     wall = time.monotonic() - t_gates
     serial = sum(run.times.values())
-    reader(run, out, a.kind)
+    scope = changes.scope_box(b, a.scope) if a.kind == "pcb" else (a.scope or "all", None, "every tile")
+    reader(run, out, a.kind, scope)
     print(f"gates: {len(run.times)} in {wall:.1f} s on {run.n_jobs} worker(s) "
           f"({serial:.1f} s if run one at a time)", file=sys.stderr)
 
@@ -533,6 +564,9 @@ def main():
     L += ["", f"**{len(failed)} of {len(gates)} gates failed.**" if failed else
           f"**All {len([r for r in gates if r[1] == 'PASS'])} gates that ran passed.**"]
     L += ["", "## What to read", "",
+          "- `changed.md` FIRST — what changed since the board's previous snapshot of this kind: the "
+          "changed regions and the tiles that show them; a changed region outside the scope is "
+          "listed as such.",
           "- `sheets/sheet-N.png` — each page whole; `sheets/tiles.md` — which tile "
           "(`sheets/tiles/pN-rRcC.png`) shows which part; `sheets/words.csv` — every text on a "
           "page, where it is and which tiles show it.",

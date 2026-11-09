@@ -8,7 +8,17 @@ its `REVIEW.md` and `handoff/15_reviews.md`
 (`kicad_project/RELAY_PROTOCOL.md`, "Reviews").
 
     python3 tools/review/snapshot.py --board board1 --kind schematic --id RV3
-    python3 tools/review/snapshot.py --board board1 --kind pcb       --id RV4
+    python3 tools/review/snapshot.py --board board1 --kind pcb       --id RV4 [--scope R3]
+
+**Scope and changes** (`changes.py`). `--scope` names what a PCB review is
+about — a routing group (the copper its `routing/<G>.applied.json` names, by
+UUID), a `placement.json` group, `refs:A,B`, or `box:X0,Y0,X1,Y1` — and the
+PCB views are tiled only inside it plus 3 mm, the sheet tiles skipped;
+`all` / `fab` (the default) tiles everything. Every snapshot rasterises each
+page and view at 72 dpi into `compare/` and diffs it, in 2.8 mm cells,
+against the board's previous snapshot of the same kind: `changed.md` lists
+the changed regions and the tiles that show them, and flags a region outside
+every tile in scope. An unchanged board lists none.
 
 ## What it does
 

@@ -28,6 +28,10 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   `gates/*.txt` (DRC with schematic parity, Board Setup against `14_fab.md`,
   footprint signatures, routing status, copper-to-edge), `netlist.xml`,
   `bom.csv`, `schematic.pdf`;
+  - `changed.md` — **read it first**: what changed since the board's previous
+    PCB snapshot, as regions in board mm and the tiles that show them; a
+    region marked *outside every tile in scope* is a change the request did
+    not declare, and a finding until explained;
   - `pcb/top.png`, `bottom.png`, `inner.png` — each view whole;
     `pcb/tiles/<view>-rRcC.png` — the same views at 600 dpi in overlapping
     tiles you see at full resolution; `pcb/tiles.md` — which parts each tile
@@ -73,7 +77,10 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   render region. Suspicions go under *Not proven*.
 - Look at the views for what numbers miss: a pour cut in two, a split
   return path, a part outside its group, silk on pads — each whole
-  (`pcb/*.png`), then the tiles (`pcb/tiles.md`) for the detail.
+  (`pcb/*.png`), then the tiles (`pcb/tiles.md`) for the detail. **Order:**
+  the changed tiles `changed.md` lists, then every other tile in scope (a
+  group-scoped snapshot is tiled only round the group); every tile of the
+  board only for scope "fab release" or "all".
 
 ## The checklist
 
