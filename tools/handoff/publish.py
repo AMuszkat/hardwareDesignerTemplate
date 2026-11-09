@@ -963,6 +963,17 @@ class Board:
                      "datasheet is NOT in this handoff (tools/parts/datasheet.py --refresh)")
         return out
 
+    SIDECARS = (".pins.csv", ".tables.json", ".pages.json", ".land.json")
+
+    @staticmethod
+    def _sidecars(m):
+        """tools/parts/extract.py's outputs beside a filed PDF: [(handoff name, repo path)].
+        Candidates, never authority; published and hashed WITH the PDF so a reader's copy
+        is the one the PDF's revision produced."""
+        base = m["path"][:-4] if m["path"].lower().endswith(".pdf") else m["path"]
+        return [(os.path.basename(base) + ext, base + ext) for ext in Board.SIDECARS
+                if os.path.exists(os.path.join(ROOT, base + ext))]
+
     @staticmethod
     def _ds_name(m):
         """The file name in handoff/datasheets/: the filed PDF's own name, which
@@ -1148,6 +1159,7 @@ class Board:
         h.update({n: _h(rel) for n, rel in copies.items()})
         h.update({"datasheets/" + self._ds_name(m): _hb(open(os.path.join(ROOT, m["path"]), "rb").read())
                   for _, m in ds})
+        h.update({"datasheets/" + n_: _h(rel) for _, m in ds for n_, rel in self._sidecars(m)})
         return dict(sorted(h.items()))
 
     def publish(self):
@@ -1171,6 +1183,8 @@ class Board:
             for _, mm in ds:
                 shutil.copy2(os.path.join(ROOT, mm["path"]),
                              os.path.join(new, "datasheets", self._ds_name(mm)))
+                for n_, rel in self._sidecars(mm):
+                    shutil.copy2(os.path.join(ROOT, rel), os.path.join(new, "datasheets", n_))
             os.chmod(new, 0o775)
             before = set(self._listing())
             old = None

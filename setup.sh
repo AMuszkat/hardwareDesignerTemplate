@@ -12,6 +12,8 @@
 #                                            skills/agents from the installed binary
 #   ./setup.sh render-settings               re-write the per-machine settings (after a move)
 #   ./setup.sh clean-examples [--dry-run]    remove the example studies and their rows
+#   ./setup.sh install-ml [--pages]          OPTIONAL: datasheet extraction (Docling; --pages adds
+#                                            ColQwen2.5), tools/parts/.venv-ml, ~2 GB
 #   ./setup.sh install-blender [--amd-gpu]   OPTIONAL: Blender, only for 3D renders with
 #                                            --engine blender (~1.2 GB, outside the repo)
 #   ./setup.sh check-public [--history]      before a repo goes public: secrets, personal
@@ -179,6 +181,27 @@ Initialised. Next:
 NEXT
 }
 
+cmd_install_ml() {
+  # OPTIONAL: datasheet extraction (tools/parts/extract.py) in its own venv, tools/parts/.venv-ml.
+  # Docling (MIT) for the tables; --pages adds ColQwen2.5 (colpali-engine, Apache 2.0) for the page
+  # index. The land stage needs Qwen2.5-VL served by Ollama, which this never installs system-wide.
+  local pages=0
+  for a in "$@"; do case "$a" in --pages) pages=1 ;; *) echo "unknown option $a" >&2; exit 2 ;; esac; done
+  local v="tools/parts/.venv-ml"
+  [ -x "$v/bin/python" ] || python3 -m venv "$v" || { echo "python3 -m venv failed" >&2; exit 1; }
+  "$v/bin/pip" install --quiet --upgrade pip
+  local idx=()
+  [ "$(uname -s)" = Linux ] && ! command -v nvidia-smi >/dev/null 2>&1 && idx=(--extra-index-url https://download.pytorch.org/whl/cpu)
+  "$v/bin/pip" install --quiet "${idx[@]}" docling pymupdf || { echo "pip install docling failed" >&2; exit 1; }
+  if [ "$pages" = 1 ]; then "$v/bin/pip" install --quiet "${idx[@]}" colpali-engine || { echo "pip install colpali-engine failed" >&2; exit 1; }; fi
+  "$v/bin/python" tools/parts/extract.py --check
+  echo
+  echo "The land stage reads land patterns with Qwen2.5-VL-7B served locally by Ollama (https://ollama.com):"
+  echo "  ollama pull qwen2.5vl:7b    # extract.py finds it at http://localhost:11434 (HW_OLLAMA)"
+  echo "A GPU is recommended, not required. Nothing reads the outputs until tools/parts/validate_extract.py"
+  echo "has matched the extracted pin tables against the hand-made PINOUT CSVs (ROADMAP H4)."
+}
+
 cmd_new_board() {
   [ -f "$KP/project.json" ] || { echo "run ./setup.sh init <ProjectName> first" >&2; exit 1; }
   py tools/handoff/new_board.py "$@"
@@ -194,5 +217,6 @@ case "${1:-}" in
   clean-examples) shift; python3 tools/setup/clean_examples.py "$@" ;;
   check-public) shift; python3 tools/setup/check_public.py "$@" ;;
   install-blender) shift; sh "$KP/tools/render/setup.sh" "$@" ;;
+  install-ml) shift; cmd_install_ml "$@" ;;
   *) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 2 ;;
 esac
