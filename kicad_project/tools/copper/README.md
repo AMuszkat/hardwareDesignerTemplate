@@ -94,6 +94,12 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   its own via.
 - An axial link into a ground pad inside the ground pour can take a thermal
   spoke (DRC `starved_thermal`): `--avoid UUID:side`.
+- **`thermals.py` replaces only KiCad's default inner relief** (0.5 mm gap, 0.5 mm spoke, which
+  merges into a slot round a 2.54 mm pin row) with 0.2 / 0.3. A zone whose plan set
+  `thermal_gap` / `spoke_width` keeps them. It used to overwrite every inner zone, and `apply`'s
+  read-back does not compare zone settings, so board2's GND planes held 0.2 / 0.3 while their plan
+  and report said 0.3 / 0.5 (RV22.3). To prove it: the zone's `thermal_gap` in the saved board
+  equals the plan's.
 - The effective polygon of a round pad is inscribed: the tools keep 0.01 mm
   over the gap, or KiCad measures 0.1457 where the polygon said 0.15.
 - A `pcbnew` wrapper is a new object on every lookup: compare items by

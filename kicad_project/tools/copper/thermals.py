@@ -8,9 +8,10 @@ The guide's `thermals` row: `outer: all pads; inner: THT only` -- each of
 outer (F.Cu / B.Cu) and inner pours gets `all pads` (spokes on SMD and THT),
 `THT only` (spokes on through-hole pins, SMD n/a) or `none`.  Vias stay solid.
 `thermal pad` rows (`U5.5: solid`, `C12.2: none`) set one pad's own
-connection.  Rule areas are left alone.  Inner planes get a 0.2 mm relief gap
-and 0.3 mm spokes: KiCad's 0.5 mm default round a row of 2.54 mm pins merges
-into a slot that cuts the plane into islands.  route.py apply runs this (with
+connection.  Rule areas are left alone.  An inner plane still at KiCad's
+default relief (0.5 mm gap, 0.5 mm spoke) gets 0.2 / 0.3: the 0.5 mm gap round
+a row of 2.54 mm pins merges into a slot that cuts the plane into islands.  A
+zone whose relief its plan set (`thermal_gap`, `spoke_width`) keeps it.  route.py apply runs this (with
 --apply) when the plan says "thermals": true.  Importable: apply(b, pcbnew, G) -> changes."""
 import argparse
 import shutil
@@ -47,9 +48,12 @@ def apply(b, pcbnew, G):
         if z.GetPadConnection() != want:
             ch.append((name, z.GetPadConnection(), want))
             z.SetPadConnection(want)
-        if not outer and (z.GetThermalReliefGap(), z.GetThermalReliefSpokeWidth()) != (pcbnew.FromMM(0.2), pcbnew.FromMM(0.3)):
+        # only KiCad's DEFAULT relief (0.5 / 0.5) is replaced: a zone's own gap and spoke, set by
+        # the plan that drew it, are the plan's -- overwriting them made the board and its plan
+        # disagree with no word said (board2 RV22.3: planned 0.3 / 0.5, written 0.2 / 0.3)
+        if not outer and (z.GetThermalReliefGap(), z.GetThermalReliefSpokeWidth()) == (pcbnew.FromMM(0.5), pcbnew.FromMM(0.5)):
             z.SetThermalReliefGap(pcbnew.FromMM(0.2)); z.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.3))
-            ch.append((name, "relief", "0.2 gap / 0.3 spoke"))
+            ch.append((name, "relief", "KiCad's 0.5 / 0.5 -> 0.2 gap / 0.3 spoke"))
     return ch
 
 

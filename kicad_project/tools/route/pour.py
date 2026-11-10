@@ -263,7 +263,10 @@ def section_report(pn, b, z, lid, net, isl, a, short):
     horiz = bb.GetWidth() >= bb.GetHeight()          # cut across the long axis
     c = (lambda p: p.GetPosition().x) if horiz else (lambda p: p.GetPosition().y)
     sa, da = [pn.ToMM(c(p)) for p in src], [pn.ToMM(c(p)) for p in dst]
-    lo, hi = (max(da), min(sa)) if max(da) < min(sa) else (max(sa), min(da))
+    # from the FARTHEST load to the nearest source: every load pad draws through the cuts between
+    # it and the sources, so the window starts at the last one (board2 RV22.4: starting at J1's
+    # first +5V pin never cut the pour where pins 79-87 draw)
+    lo, hi = (min(da), min(sa)) if max(da) < min(sa) else (max(sa), max(da))
     if lo >= hi:
         lo, hi = min(sa + da), max(sa + da)
     t0, t1 = (pn.ToMM(bb.GetY()), pn.ToMM(bb.GetBottom())) if horiz else (pn.ToMM(bb.GetX()), pn.ToMM(bb.GetRight()))

@@ -577,7 +577,7 @@ and the vias the fill does **not** reach; the same-net SMD pads standing over
 it; with `--over NETGLOB:LAYER`, the length of those tracks lying **under** the
 fill (split by `--field`'s courtyard when named). `--try NET:LAYER=zone.json`
 swaps an outline in memory and measures; nothing is written.
-`--section MM --from REF[.PIN],... --to REF[.PIN],...` cuts the fill across its
+`--section MM [--section-net NET] --from REF[.PIN],... --to REF[.PIN],...` cuts the fill across its
 long axis every 0.05 mm between the sources and the loads and sums the copper on
 each cut (the fill and the net's lands): PASS when the narrowest is >= MM, and
 where it is. It is the "every cross-section of the pour on the load path keeps
@@ -585,6 +585,10 @@ N mm" a handoff gives once signal hops cross a rail pour (board2 D67(b): 1.0 mm;
 1.71 before R5, 1.20 after). A shrink-the-fill test (erode by MM / 2, ask if
 the pins still share a piece) asks a different question -- the narrowest
 channel, not the copper across -- and failed a pour the handoff's rule passes.
+The window runs from the FARTHEST load pin to the nearest source: every load
+draws through the cuts between it and the sources (board2 RV22.4: a window
+starting at J1's first +5V pin never cut the pour where pins 79-87 draw, where
+a signal hop crossed it).
 
 **Measure the fill, do not assume it.** `GetFilledPolysList(...).OutlineCount()`
 is the island count and `.Contains(pt)` says whether a via is really in the
@@ -632,6 +636,10 @@ listed (`MISSED`), never forced. Its output is an ordinary plan for `route.py ch
 - **A fill-based clearance is not tight enough alone.** A via inside the fill shrunk by its radius
   stood 0.166 mm from a track, because a 45° fill edge is approximate. Every layer is also tested
   against the copper itself.
+- **Every gap is a number.** After placing, `stitch.py` prints a `GAP` line for each stretch of
+  the ring path farther than pitch / 2 from a via or a through-hole pin of the net, with its length
+  and the farthest point. A report quotes those lines; "no legal site within 1.5 mm" is not a
+  measurement (board2 RV22.1: four 10-12 mm stretches; a 3 mm `--reach` halved them).
 - **Starved spokes** (DRC `starved_thermal`): a THT pin left one spoke into the pour, or spokes into a
   pocket with nothing else, between tracks. There is no via site, so a zone `holes` entry round the pin
   and its pocket removes the pour there; the pin reaches the net on the other layers. Each hole changes

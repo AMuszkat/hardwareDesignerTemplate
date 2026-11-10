@@ -15,6 +15,8 @@ copper on every layer.  This places them, on the board as it is plus the zones o
   ring    along every Edge.Cuts contour -- the outline and each cut-out -- just inside the
           copper-to-edge band, one via per --pitch mm;
   grid    with --grid G, one per G x G cell inside, where no via of the net stands already;
+  GAP     after placing: every stretch of the ring path farther than pitch / 2 from a via or a
+          through-hole pin of the net, with its length -- what a report quotes;
   pads    with --pads (or --only-pads), every SMD pad of the net that no track of the net
           touches gets a via of its own on one of its axes, at the pad's edge + the via-to-pad
           gap + the via's radius or further out to --reach, linked by ONE straight segment out of
@@ -415,6 +417,44 @@ def main():
                 new_links.append(((cx, cy), (x, y), w, p_))
                 n_pad += 1
 
+    # coverage: along every ring path, the stretches farther than pitch / 2 from any via or
+    # through-hole pin of the net -- each one printed with its length, so a gap is a number in the
+    # report, not "left" (board2 RV22.1)
+    gaps = []
+    if not a.only_pads:
+        ties = [(vx, vy) for vx, vy, own in vias if own] + \
+               [(mm(p_.GetPosition().x), mm(p_.GetPosition().y)) for p_ in tht_own]
+        for i in range(board.OutlineCount()):
+            rings = [board.Outline(i)] + [board.Hole(i, h) for h in range(board.HoleCount(i))]
+            for ri, ln in enumerate(rings):
+                ring = pn.SHAPE_POLY_SET()
+                ring.AddOutline(ln)
+                if ri == 0:
+                    ring.Deflate(FM(off), pn.CORNER_STRATEGY_ROUND_ALL_CORNERS, err)
+                else:
+                    ring.Inflate(FM(off), pn.CORNER_STRATEGY_ROUND_ALL_CORNERS, err)
+                for j in range(ring.OutlineCount()):
+                    c_ = ring.Outline(j)
+                    pts = [(mm(c_.CPoint(q).x), mm(c_.CPoint(q).y)) for q in range(c_.PointCount())]
+                    pts.append(pts[0])
+                    samples = []
+                    for p, q in zip(pts, pts[1:]):
+                        n_ = max(1, int(math.dist(p, q) / 0.25))
+                        samples += [(p[0] + (q[0] - p[0]) * k / n_, p[1] + (q[1] - p[1]) * k / n_) for k in range(n_)]
+                    far = [min(math.dist(s_, t) for t in ties) if ties else 1e9 for s_ in samples]
+                    run = None
+                    for k, (s_, d_) in enumerate(zip(samples + samples[:1], far + far[:1])):
+                        if d_ > a.pitch / 2:
+                            run = run or [s_, s_, 0.0, 0.0]
+                            run[2] += 0.25
+                            run[1] = s_
+                            run[3] = max(run[3], d_)
+                        elif run:
+                            gaps.append((("outline" if ri == 0 else "cut-out"), run))
+                            run = None
+                    if run:
+                        gaps.append((("outline" if ri == 0 else "cut-out"), run))
+
     out = dict(plan) if (a.merge and plan) else {}
     out["group"] = a.group or plan.get("group") or "stitch"
     why = (f"{net} stitching ({Path(__file__).name}): {n_tie} tie, {n_ring} ring at {a.pitch:g} mm"
@@ -426,6 +466,9 @@ def main():
     out["tracks"] = (plan.get("tracks", []) if a.merge and plan else []) + tracks_out
     Path(a.out).write_text(json.dumps(out, indent=1))
     print(f"{why}\n-> {a.out}")
+    for where, (p0, p1, L, d) in gaps:
+        print(f"  GAP {where} ({p0[0]:.2f}, {p0[1]:.2f}) -> ({p1[0]:.2f}, {p1[1]:.2f}): {L:.1f} mm of the ring "
+              f"farther than {a.pitch / 2:g} mm from a {net} via or pin (at most {d:.2f} mm)")
     for m in diag45:
         print(f"  45-DEGREE {m}")
     for m in missed:
