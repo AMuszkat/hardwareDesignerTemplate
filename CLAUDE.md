@@ -26,7 +26,8 @@ Start with `design/IMPLEMENTATION.md` and the sheets in `design/diagrams/`.
 | `studies/` | runnable experiments `sNN_*.py` — the evidence behind every number (`studies/README.md`) — plus `designpoint.py` (model-parameter bus), `components_boardN.py` (each board's value bus), `baselines/`, `reports/` | concept |
 | `tools/diagrams/` | sheet generators + `sheet.py` | concept |
 | `tools/handoff/` | the handoff publisher, one data module per board in `boards/`, answers in `answers/`, review verdicts in `reviews/`, fab profiles in `fabs/` | concept |
-| `tools/review/`, `.claude/agents/` | a board change frozen and gated (`snapshot.py`); the `schematic-reviewer` and `pcb-reviewer` agents that review it | concept |
+| `tools/review/`, `.claude/agents/` | a board change frozen and gated (`snapshot.py`), its geometry dumped once and queried (`geometry.json`, `geom.py`), its object diff against the last reviewed snapshot (`CHANGES.md`, `changes.py`), the custom DRC rules proven (`rulecheck.py`); the `schematic-reviewer` and `pcb-reviewer` agents that review it | concept |
+| `tools/measure/` | `sessions.py`: where the sessions' time went, from the Claude Code transcripts (`out/sessions/report.md`) — wall-clock by class, stage, tool family, review turnaround, reviewer runs, question chains; numbers and names only | concept |
 | `tools/parts/` | distributor market data and the datasheet fetcher | concept |
 | `tools/lint_docs.py`, `tools/status.py`, `tools/setup/`, `verify.sh` | doc lint, STATUS's generated block, machine setup, every check in one command | concept |
 | `tests/agentic_test.py` | the pipeline both sessions drive, end to end on a synthetic board in a scratch copy, each stage timed: the measurement harness and regression test for `ROADMAP.md` | concept |
@@ -94,7 +95,9 @@ The walls are enforced where the harness can enforce them: rendered deny
 rules (`tools/setup/render_settings.py`), a hook that keeps each board session
 in its own folder, a hook on THIS side that blocks edits to generated files
 and to the board sessions' files, the board tools refusing another session's
-board, and the SendMessage guard. **Bash bypasses the hooks and rules**, so
+board, the SendMessage guard, and a Bash guard on both sides
+(`kicad_project/tools/session/bashguard.py`) that refuses a loop waiting on a
+process by name. **Bash bypasses the hooks and rules**, so
 the contract carries the boundary too: never write into a board folder or
 `kicad_project/tools/` from here except through `publish.py`, `new_board.py`
 and the template merge that `giveback.py` runs.
@@ -110,6 +113,12 @@ answer. The `answer-question` skill is the procedure.
   within 20 minutes) describes every change since the previous one.
 - A durable fact goes into the generated tables (nets, pin treatment,
   connectors), not only into an answer.
+- **An answer names its `Topic:`**; a third answer on one topic needs an
+  `Escalated:` line, or the publish stops (protocol §5, counted).
+- **A new or changed custom DRC rule on a board with a PCB is proven before it
+  is published**: `tools/review/rulecheck.py --board boardN` runs it on the
+  board and files the proof in `tools/handoff/rulechecks/`; a rule that
+  matches no net stops the publish.
 - **Placeholders get no part at all** — a plausible generic part is worse than
   a hole, because it stops looking like an open question.
 - Classify pins by PIN NAME, never by a datasheet's Function column.
@@ -155,7 +164,12 @@ every must-fix finding before it reaches the board** — a false finding costs
 a fix that breaks something. `handoff` findings are fixed in the generator
 in the same pass; `decision` findings go to the user; the verdict (PASS or
 CHANGES) and the board's findings are published as `handoff/15_reviews.md`
-and rung. `RELAY_PROTOCOL.md` section 10 is the loop.
+and rung. **A must-fix finding a number decides carries its check** (`Check
+RVn.k: <rule> | <setting>` under the verdict): published as
+`handoff/findings.json`, run by the board with `route.py audit --findings`
+before every pcb request and by the snapshot as a gate — a finding that comes
+back fails in a second under its old id, and a fix re-review whose findings
+all carry checks is judged from the snapshot, without an agent. `RELAY_PROTOCOL.md` section 10 is the loop.
 
 ## Generated files — never hand-edit
 
@@ -163,7 +177,8 @@ and rung. `RELAY_PROTOCOL.md` section 10 is the loop.
 markers (`tools/status.py`), `kicad_project/*/handoff/**`
 (`tools/handoff/publish.py`), `reference/vendor/datasheets.json`
 (`tools/parts/datasheet.py`), `studies/baselines/*.json`
-(`run_all.py --check --bless`). **(Add your own: any file that must match
+(`run_all.py --check --bless`), `tools/handoff/rulechecks/*.json`
+(`tools/review/rulecheck.py`). **(Add your own: any file that must match
 another — a pinout, a constraints file — is generated from it, never typed:
 a hand-kept copy goes stale without failing.)**
 
@@ -183,6 +198,11 @@ The concept venv is `.venv` (`./setup.sh install`); matplotlib uses `Agg`.
     .venv/bin/python tools/handoff/publish.py --check --all    # fresh = the folder is what the sources render to now
     python3 kicad_project/tools/template/giveback.py status  # template-owned files changed here and not given back
     python3 tools/review/snapshot.py --board board1 --kind schematic|pcb --id RVn   # a board change, frozen and gated
+    python3 tools/review/geom.py <snapshot> <query>     # a PCB snapshot's geometry, measured (gaps, lengths, what is near)
+    python3 tools/review/changes.py <old snapshot> <new snapshot>   # what moved between two PCB snapshots
+    python3 tools/review/rulecheck.py --board board1    # prove the custom DRC rules on the PCB; a new or changed rule does not publish without it
+    .venv/bin/python tools/measure/sessions.py [--since YYYY-MM-DD]   # where the sessions' time went (out/sessions/report.md)
+    python3 kicad_project/tools/bgwait.py run --name N -- <command> | wait N --timeout 100   # a long command, waited on by pid; never a pgrep loop
     .venv/bin/python tools/status.py                    # STATUS generated block
     .venv/bin/python tools/parts/fetch.py <MPN>         # price, stock, lead time
     .venv/bin/python tools/parts/search.py --help       # discover candidates in a category
