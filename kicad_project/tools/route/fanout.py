@@ -71,6 +71,8 @@ The layer file:
 leaves from its ball, no via needed.  Any other outer layer: every via keeps its pad.
 Inner: a via keeps its pad only with "nfp": false or for "pad_nets" (the layer's pours);
 "exit": any | east | west | north | south (screen axes, y down), as escape_bound.py.
+"pad_gap": mm -- the least copper gap between two different nets' via pads on this layer (its
+sources' and its pad_nets' vias): an inner layer's pair rule; one of each closer pair moves off.
 "only": [regex, ...] -- the nets this layer may take (a pour layer opened to a few low-speed
 signals); a fixed net is placed where it is fixed regardless.  To fill one layer before another,
 run without the second first and add it only for what is left.
@@ -549,7 +551,33 @@ def cmd_layers(a):
             fl, trapped = len(got), sorted(set(srcs.values()) - got)
             if fl < len(srcs):
                 bad.append((L["name"], fl, len(srcs), trapped))
-        if not bad:
+        # "pad_gap": two vias of different nets that both keep a pad on this layer (its sources, its pour
+        # vias) must be that far apart copper to copper -- an inner layer's pair rule (board 1's D65:
+        # 0.4 pads at 0.5 mm are 0.100 apart against 0.1016). One of each pair leaves the layer,
+        # the one in most pairs first; a fixed net or a pour via never moves.
+        pairs_moved = []
+        for L in spec["layers"]:
+            g = L.get("pad_gap")
+            if g is None or not S[L["name"]]:
+                continue
+            pn = set(L.get("pad_nets", []))
+            padded = {src_via[n]: n for n in S[L["name"]]}
+            padded.update({p: short(v["net"]) for p, v in vias.items() if short(v["net"]) in pn})
+            pts = sorted(padded)
+            close = [(a_, b_) for i, a_ in enumerate(pts) for b_ in pts[i + 1:]
+                     if padded[a_] != padded[b_] and math.dist(a_, b_) < pad + g - 1e-9]
+            while close:
+                deg = collections.Counter(padded[q] for e in close for q in e
+                                          if padded[q] in S[L["name"]] and padded[q] not in fixed)
+                if not deg:
+                    break
+                n = max(sorted(deg), key=deg.get)
+                ban[L["name"]].add(n)
+                pairs_moved.append((L["name"], n))
+                close = [e for e in close if n not in (padded[e[0]], padded[e[1]])]
+        for ln, n in pairs_moved:
+            print(f"  round {rnd + 1}: {ln} pad gap -- {n} moved off it")
+        if not bad and not pairs_moved:
             break
         for ln, fl, n, trapped in bad:
             movable = [t for t in trapped if t not in fixed] or sorted(S[ln] - set(fixed))
