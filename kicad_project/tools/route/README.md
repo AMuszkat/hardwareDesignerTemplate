@@ -454,8 +454,8 @@ its docstring. What the spec has to be told:
 - **Wait on a background run by its pid, never with `pgrep -f <its command line>`.** A wait loop written
   as `while pgrep -f "netgroup.py ... spec"; do sleep 20; done` carries that string in its own shell's
   command line, matches itself and never ends: board1's three R2 runs were over in 3 minutes and the loop
-  sat for 4 h 50. Start with `... & echo $! > run.pid` and wait with `tail --pid=$(cat run.pid) -f /dev/null`
-  (or `pgrep -f '[n]etgroup.py ...'`), and read the log when the notification is late.
+  sat for 4 h 50. Start it with `tools/bgwait.py run --name N -- ...` and wait with
+  `tools/bgwait.py wait N --timeout 100` (below): by pid, bounded, and it prints the CPU and the log's tail.
 - **Plans gated one at a time against the fanout are not gated against each other.** `route.py check`
   lays only what its plan holds on the scratch copy, so two plans that each pass can still collide: board1's
   In2 escape proof ran two tracks through a through via of the pairs' plan, and only `apply` (which checks
@@ -722,8 +722,8 @@ either session goes through it -- but the router is where the waiting happens:
   PreToolUse hook `tools/session/bashguard.py` blocks a `while` / `until` loop that polls `pgrep` with a
   pattern, `ps | grep` or `pidof` and sleeps -- the bracket form `pgrep -f '[n]etgroup.py'` included: it
   still ends on a name any other process can hold, and still has no limit. A one-shot `pgrep`, and a loop
-  on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is rendered into both
-  `settings.local.json` files by `./setup.sh render-settings`; `./setup.sh check` says when it is missing.
+  on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is declared in both
+  sessions' `.claude/settings.json`, beside the wall.
 - **Several specs of one group at once are a race, not three background runs:** `race.py`, below.
 
 ## `race.py` — spec variants raced as processes, one table, one winner

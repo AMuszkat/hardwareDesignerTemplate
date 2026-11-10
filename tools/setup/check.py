@@ -206,7 +206,7 @@ def project():
     relay = load_json(KP / "relay.json") or {}
     add("ok", "relay switch", "ON" if relay.get("enabled") else "OFF (default; bin/relay on)")
     rc, out = run([sys.executable, str(ROOT / "tools/setup/render_settings.py"), "--check"])
-    add("ok" if rc == 0 else "FAIL", "per-machine settings (deny rules, CLAUDE.md exclude, Bash guard hook)",
+    add("ok" if rc == 0 else "FAIL", "per-machine settings (deny rules, CLAUDE.md exclude)",
         "rendered for this path" if rc == 0 else "; ".join(out.splitlines()),
         "./setup.sh render-settings" if proj else "./setup.sh init <ProjectName> (renders them)")
     sk = KP / ".claude" / "skills"

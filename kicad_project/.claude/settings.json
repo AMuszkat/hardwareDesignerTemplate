@@ -44,6 +44,15 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f \"$CLAUDE_PROJECT_DIR/tools/session/bashguard.py\" ] || exit 0; exec python3 \"$CLAUDE_PROJECT_DIR/tools/session/bashguard.py\""
+          }
+        ]
+      },
+      {
         "matcher": "mcp__konnect__(place_component|move_component|rotate_component|route_trace|add_via|route_differential_pair|route_pad_to_pad|refill_zones)",
         "hooks": [
           {

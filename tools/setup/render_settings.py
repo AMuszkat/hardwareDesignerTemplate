@@ -9,27 +9,14 @@ Write the machine-specific halves of the two sessions' settings:
 
 Both are gitignored, because they hold this clone's ABSOLUTE path.  The
 committed `settings.json` beside each carries everything portable (hooks, MCP
-servers, allow rules).  Re-run after moving or re-cloning the repo, and after
-merging a template version that renders something new; `--check` exits 1 when
-either file is missing, names another location, or lacks something below.
+servers, allow rules).  Re-run after moving or re-cloning the repo; `--check`
+exits 1 when either file is missing or names another location.
 
 The board file carries the board sessions' wall (deny rules) and keeps the root
 CLAUDE.md out of their context.  The concept file carries no rules on purpose:
 a session started in kicad_project/ loads the ROOT's settings.local.json deny
 rules too, so the concept wall is a hook instead (kicad_project/tools/session/
 wall.py concept, declared in .claude/settings.json).
-
-ONE HOOK IS RENDERED HERE, into both files: the Bash guard
-(kicad_project/tools/session/bashguard.py), which refuses a loop that waits
-for a process by NAME (`while pgrep -f ...; do sleep N; done` matches its own
-shell and never ends) and names `tools/bgwait.py wait`.  It is the same for
-both session types, so it is written once, with this clone's absolute path,
-as the SAME command string in both files: a board session loads both, and
-Claude Code runs identical hook commands once.  The command tests that the
-script exists first -- `python3 <missing file>` exits 2, and exit 2 from a
-PreToolUse hook blocks the call, so a renamed script would otherwise block
-every Bash command of every session.  An existing project gets the hook by
-re-rendering (`./setup.sh render-settings`) and restarting its sessions.
 
 ⚠ ABSOLUTE PATHS IN PERMISSION RULES TAKE TWO SLASHES.  `Read(//home/u/x/**)`
 is absolute; `Read(/home/u/x/**)` is resolved RELATIVE TO THE SETTINGS FILE
@@ -38,9 +25,8 @@ it.  Every path below is written `//` + the absolute path.
 
 Merging, not overwriting: entries this script manages are recognised and
 replaced -- those naming this clone, and those left behind by a clone that has
-since moved (same rule, a root that no longer holds this project; any hook
-command that runs a `tools/session/bashguard.py`); anything else in the file
-(your own local allows, your own hooks) is kept.
+since moved (same rule, a root that no longer holds this project); anything
+else in the file (your own local allows, for instance) is kept.
 
 The concept-only list is read off the repo root each time: every top-level
 entry except kicad_project/ and .git.  A folder you add later (firmware/,
@@ -50,7 +36,6 @@ one is not.
 import json
 import os
 import re
-import shlex
 import sys
 from pathlib import Path
 
@@ -79,23 +64,6 @@ BOARD_READ_ONLY = ["kicad_project/*/handoff/**", "kicad_project/project.json",
                    "kicad_project/RELAY_PROTOCOL.md", "kicad_project/CLAUDE.md",
                    "kicad_project/.mcp.json", "kicad_project/.claude/**",
                    "kicad_project/tools/session/**", "kicad_project/tools/boardsel.py"]
-
-
-GUARD = KP / "tools" / "session" / "bashguard.py"
-GUARD_MARK = "tools/session/bashguard.py"      # how a rendered guard hook is recognised, whatever its root
-
-
-def bash_guard():
-    """The PreToolUse entry for the Bash guard: absolute, the same string in
-    both files (run once by a session that loads both), and harmless when the
-    script is not there."""
-    g = shlex.quote(str(GUARD))
-    return {"matcher": "Bash",
-            "hooks": [{"type": "command", "command": f"[ -f {g} ] || exit 0; exec python3 {g}"}]}
-
-
-def is_guard(hook):
-    return isinstance(hook, dict) and GUARD_MARK in str(hook.get("command", ""))
 
 
 def rules(kinds, rels):
@@ -156,33 +124,7 @@ def merge(path, want):
         cur["claudeMdExcludes"] = ex
     else:
         cur.pop("claudeMdExcludes", None)
-    # the Bash guard: drop every rendered copy of it (this location's or an
-    # older one's), keep every other hook of the file, append the current one
-    hooks = cur.setdefault("hooks", {})
-    pre = []
-    for entry in hooks.get("PreToolUse", []):
-        if isinstance(entry, dict) and any(is_guard(h) for h in entry.get("hooks", [])):
-            rest = [h for h in entry["hooks"] if not is_guard(h)]
-            if not rest:
-                continue
-            entry = dict(entry, hooks=rest)
-        pre.append(entry)
-    hooks["PreToolUse"] = pre + [bash_guard()]
     return cur
-
-
-def guard_state(cur):
-    """None when the file runs exactly the current Bash guard, once; else what is wrong."""
-    want = bash_guard()["hooks"][0]["command"]
-    found = [(e.get("matcher"), h.get("command")) for e in (cur.get("hooks") or {}).get("PreToolUse", [])
-             if isinstance(e, dict) for h in e.get("hooks", []) if is_guard(h)]
-    if not found:
-        return "the Bash guard hook (tools/session/bashguard.py) is not declared"
-    if any(c != want for _m, c in found):
-        return "the Bash guard hook names another location (or an older form of the command)"
-    if any(m != "Bash" for m, _c in found):
-        return "the Bash guard hook is not matched on Bash"
-    return None
 
 
 TARGETS = [(ROOT / ".claude" / "settings.local.json", concept_local),
@@ -213,11 +155,6 @@ def check():
         if stale:
             bad.append(f"{path.relative_to(ROOT)}: {len(stale)} entr(ies) left from a previous "
                        "location of this repo")
-        g = guard_state(cur)
-        if g:
-            bad.append(f"{path.relative_to(ROOT)}: {g} -- a loop waiting on `pgrep -f` would not be refused")
-    if not GUARD.is_file():
-        bad.append(f"{GUARD.relative_to(ROOT)}: missing (the rendered hook passes everything without it)")
     return bad
 
 
@@ -233,7 +170,7 @@ def main(argv):
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
-        print(f"wrote {path.relative_to(ROOT)} ({len(data['permissions']['deny'])} deny rules, the Bash guard hook)")
+        print(f"wrote {path.relative_to(ROOT)} ({len(data['permissions']['deny'])} deny rules)")
     return 0
 
 

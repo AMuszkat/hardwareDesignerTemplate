@@ -16,17 +16,19 @@ What must hold:
     grep, a here-document that writes a README, a comment);
   * the hook never blocks by failing: broken JSON, an event with no command,
     another tool's event all exit 0;
-  * THE WIRING: `tools/setup/render_settings.py`, run in a skeleton copy of
-    the repository (a path with a space in it), writes the hook into both
-    `settings.local.json` files as the same command; `--check` then passes,
-    fails again once the hook is taken out, and the rendered command -- run
-    the way Claude Code runs it, through a shell -- blocks the incident's
-    loop, passes `ls`, and exits 0 when the script has gone missing.
+  * THE WIRING: both committed settings files (`.claude/settings.json`,
+    `kicad_project/.claude/settings.json`) declare the hook once, on Bash;
+    each command -- run the way Claude Code runs it, through a shell, with
+    CLAUDE_PROJECT_DIR set to that session's folder (here a copy under a path
+    with a space in it) -- blocks the incident's loop, passes `ls`, and exits
+    0 when the script has gone missing (`python3 <missing file>` exits 2, and
+    exit 2 from a PreToolUse hook would block every Bash call).
 
 The guard is board-free and stdlib-only, so there is nothing to skip.  The
 last line is PASS / FAIL with the counts and the slowest call.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -109,74 +111,39 @@ def event(command):
 
 
 def wiring():
-    """render_settings.py in a skeleton copy -> the list of what is wrong."""
+    """The two committed settings files -> the list of what is wrong."""
     bad = []
     tmp = Path(tempfile.mkdtemp(prefix="test_bashguard_"))
     try:
         root = tmp / "a project"
-        (root / "tools" / "setup").mkdir(parents=True)
-        (root / "kicad_project" / "tools" / "session").mkdir(parents=True)
-        (root / "design").mkdir()
-        rs = root / "tools" / "setup" / "render_settings.py"
-        shutil.copy(ROOT / "tools" / "setup" / "render_settings.py", rs)
         guard = root / "kicad_project" / "tools" / "session" / "bashguard.py"
+        guard.parent.mkdir(parents=True)
         shutil.copy(HOOK, guard)
-
-        def render(*args):
-            r = subprocess.run([sys.executable, str(rs), *args], capture_output=True, text=True, cwd=str(root))
-            return r.returncode, r.stdout + r.stderr
-
-        if render("--check")[0] != 1:
-            bad.append("render_settings --check passes before anything is rendered")
-        rc, out = render()
-        if rc != 0:
-            return bad + [f"render_settings failed: {out.strip()[-200:]}"]
-        rc, out = render("--check")
-        if rc != 0:
-            bad.append(f"render_settings --check fails right after a render: {out.strip()}")
-        cmds = []
-        for f in (root / ".claude" / "settings.local.json", root / "kicad_project" / ".claude" / "settings.local.json"):
-            pre = json.loads(f.read_text()).get("hooks", {}).get("PreToolUse", [])
-            mine = [h["command"] for e in pre if e.get("matcher") == "Bash" for h in e["hooks"]]
+        for rel, project in ((".claude/settings.json", root), ("kicad_project/.claude/settings.json", root / "kicad_project")):
+            pre = json.loads((ROOT / rel).read_text()).get("hooks", {}).get("PreToolUse", [])
+            mine = [h["command"] for e in pre if e.get("matcher") == "Bash" for h in e["hooks"]
+                    if "bashguard.py" in h.get("command", "")]
             if len(mine) != 1:
-                bad.append(f"{f.relative_to(root)}: {len(mine)} Bash hooks rendered, want 1")
-            cmds += mine
-        if len(set(cmds)) != 1:
-            return bad + ["the two files do not carry the same hook command (a board session would run it twice)"]
-        cmd = cmds[0]
+                bad.append(f"{rel}: {len(mine)} Bash guard hooks declared, want 1")
+                continue
+            cmd = mine[0]
 
-        def fire(command):
-            r = subprocess.run(["sh", "-c", cmd], input=event(command), capture_output=True, text=True, cwd=str(root))
-            return r.returncode, r.stderr
+            def fire(command):
+                r = subprocess.run(["sh", "-c", cmd], input=event(command), capture_output=True, text=True,
+                                   cwd=str(project), env={"PATH": os.environ.get("PATH", ""),
+                                                          "CLAUDE_PROJECT_DIR": str(project)})
+                return r.returncode, r.stderr
 
-        rc, err = fire(INCIDENT)
-        if rc != 2 or "bgwait.py wait" not in err:
-            bad.append(f"the rendered hook does not block the incident's loop (exit {rc})")
-        if fire("ls -la")[0] != 0:
-            bad.append("the rendered hook refuses `ls -la`")
-        # a second render keeps the user's own hooks and leaves one guard
-        f = root / ".claude" / "settings.local.json"
-        d = json.loads(f.read_text())
-        d["hooks"]["PreToolUse"].insert(0, {"matcher": "Bash", "hooks": [
-            {"type": "command", "command": "echo mine"},
-            {"type": "command", "command": "python3 /old/place/kicad_project/tools/session/bashguard.py"}]})
-        f.write_text(json.dumps(d))
-        if render("--check")[0] != 1:
-            bad.append("--check passes with a guard hook of another location in the file")
-        render()
-        d = json.loads(f.read_text())
-        got = [h["command"] for e in d["hooks"]["PreToolUse"] for h in e["hooks"]]
-        if got != ["echo mine", cmd]:
-            bad.append(f"a re-render did not keep the user's hook and one guard: {got}")
-        d["hooks"]["PreToolUse"] = [e for e in d["hooks"]["PreToolUse"] if e["hooks"][0]["command"] != cmd]
-        f.write_text(json.dumps(d))
-        rc, out = render("--check")
-        if rc != 1 or "Bash guard" not in out:
-            bad.append("--check passes with the guard hook taken out")
-        guard.unlink()
-        rc, err = fire(INCIDENT)
-        if rc != 0:
-            bad.append(f"with the script missing the rendered hook exits {rc}: it would block Bash (want 0)")
+            rc, err = fire(INCIDENT)
+            if rc != 2 or "bgwait.py wait" not in err:
+                bad.append(f"{rel}: the hook does not block the incident's loop (exit {rc})")
+            if fire("ls -la")[0] != 0:
+                bad.append(f"{rel}: the hook refuses `ls -la`")
+            guard.rename(guard.with_suffix(".gone"))
+            rc, err = fire(INCIDENT)
+            guard.with_suffix(".gone").rename(guard)
+            if rc != 0:
+                bad.append(f"{rel}: with the script missing the hook exits {rc}: it would block Bash (want 0)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -217,8 +184,8 @@ def main():
               f"first: {bad[0]}")
         return 1
     print(f"PASS: {len(BLOCKED)} name-wait loops blocked (the incident's among them), {len(PASSES)} legitimate "
-          f"commands passed, {len(HARMLESS)} malformed events exit 0; render_settings wires the same hook into both "
-          f"settings.local.json and its --check sees it missing; slowest hook call {slowest * 1000:.0f} ms")
+          f"commands passed, {len(HARMLESS)} malformed events exit 0; both settings.json declare the hook, "
+          f"and it passes everything when the script is missing; slowest hook call {slowest * 1000:.0f} ms")
     return 0
 
 
