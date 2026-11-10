@@ -514,7 +514,17 @@ def stage_router(quick, rip="conflict"):
     import maze                                   # noqa: E402
     core = maze._CORE
     if core is None:
-        return _route_fixture(quick, rip, maze.CORE)
+        _route_fixture(quick, rip, maze.CORE)
+        # R9: the slow search running unasked is a machine fault, not a pass -- a board session on it
+        # waits minutes for what takes seconds, and nothing else says so
+        asked = os.environ.get("HW_MAZE_CORE", "").lower() == "python"
+        if not asked and any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+            s = STAGES[-1]
+            s["status"] = "FAIL"
+            s["detail"] += (f"; the router ran on the {maze.CORE} search although a C compiler is here: "
+                            "run kicad_project/tools/setup.sh (HW_MAZE_CORE=python asks for the Python core)")
+            print(f"  {'':10s} (router: FAIL -- not the compiled core; run kicad_project/tools/setup.sh)")
+        return
     maze._CORE = None
     try:
         _route_fixture(quick, rip, "python")
@@ -863,7 +873,22 @@ def stage_script(name, script, timeout=1800):
     stage(name, m.group(1), time.time() - t0, m.group(2)[:600])
 
 
-SCRIPT_STAGES = [("wall", "test_wall.py")]
+# (stage, script, skipped under --quick)
+SCRIPT_STAGES = [
+    ("wall", "test_wall.py", False),
+    ("bashguard", "test_bashguard.py", False),
+    ("bgwait", "test_bgwait.py", False),
+    ("stall", "test_router_stall.py", False),
+    ("planguard", "test_plan_guard.py", False),
+    ("race", "test_race.py", False),
+    ("flow", "test_fanout_flow.py", False),
+    ("pcb-large", "test_pcb_large.py", True),
+    ("rev-geom", "test_review_geom.py", False),
+    ("rev-diff", "test_review_changes.py", False),
+    ("rule-gate", "test_rule_gate.py", False),
+    ("topic", "test_answer_topic.py", False),
+    ("sessions", "test_sessions.py", False),
+]
 
 
 # == main ====================================================================
@@ -911,8 +936,11 @@ def main():
             stage_pcb(copy, board, a.quick)
         else:
             stage("pcb", "SKIP", 0.0, "needs a board, kicad-cli and pcbnew")
-        for name_, script_ in SCRIPT_STAGES:
-            stage_script(name_, script_)
+        for name_, script_, slow_ in SCRIPT_STAGES:
+            if slow_ and a.quick:
+                stage(name_, "SKIP", 0.0, f"--quick (python3 tests/{script_})")
+            else:
+                stage_script(name_, script_)
         stage_lint(copy)
     finally:
         if a.keep:

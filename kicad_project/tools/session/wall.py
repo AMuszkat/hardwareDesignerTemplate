@@ -34,7 +34,8 @@ folders.  The root's settings.json hooks are not loaded there, so this is.
     local.sessions.json                                    -> block (setup.sh / bin/relay / the brief)
   * RELAY_PROTOCOL.md, kicad_project/CLAUDE.md, .mcp.json  -> ask (the user's)
   * a GENERATED file: design/diagrams/*.svg, any handoff/,
-    reference/vendor/datasheets.json, studies/baselines/*  -> block (edit the generator)
+    reference/vendor/datasheets.json, studies/baselines/*,
+    tools/handoff/rulechecks/*  -> block (edit the generator)
 
 Bash bypasses this, like every permission rule; the written contracts carry
 the boundary there.  Exit 2 = block, reason on stderr.
@@ -106,6 +107,8 @@ GENERATED = [
      "tools/parts/datasheet.py -- use --url / --file to file a datasheet"),
     (re.compile(r"studies/baselines/.*"), "written by run_all.py --check --bless, after "
      "you have looked at the deltas"),
+    (re.compile(r"tools/handoff/rulechecks/.*"), "the rule proofs, written by "
+     "tools/review/rulecheck.py -- run it; a typed proof is ignored"),
 ]
 
 
