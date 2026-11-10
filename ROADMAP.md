@@ -67,7 +67,7 @@ fixtures (the `pcb` stage's board is `tests/fixture_pcb.py`'s).
 | S2 | Phase 3 PR | the fixture MCU's symbol from its pin table: 0 pin differences, the plan with it PASSES with no fix-up; a 124-pin table split 80 / 40 / 4 |
 | H3 | Phase 3 PR | `publish.py --selftest` on the fixture handoff with a NETS row deleted reported that hole (and 12 real fixture gaps), 4 min |
 | R4 | Phase 3 PR | the same routes both cores; 16 nets 52.5 s → 4.5 s (`--full`), 21 s → 1.0 s (default); PCB fixture 20 s → 2.2 s |
-| H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486, now from 24 of 96 pages (`--pages auto`). Widened 2026-11-09 against KiCad's stock symbols (`extract_corpus.py`, 19 vendor datasheets): 461 of 728 pins named alike, 2 parts exact after a multi-package parser — the gate fails, so the consumers stay unwired; drawn-only pinouts, prose tables and ball-map grids are what it cannot read. `pages` ran on CPU, 4 of 4 queries on the right page (TPS51363, 18 s a page); `land` unrun (Ollama not installed) |
+| H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486, now from 24 of 96 pages (`--pages auto`). Widened 2026-11-09 against KiCad's stock symbols (`extract_corpus.py`, 19 vendor datasheets): 461 of 728 pins named alike, 2 parts exact after a multi-package parser — the gate fails, so the consumers stay unwired; drawn-only pinouts, prose tables and ball-map grids are what it cannot read. the page index is the text layer (ColQwen2.5 gave the same pages at 18 s a page); the Qwen2.5-VL `land` stage was run on the iGPU and dropped — it read a 0.4 pitch as 0.6 and returned 14-digit pad counts, where Claude reading the page is faster and right |
 
 ## Phase 0 — hours each, no behaviour change
 
@@ -343,6 +343,12 @@ step is skipped with one clear line and filing still works):
 - Qwen2.5-VL-7B over the land-pattern crop → `<MPN>.land.json`, candidates
   never authority, served locally (Ollama or vLLM); fallback parser
   PaddleOCR-VL for a scanned PDF.
+
+*2026-11-10: the two model bullets above were tried and dropped. The page
+index is the text layer (the same pages as ColQwen2.5, in a second, no
+model); the land pattern is read by Claude from the page the index names,
+because the local Qwen2.5-VL got a pitch wrong and returned 14-digit pad
+counts. Only Docling stays.*
 
 `publish.py` copies and hashes the three files into `handoff/datasheets/`
 beside the PDF. Consumers: S2 for symbols; `fp.py verify --against` to

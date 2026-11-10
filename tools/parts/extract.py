@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Datasheet extraction, once per MPN, beside the filed PDF -- candidates, never authority.
 
-    python3 tools/parts/extract.py <MPN | path.pdf> [--stages tables,pages,land] [--pages 70-90] [--force]
+    python3 tools/parts/extract.py <MPN | path.pdf> [--stages tables,pages] [--pages 70-90] [--force]
     python3 tools/parts/extract.py --check          # which stages this machine can run
 
 Runs in its own venv, tools/parts/.venv-ml (`./setup.sh install-ml`; torch-sized,
@@ -9,7 +9,7 @@ optional): launched from any other Python it re-runs itself there, and without
 the venv it says so in one line and exits 0 -- filing a datasheet never depends
 on it. `datasheet.py` runs it after filing a PDF.
 
-Three stages, each skipped with one line when its model or server is absent:
+Two stages, each skipped with one line when its tool is absent:
 
   tables  Docling, text-layer mode (no OCR: a vendor datasheet is born
           digital, its text layer is exact; a scan is skipped with one line)
@@ -19,23 +19,25 @@ Three stages, each skipped with one line when its model or server is absent:
           / signal column; one table for several packages gives one set of
           pins each). Past 40 pages only the pin-table pages the text layer
           shows (--pages auto)
-  pages   ColQwen2.5 (colpali-engine) as a page index -> <MPN>.pages.json: the
-          best pages for "pin assignment", "recommended land pattern",
-          "absolute maximum ratings", "package outline", so a reader opens two
-          pages, not two hundred
-  land    Qwen2.5-VL-7B served locally by Ollama (HW_OLLAMA, default
-          http://localhost:11434; model HW_LAND_MODEL, default qwen2.5vl:7b)
-          over the land-pattern page pages.json found -> <MPN>.land.json, the
-          pad sizes and pitch the model reads off the drawing, marked
-          "candidates": true. Never a footprint's authority: fp.py's signature
-          still quotes the vendor's page.
+  pages   the text layer as a page index -> <MPN>.pages.json: the best pages
+          for "pin assignment", "recommended land pattern", "absolute maximum
+          ratings", "package outline", so a reader opens two pages, not two
+          hundred. No model.
+
+Tried and dropped (2026-11-10): ColQwen2.5 as the page index (606 s for 33
+pages on CPU, the same answers as the text layer in a second) and
+Qwen2.5-VL-7B through Ollama reading the land-pattern page (on the iGPU 1 to 2
+minutes a page; it listed dimension callouts as pads, took 4.3 for the pitch
+of 0.4, and on four other pages returned pad counts of 14 digits). Claude reads
+the page itself with the Read tool's `pages`, seconds and right -- the land
+stays the vendor's page, which fp.py signs against.
 
 The outputs sit beside the PDF in reference/vendor/<mfr>/, and publish.py copies
 and hashes them into handoff/datasheets/ with it. NO CONSUMER READS THEM until
 `validate_extract.py` has diffed the extracted pin tables against the hand-made
 PINOUT CSVs already published and KiCad's stock symbols (extract_corpus.py),
 and they matched (ROADMAP H4; 2026-11-09 they do not yet). Licences: Docling
-(MIT), ColQwen2.5 and Qwen2.5-VL (Apache 2.0) only.
+(MIT) only.
 """
 import argparse
 import csv
@@ -50,10 +52,6 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 VENV = HERE / ".venv-ml" / "bin" / "python"
 INDEX = ROOT / "reference" / "vendor" / "datasheets.json"
-QUERIES = {"pin assignment": "pin assignment table: pin number, pin name, type, description",
-           "recommended land pattern": "recommended land pattern / PCB footprint with pad dimensions",
-           "absolute maximum ratings": "absolute maximum ratings table",
-           "package outline": "package outline drawing with dimensions"}
 NUM_HDR = re.compile(r"^(pin|ball|pad|terminal)s?(\(s\))?\s*(no\.?|number|#|num|position(\(s\))?s?)?$|^(no\.?|number|#)$",
                      re.I)
 NAME_HDR = re.compile(r"name|signal|symbol|mnemonic|port\s*pin", re.I)
@@ -172,19 +170,6 @@ def reexec():
 def have(mod):
     import importlib.util
     return importlib.util.find_spec(mod) is not None
-
-
-def ollama_url():
-    return os.environ.get("HW_OLLAMA", "http://localhost:11434").rstrip("/")
-
-
-def ollama_up():
-    import urllib.request
-    try:
-        with urllib.request.urlopen(ollama_url() + "/api/tags", timeout=3) as r:
-            return [m.get("name") for m in json.loads(r.read()).get("models", [])]
-    except Exception:
-        return None
 
 
 def resolve(arg):
@@ -338,84 +323,46 @@ def _ranges(pages):
     return ",".join(out)
 
 
-# -- pages (ColQwen2.5) -----------------------------------------------------------
+# -- pages (the text layer) ------------------------------------------------------
+# A page index needs no model: a vendor datasheet's pages are born digital, and the words a reader looks for
+# are the headings. ColQwen2.5 (2026-11-09) took 606 s on CPU for 33 pages to find what this finds in a second.
+
+PAGE_WORDS = {"pin assignment": ("pin assignment", "pin functions", "pin configuration", "pin description",
+                                 "terminal functions", "pin out", "pinout", "signal description"),
+              "recommended land pattern": ("land pattern", "recommended footprint", "recommended land",
+                                           "board layout", "pcb footprint", "pad layout", "solder pad layout"),
+              "absolute maximum ratings": ("absolute maximum ratings",),
+              "package outline": ("package outline", "package dimensions", "outline dimensions",
+                                  "mechanical data", "package drawing")}
+
 
 def stage_pages(pdf, out_stem, pages):
-    import torch
-    import fitz                                 # PyMuPDF renders the pages
-    from colpali_engine.models import ColQwen2_5, ColQwen2_5_Processor
-    name = os.environ.get("HW_PAGE_MODEL", "vidore/colqwen2.5-v0.2")
-    model = ColQwen2_5.from_pretrained(name, torch_dtype=torch.float32, device_map="cpu").eval()
-    proc = ColQwen2_5_Processor.from_pretrained(name)
+    import fitz
     docf = fitz.open(str(pdf))
     lo, hi = pages or (1, docf.page_count)
-    from PIL import Image
-    imgs, nums = [], []
-    for i in range(lo - 1, min(hi, docf.page_count)):
-        pix = docf[i].get_pixmap(dpi=72)
-        imgs.append(Image.frombytes("RGB", (pix.width, pix.height), pix.samples))
-        nums.append(i + 1)
-    with torch.no_grad():
-        emb = []
-        for k in range(0, len(imgs), 4):
-            emb += list(model(**proc.process_images(imgs[k:k + 4])))
-        q = model(**proc.process_queries(list(QUERIES.values())))
-    scores = proc.score_multi_vector(q, emb)
+    texts = {i + 1: docf[i].get_text().lower() for i in range(lo - 1, min(hi, docf.page_count))}
     out = {}
-    for qi, key in enumerate(QUERIES):
-        top = sorted(range(len(nums)), key=lambda j: -float(scores[qi][j]))[:3]
-        out[key] = [{"page": nums[j], "score": round(float(scores[qi][j]), 3)} for j in top]
+    for key, words in PAGE_WORDS.items():
+        sc = {}
+        for n, t in texts.items():
+            hits = sum(t.count(w) for w in words)
+            if hits:                    # density: a heading on a sparse drawing page beats a mention in prose
+                sc[n] = hits * 1000 / max(len(t.split()), 30)
+        top = sorted(sc, key=lambda n: -sc[n])[:3]
+        out[key] = [{"page": n, "score": round(sc[n], 2)} for n in top]
     Path(f"{out_stem}.pages.json").write_text(json.dumps(
-        {"source": pdf.name, "index": name, "candidates": True, "queries": out}, indent=1) + "\n")
-    return ", ".join(f"{k}: p{v[0]['page']}" for k, v in out.items())
-
-
-# -- land (Qwen2.5-VL via Ollama) ---------------------------------------------------
-
-LAND_PROMPT = ("This is a page of an electronic component datasheet. If it shows a recommended land pattern "
-               "(PCB footprint), return ONLY JSON: {\"unit\": \"mm\", \"pads\": [{\"name\": ..., \"width\": ..., "
-               "\"height\": ...}], \"pitch\": ..., \"span\": ..., \"notes\": ...}, every number as printed on the "
-               "drawing. If the page has no land pattern, return {\"none\": true}.")
-
-
-def stage_land(pdf, out_stem, pages):
-    import base64
-    import urllib.request
-    import fitz
-    pj = Path(f"{out_stem}.pages.json")
-    if not pj.exists():
-        return "skipped -- needs the pages stage first (which page is the land pattern)"
-    page = json.loads(pj.read_text())["queries"]["recommended land pattern"][0]["page"]
-    pix = fitz.open(str(pdf))[page - 1].get_pixmap(dpi=150)
-    img = base64.b64encode(pix.tobytes("png")).decode()
-    model = os.environ.get("HW_LAND_MODEL", "qwen2.5vl:7b")
-    body = json.dumps({"model": model, "prompt": LAND_PROMPT, "images": [img], "stream": False,
-                       "format": "json", "options": {"temperature": 0}}).encode()
-    req = urllib.request.Request(ollama_url() + "/api/generate", data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=900) as r:
-        reply = json.loads(r.read()).get("response", "{}")
-    try:
-        got = json.loads(reply)
-    except ValueError:
-        got = {"unparsed": reply}
-    Path(f"{out_stem}.land.json").write_text(json.dumps(
-        {"source": pdf.name, "page": page, "model": model, "candidates": True,
-         "authority": "none: the vendor's page is the authority (fp.py signs against it)", "land": got},
-        indent=1) + "\n")
-    return f"page {page}: {'no land pattern seen' if got.get('none') else 'candidates written'}"
+        {"source": pdf.name, "index": "text layer", "candidates": True, "queries": out}, indent=1) + "\n")
+    return ", ".join(f"{k}: " + (f"p{v[0]['page']}" if v else "none") for k, v in out.items())
 
 
 STAGES = {"tables": (stage_tables, lambda: have("docling"), "docling not installed (./setup.sh install-ml)"),
-          "pages": (stage_pages, lambda: have("colpali_engine") and have("fitz"),
-                    "colpali-engine not installed (./setup.sh install-ml --pages)"),
-          "land": (stage_land, lambda: ollama_up() is not None and have("fitz"),
-                   f"no Ollama at {ollama_url()} (install Ollama, `ollama pull qwen2.5vl:7b`; HW_OLLAMA)")}
+          "pages": (stage_pages, lambda: have("fitz"), "PyMuPDF not installed (./setup.sh install-ml)")}
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("what", nargs="?", help="an MPN in datasheets.json, or a PDF")
-    ap.add_argument("--stages", default="tables,pages,land")
+    ap.add_argument("--stages", default="tables,pages")
     ap.add_argument("--pages", help="A-B: only these pages; auto (the tables stage's default past "
                     f"{AUTO_OVER} pages): only the pages whose text layer names a pin table, and their continuations")
     ap.add_argument("--force", action="store_true", help="redo a stage whose output exists")
@@ -428,7 +375,7 @@ def main():
         return 0
     pdf, mpn = resolve(a.what)
     stem = str(pdf.with_suffix(""))
-    out = {"tables": ".pins.csv", "pages": ".pages.json", "land": ".land.json"}
+    out = {"tables": ".pins.csv", "pages": ".pages.json"}
     for k in [s.strip() for s in a.stages.split(",") if s.strip()]:
         fn, ok, why = STAGES[k]
         if Path(stem + out[k]).exists() and not a.force:
