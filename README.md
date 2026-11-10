@@ -6,12 +6,7 @@ Another **draws** it. **You** make the decisions.
 
 ## How it works
 
-```
- CONCEPT SESSION ────── handoff ──────▶ BOARD SESSION ──────▶ fab files
- decides what to build                  draws it in KiCad
-        ▲                                     │
-        └───────────── questions ─────────────┘
-```
+![Two sessions, one handoff: the concept session turns specs, studies and decisions into a handoff; the board session turns the handoff into a schematic, a layout and fab files; questions go back and are answered in the next handoff.](docs/how-it-works.svg)
 
 - **Concept session.** Specs, calculations, part choices. It packs everything
   a board needs into one folder: the **handoff**.

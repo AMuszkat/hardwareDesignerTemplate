@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" fill="#14161A">
+<title id="t">Two sessions, one handoff</title>
+<desc id="d">The concept session turns specs, studies and decisions into a handoff. The board session reads only the handoff and makes the schematic, the layout and the fab files. Questions and review requests go back to the concept session and are answered in the next handoff. The decisions and the fab order stay with you.</desc>
+<rect x="0.5" y="0.5" width="1199" height="639" rx="12" fill="#FFFFFF" stroke="#D0D7DE"/>
+
+<text x="64" y="88" font-size="30" font-weight="700">Two sessions, one handoff</text>
+
+<!-- the two lines -->
+<rect x="64" y="126" width="176" height="32" rx="16" fill="#1D4ED8"/>
+<text x="152" y="147" font-size="14" font-weight="700" letter-spacing="0.8" text-anchor="middle" fill="#FFFFFF">CONCEPT SESSION</text>
+<text x="252" y="147" font-size="14" fill="#4A4F57">decides what to build</text>
+<rect x="660" y="126" width="160" height="32" rx="16" fill="#C2410C"/>
+<text x="740" y="147" font-size="14" font-weight="700" letter-spacing="0.8" text-anchor="middle" fill="#FFFFFF">BOARD SESSION</text>
+<text x="832" y="147" font-size="14" fill="#4A4F57">draws it in KiCad, one per board</text>
+
+<path d="M130 270H517" stroke="#1D4ED8" stroke-width="6" stroke-linecap="round" fill="none"/>
+<path d="M515 258L539 270L515 282Z" fill="#1D4ED8"/>
+<path d="M660 270H1033" stroke="#C2410C" stroke-width="6" stroke-linecap="round" fill="none"/>
+<path d="M1031 258L1055 270L1031 282Z" fill="#C2410C"/>
+
+<!-- the way back -->
+<path d="M930 286V450H410V310" stroke="#4A4F57" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="0.01 12" fill="none"/>
+<path d="M398 309L410 285L422 309Z" fill="#4A4F57"/>
+
+<!-- stations -->
+<g fill="#FFFFFF" stroke="#14161A" stroke-width="5">
+<circle cx="130" cy="270" r="11.5"/>
+<circle cx="270" cy="270" r="11.5"/>
+<circle cx="410" cy="270" r="11.5"/>
+<rect x="542.5" y="250.5" width="115" height="39" rx="19.5"/>
+<circle cx="790" cy="270" r="11.5"/>
+<circle cx="930" cy="270" r="11.5"/>
+<circle cx="1070" cy="270" r="11.5"/>
+</g>
+<g fill="#FFFFFF" stroke="#4A4F57" stroke-width="4">
+<circle cx="760" cy="450" r="8"/>
+<circle cx="580" cy="450" r="8"/>
+</g>
+<text x="600" y="276" font-size="17" font-weight="700" text-anchor="middle">Handoff</text>
+
+<!-- station names -->
+<g font-size="17" font-weight="700" text-anchor="middle">
+<text x="130" y="205">Specs</text>
+<text x="270" y="205">Studies</text>
+<text x="410" y="205">Decisions</text>
+<text x="790" y="205">Schematic</text>
+<text x="930" y="205">Layout</text>
+<text x="1070" y="205">Fab files</text>
+<text x="760" y="484">Question</text>
+<text x="580" y="484">Answer and review</text>
+</g>
+<g font-size="13" text-anchor="middle" fill="#4A4F57">
+<text x="130" y="224">every number<tspan x="130" dy="16">has a source</tspan></text>
+<text x="270" y="224">simulate before<tspan x="270" dy="16">hardware</tspan></text>
+<text x="410" y="224">yours to make</text>
+<text x="790" y="224">drawn from the<tspan x="790" dy="16">handoff only</tspan></text>
+<text x="930" y="224">placed and routed<tspan x="930" dy="16">in groups</tspan></text>
+<text x="1070" y="224">you place<tspan x="1070" dy="16">the order</tspan></text>
+<text x="600" y="316">one versioned package:<tspan x="600" dy="16">parts, nets, fab rules,</tspan><tspan x="600" dy="16">datasheets</tspan></text>
+<text x="760" y="504">anything missing is<tspan x="760" dy="16">asked, never guessed</tspan></text>
+<text x="580" y="504">ships in the<tspan x="580" dy="16">next handoff</tspan></text>
+</g>
+<text x="948" y="364" font-size="13" fill="#4A4F57">questions and<tspan x="948" dy="16">review requests</tspan></text>
+
+<text x="64" y="590" font-size="16"><tspan font-weight="700">Two things always stay with you:</tspan> the decisions and the fab order.</text>
+</svg>
