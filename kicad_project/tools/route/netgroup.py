@@ -1126,8 +1126,10 @@ def main():
             for c in vias:
                 x, y = G.xy(c)
                 if any(math.dist((x, y), (e["at"][0], e["at"][1])) < 0.05 for e in S.get("extra_vias", [])
-                       if e["net"].rsplit("/", 1)[-1] == n):
-                    continue              # a layer change on its own prelaid dog-bone
+                       if e["net"].rsplit("/", 1)[-1] == n.rsplit("/", 1)[-1]):
+                    continue              # a layer change on its own prelaid dog-bone (short names both
+                                          # sides: a spec keyed by '/Sheet/NET' wrote a second via on
+                                          # it -- board2 R5, hole_to_hole 0.0 mm)
                 if any(math.dist((x, y), (vx, vy)) < 0.05 for vx, vy, *_ in board_vias.get(n, [])) or \
                         any(math.dist((x, y), tuple(q["at"])) < 0.05 for q in plan["vias"] if q["net"] == full[n]):
                     continue              # ... or on one it already has (a board via, an earlier leg's)

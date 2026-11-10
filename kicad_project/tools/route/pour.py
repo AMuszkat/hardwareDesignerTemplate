@@ -10,7 +10,9 @@ fallen into islands, a pour whose one via sits in a pocket of its own, and a
 power pour laid over a bus that the layout rules say must see ground.  So for
 every filled zone this prints, from the fill and not from the outline:
 
-  islands       how many, and their areas
+  islands       how many, and their areas; "untied": the ones beside the largest that hold
+                no via or through-hole pin of the net (a GND pour split by tracks is fine
+                when every piece is stitched; a piece holding nothing is not)
   vias / PTH    same-net vias and through-hole pads: inside which island, or
                 OUTSIDE the fill (a via the pour was drawn for and does not reach)
   SMD pads      same-net surface pads that stand over the fill -- each one is a
@@ -57,6 +59,8 @@ def main():
                     help="mm: the floor for every cross-section of the pour on the load path --from -> --to: "
                          "copper summed along each cut across the pour's long axis")
     ap.add_argument("--from", dest="sfrom", default="", help="REF.PIN,... (or REF: all its pins on the net): the sources")
+    ap.add_argument("--section-net", default="", help="measure --section on this net's pours only (the pins "
+                    "named may carry other nets too -- a connector's GND pins -- and a board-wide GND pour is slow)")
     ap.add_argument("--to", dest="sto", default="", help="REF.PIN,...: the loads")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
@@ -176,13 +180,22 @@ def report(B, a):
             pth = [i[0] for i in items if i[0] != "via"]
             print(f"   island [{k}]: {sum(1 for i in items if i[0] == 'via')} via(s)"
                   + (f", through-hole pins {' '.join(q.replace(' PTH', '') for q in pth)}" if pth else ""))
+        # an island is TIED when it holds a via or a through-hole pin of the net (it reaches the
+        # net's other layers); the largest is the pour itself.  A GND pour split by tracks is fine
+        # with every piece stitched; a piece holding nothing is dead copper or a cut-off feed
+        untied = [k for k in range(1, n) if k not in per]
+        def _where(k):
+            bb_ = isl[order[k]].BBox()
+            return f"[{k}] {areas[order[k]]:.1f} mm2 at ({mm(bb_.Centre().x):.1f}, {mm(bb_.Centre().y):.1f})"
+        print(f"   untied: {len(untied)} island(s) beside the largest hold no {net} via or through-hole pin"
+              + (": " + ", ".join(_where(k) for k in untied[:8]) if untied else ""))
         if outside:
             print(f"   ⚠ {len(outside)} {net} via(s) NOT reached by the fill: "
                   + " ".join(f"({x:.2f},{y:.2f})" for _, x, y in outside[:12]))
         print(f"   {len(smd_over)} {net} SMD pad(s) stand over the fill"
               + (": " + " ".join(sorted(smd_over)) if smd_over and len(smd_over) <= 60 else ""))
 
-        if getattr(a, "section", 0):
+        if getattr(a, "section", 0) and (not getattr(a, "section_net", "") or net == a.section_net):
             section_report(pn, b, z, lid, net, isl, a, short)
 
         for spec in a.over:

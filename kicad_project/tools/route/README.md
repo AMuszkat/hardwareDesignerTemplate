@@ -19,7 +19,8 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/decap.py    --board board1 --group R2 --refs C9,C10 --plan routing/R2_decap.json
     tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
     tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
-    tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER'] [--section MM --from .. --to ..]
+    tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER'] [--section MM --section-net NET --from .. --to ..]
+    tools/kpy tools/route/stitch.py   --board board1 --plan routing/R6_pours.json --net GND --pitch 5 [--pads] --out routing/R6_gnd.json
     tools/kpy tools/route/prelayout.py --board board1 [--spec routing/prelayout.json]   # before the first group
     tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json] [--vias model.json] [--contested netgroup.log]
 
@@ -46,8 +47,10 @@ miss runs concurrently with the scratch copy's DRC. stderr says which
 off; the folder is safe to delete. `audit` runs `place.py drc`'s summary and
 `pour.py`'s report in-process, on the board it already loaded.
 
-**`check` counts every pour's islands** on the scratch copy against the board:
-a plan that splits a pour fails (`RULE pour: ... falls into N island(s)`). DRC
+**`check` counts every pour's UNTIED islands** on the scratch copy against the board: a piece
+beside the largest that holds no via or through-hole pin of its net (`pour.py` prints them).
+A plan that adds one fails (`RULE pour: ... untied island(s)`). A GND pour that tracks split is
+legal when every piece is stitched, so raw island counts failed a sound R6. DRC
 passes a pour in pieces, and before this only `audit` saw it -- after `apply`
 (board2 R5: a CHECK PASS plan cut the +5V strip; ripped and re-routed).
 
@@ -593,6 +596,46 @@ copper.
   fill, or DRC reports `starved_thermal` (min 2 spokes). Give the pour those
   quadrants (a higher `priority` over the neighbour where they overlap), not a
   track into the pad (board2 R4: J3 pin 2 between the +5V and VBUS pours).
+
+## `stitch.py` — stitching vias and GND pad drops, as a plan
+
+    tools/kpy tools/route/stitch.py --board board2 --plan routing/R6_pours.json --net GND --pitch 5 --merge --out routing/R6_gnd.json
+    tools/kpy tools/route/stitch.py --board board2 --net GND --only-pads [--diag] [--pad-list REF.PAD,..] --out routing/R6_pads.json
+
+A layout's "stitching vias every 5 mm along the pours' edges and round the cut-out" is a few hundred
+placements that each have to clear every other net's copper on every layer. `stitch.py` lays the
+plan's zones in memory, fills them, and places vias where one is legal:
+- inside the net's fill on every layer it pours;
+- clear of other nets' copper on every layer by the clearance;
+- the via-to-pad gap from every pad;
+- `--sep` from every via;
+- copper-to-edge;
+- `--own-gap` from the net's own copper where it does not pour.
+
+It places them in three passes:
+- **tie**: every island holding no via or THT pin of the net;
+- **ring**: every Edge.Cuts contour, at `--pitch`;
+- **grid**: optional, with `--grid`.
+
+`--pads` drops every SMD pad of the net that no track touches to a via on one of its axes, linked
+straight out of its centre; `--diag` falls back to a straight 45° link. A spot or pad with no site is
+listed (`MISSED`), never forced. Its output is an ordinary plan for `route.py check` / `apply`.
+
+- **Drop the GND pads before the signal groups that wall them in.** board2 routed R5 (In2.Cu / B.Cu)
+  first, and eight GND pads had no via site left. Two of them had none even against the power group,
+  because an F.Cu rail and a pair boxed them. `stitch.py --only-pads --plan <the signal spec's fixed
+  copper>` on the earlier board found every site; those vias went in as their own group, and the
+  signal router routed round them. Check every hand-placed via against the later group's fixed copper
+  too: `check` judges only what the board and the plan hold.
+- **A via near its own net's copper on a layer the net does not pour leaves a notch** (the shape
+  rule's slot under 2 x CLOSE): `--own-gap 0.6`.
+- **A fill-based clearance is not tight enough alone.** A via inside the fill shrunk by its radius
+  stood 0.166 mm from a track, because a 45° fill edge is approximate. Every layer is also tested
+  against the copper itself.
+- **Starved spokes** (DRC `starved_thermal`): a THT pin left one spoke into the pour, or spokes into a
+  pocket with nothing else, between tracks. There is no via site, so a zone `holes` entry round the pin
+  and its pocket removes the pour there; the pin reaches the net on the other layers. Each hole changes
+  the fill beside it, so gate again until DRC is quiet (board2: J5 S1, J_MAIN1 21 / 23 / 27 / 29).
 
 ## `corners.py` — the angle rule for a polyline
 
