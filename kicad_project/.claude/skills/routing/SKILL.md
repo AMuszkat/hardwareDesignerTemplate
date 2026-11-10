@@ -128,6 +128,9 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    cheap: fix and request again, or `route.py rip Rn` removes exactly that
    group's copper. After the last group, one more request, `pcb: fab
    release`, before the fab package: it passes only with no open finding.
+   On its PASS, `tools/kpy tools/fab/fabpkg.py` writes the package into `<board>/fab/`:
+   Gerbers, drills, BOM and placement, and ORDER_NOTES quoted from 14_fab. It refuses an
+   unreleased board and checks what it wrote. Tell the user where it is; the order is theirs.
 
 ## The rules that are easy to get wrong
 
