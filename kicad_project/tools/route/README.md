@@ -451,6 +451,16 @@ its docstring. What the spec has to be told:
   tightly, the plans were identical and the time within noise. Use it when a
   big window's nets hit `--limit` and read as walled in; a corridor can also
   trade a better detour outside it for a worse path inside, so compare.
+- **Wait on a background run by its pid, never with `pgrep -f <its command line>`.** A wait loop written
+  as `while pgrep -f "netgroup.py ... spec"; do sleep 20; done` carries that string in its own shell's
+  command line, matches itself and never ends: board1's three R2 runs were over in 3 minutes and the loop
+  sat for 4 h 50. Start with `... & echo $! > run.pid` and wait with `tail --pid=$(cat run.pid) -f /dev/null`
+  (or `pgrep -f '[n]etgroup.py ...'`), and read the log when the notification is late.
+- **Plans gated one at a time against the fanout are not gated against each other.** `route.py check`
+  lays only what its plan holds on the scratch copy, so two plans that each pass can still collide: board1's
+  In2 escape proof ran two tracks through a through via of the pairs' plan, and only `apply` (which checks
+  on the board as it stands) saw the short. Before a milestone, lay every passed plan on one scratch copy
+  -- a merged plan through `check` -- or put the earlier plans' vias and tracks in the later spec's `reserve_*`.
 - **Bound a run with `--timeout S`, not a `timeout` prefix.** It stops
   between iterations when the next one (sized by the slowest so far) would not
   end inside S seconds, prints the contested cells and `reach` per net, and
