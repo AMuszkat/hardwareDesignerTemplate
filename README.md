@@ -1,108 +1,79 @@
-# Hardware design template — a concept session and one KiCad session per board
+# Hardware Designer Template
 
-A repository layout, agent contracts, skills and tools for designing hardware
-with Claude Code as **two kinds of session with single-writer ownership**:
+Design circuit boards with [Claude Code](https://docs.claude.com/en/docs/claude-code/setup)
+and [KiCad](https://www.kicad.org). One AI session works out **what** to build.
+Another **draws** it. **You** make the decisions.
 
-- **The concept session** (repo root) owns the design: specs, studies and
-  models, decisions, diagrams, part selection, datasheets. For each board it
-  **publishes a handoff** — a generated, hashed, versioned data package — into
-  that board's folder.
-- **A board session** (`kicad_project/`, one per board) owns the KiCad design:
-  schematic, footprints, placement, routing, fab outputs. It reads **only its
-  handoff**; anything missing is a question in its `QUESTIONS.md`, never a
-  guess.
+## How it works
 
-```
- concept session (repo root)                  board session (kicad_project/)
- ─────────────────────────────                ─────────────────────────────
- design/  studies/  tools/          publish   boardN_<slug>/handoff/   (read-only)
- STATUS → buses → generators  ───────────────▶  CHANGELOG, components, nets, fab rules,
-                                                 datasheets/, MANIFEST hashes
- tools/handoff/answers/boardN.md  ◀───────────  boardN_<slug>/QUESTIONS.md
-                     ▲                    ▲
-                     └── optional relay ──┘  (SendMessage doorbells; off by default)
-```
+![Two sessions, one handoff: the concept session turns specs, studies and decisions into a handoff; the board session turns the handoff into a schematic, a layout and fab files; questions go back and are answered in the next handoff.](docs/how-it-works.svg)
 
-Nothing here is specific to one kind of product. The examples are there to
-be read, then replaced: `./setup.sh clean-examples` removes the three studies
-and their rows in one step; the example sheet (`tools/diagrams/system.py`) and
-the example rows in `design/STATUS.md` give way to your first real decision.
+- **Concept session.** Specs, calculations, part choices. It packs everything
+  a board needs into one folder: the **handoff**.
+- **Board session.** One per board. It reads only the handoff, then draws the
+  schematic and the layout in KiCad.
+- **Questions.** If the handoff is missing something, the board session asks
+  instead of guessing. The answer arrives in the next handoff.
+- **Reviews.** Every schematic and layout change is checked before work goes on.
+- **You.** You make the decisions and you place the fab order. No session does
+  either for you.
 
-## Quick start
+## Get started
 
-```bash
-./setup.sh check                      # what this machine is missing (everything listed is required)
-./setup.sh install                    # project-local parts: venvs, freerouting, key file, settings
-./setup.sh init MyProduct             # names the project and its sessions
-./setup.sh new-board 1 main "Main board" --fab example_standard
-bin/concept                           # terminal 1: the concept session
-bin/board board1                      # terminal 2: the board-1 session
-bin/relay on                          # optional: let the sessions ring each other
-./verify.sh                           # any time: every check of the concept side
+You need Claude Code, KiCad 10, Konnect, Python 3.10+ and git.
+`./setup.sh check` lists anything missing and how to install it;
+[`SETUP.md`](SETUP.md) is the full guide.
+
+```sh
+./setup.sh check                           # what is missing?
+./setup.sh install                         # install the project's own parts
+./setup.sh init MyProduct                  # name your project
+./setup.sh new-board 1 main "Main board"   # create your first board
 ```
 
-`SETUP.md` is the full procedure, including every requirement and where each
-one comes from.
+Then open two terminals:
 
-## Where to look
+```sh
+bin/concept         # terminal 1: decide what to build
+bin/board board1    # terminal 2: draw it in KiCad
+```
 
-| you want | go to |
+Start in the first one: tell the concept session what you want to build.
+
+## Check your work
+
+```sh
+./verify.sh
+```
+
+One command runs every check: numbers, documents, diagrams and handoffs.
+
+## What is in the box
+
+| Folder | What it holds |
 |---|---|
-| how to set up a machine | `SETUP.md` |
-| the concept session's rules | `CLAUDE.md` |
-| the board sessions' rules | `kicad_project/CLAUDE.md` |
-| how the sessions talk to each other | `kicad_project/RELAY_PROTOCOL.md` |
-| the product: how it works / numbers / decided & open | `design/IMPLEMENTATION.md` / `SPECS.md` / `STATUS.md` |
-| where the numbers come from: studies, what they are for, how to write one | `studies/README.md` |
-| why anything is the way it is | `history/HISTORY.md` |
-| the handoff engine, adding a board | `tools/handoff/README.md` |
-| the PCB tools | `kicad_project/tools/*/README.md` |
-| 3D renders of a board (KiCad or Blender, the user's pick) | `kicad_project/tools/render/README.md` |
-| the plan for making board design faster: what changes, where, and the test for each | `ROADMAP.md` |
+| `design/` | What the product is: its numbers, how it works, what is decided and what is open |
+| `studies/` | The calculations and simulations behind every number |
+| `history/` | Why each decision was made, and every design review |
+| `reference/` | Datasheets and papers |
+| `tools/` | The concept session's tools: diagrams, parts, the handoff |
+| `kicad_project/` | One folder per board, and the tools that draw them |
 
-## What makes it work
+## Learn more
 
-- **One fact, one home.** Every authored doc opens with a *Scope* and a *Not
-  here* line; `tools/lint_docs.py` fails a heading that appears in two of them.
-- **Generated is never edited.** Diagrams, the handoff, STATUS's generated
-  block and the datasheet index are outputs of `tools/`. A generator declares
-  `REFLECTS` (the id of the newest decision it was read against) and `OPEN_CLAIMS` (the
-  open items it draws), and the lint catches a sheet that missed a decision or
-  still draws a closed option.
-- **A decision moves every home in one pass**: STATUS row → value buses →
-  generators → handoff → HISTORY.
-- **The handoff is the only channel** to a board session, and it carries the
-  hashes of its sources, so a stale brief is caught in conversation, not in
-  copper. A board's questions measure the handoff's quality; fixes go into the
-  generator.
-- **The walls are enforced** where the harness can: rendered deny rules, a hook
-  that keeps each board session in its own folder, a hook that keeps the
-  concept session out of generated files and the boards' files, board tools
-  that refuse another session's board, and a SendMessage guard that makes the
-  relay switch real.
-- **One command checks everything**: `./verify.sh` — the headline numbers
-  against their baseline, the doc lint, the diagram tests, handoff freshness.
-- **Every board change is reviewed before the next one builds on it**: a
-  board session requests the review of each schematic change and each
-  placement or routing group in its `REVIEW.md`; the concept session's
-  `schematic-reviewer` and `pcb-reviewer` subagents check a frozen copy
-  against the handoff and the datasheets, and the verdict comes back in the
-  handoff (`15_reviews.md`).
-- **The user's gates stay the user's**: decisions and the fab order — and
-  any review they want to make themselves.
-
-Everything the sessions use — skills, subagents, hooks, MCP servers — is
-declared inside this repository (`.claude/`, `kicad_project/.claude/`,
-`.mcp.json`, `kicad_project/.mcp.json`); Konnect's own skills and subagents are
-generated into `kicad_project/.claude/` by `./setup.sh install` rather than
-committed (Konnect is AGPL-3.0). What has to be installed on the machine is
-listed in `SETUP.md`.
-
-Publishing your own project built on this? `./setup.sh check-public` first
-(SETUP.md §9). Taking template improvements into it later: SETUP.md §8.
+| If you want to | Read |
+|---|---|
+| Install everything, add API keys, fix a problem | [`SETUP.md`](SETUP.md) |
+| Know the concept session's rules | [`CLAUDE.md`](CLAUDE.md) |
+| Know the board sessions' rules | [`kicad_project/CLAUDE.md`](kicad_project/CLAUDE.md) |
+| Let the sessions message each other (off by default) | [`kicad_project/RELAY_PROTOCOL.md`](kicad_project/RELAY_PROTOCOL.md) |
+| Write a calculation or a simulation | [`studies/README.md`](studies/README.md) |
+| See how the handoff is built | [`tools/handoff/README.md`](tools/handoff/README.md) |
+| See what is planned | [`ROADMAP.md`](ROADMAP.md) |
+| Publish your own project built on this | `./setup.sh check-public` first ([`SETUP.md`](SETUP.md), section 9) |
 
 ## Licence
 
-MIT — see `LICENSE`. Konnect, which the board sessions use, is a separate
-project under AGPL-3.0; its files are generated on your machine by
-`./setup.sh install` and are not part of this repository.
+MIT, see [`LICENSE`](LICENSE). Konnect, which the board sessions use to drive
+KiCad, is a separate AGPL-3.0 project. It is installed on your machine and is
+not part of this repository.
