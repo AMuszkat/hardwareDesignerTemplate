@@ -62,9 +62,9 @@ The PDF and its provenance stay in this project.
 
 ## Extraction — candidates, never authority (optional)
 
-    ./setup.sh install-ml [--pages]                       # tools/parts/.venv-ml: Docling (+ ColQwen2.5)
+    ./setup.sh install-ml                                  # tools/parts/.venv-ml: Docling + PyMuPDF
     python3 tools/parts/extract.py --check                # which stages this machine can run
-    python3 tools/parts/extract.py <MPN> [--pages 70-95|auto]  # beside the PDF: .tables.json .pins.csv .pages.json .land.json
+    python3 tools/parts/extract.py <MPN> [--pages 70-95|auto]  # beside the PDF: .tables.json .pins.csv .pages.json
     python3 tools/parts/validate_extract.py <MPN>.pins.csv <PINOUT.csv>     # against a hand-made pinout
     python3 tools/parts/validate_extract.py <MPN>.pins.csv --kicad <MPN>    # against KiCad's stock symbol
     python3 tools/parts/kicad_pins.py <MPN>               # which stock symbol, its pins
@@ -84,9 +84,10 @@ and a name column; one column per package ("Pin Number" over QFN | TQFP,
 column); a continuation takes the previous table's columns, a supply row's
 many balls each get its name, rows Docling merged are paired in order, a
 range ("DB6–DB1" over "2–7") is expanded, footnote digits are dropped.
-`pages` (ColQwen2.5) indexes the pages for "pin assignment", "recommended
-land pattern", "absolute maximum ratings", "package outline"; `land`
-(Qwen2.5-VL-7B through Ollama) reads the land-pattern page.
+`pages` indexes the text layer for "pin assignment", "recommended land
+pattern", "absolute maximum ratings", "package outline" (no model). A land
+pattern is read by Claude itself: open the page `pages.json` names with the
+Read tool's `pages`.
 
 **Read by nothing: it has not passed.** Two ground truths: a board's
 hand-made PINOUT (the i.MX 8M Mini: 486 of 486), and KiCad's stock symbols,
@@ -102,8 +103,10 @@ merges across pins (PIC18), a ball map grid (MSP430 YFF), a row naming eight
 pins with no per-pin order (MAX7221). So no consumer (`symgen.py`,
 `fp.py verify --against`, the reviewer checklist) is wired; re-run
 `extract_corpus.py` after any parser change and wire one only when it
-passes. `pages` ran once on CPU (2026-11-09, TPS51363, 33 pages, 606 s —
-about 18 s a page, so a long datasheet wants the GPU): all four queries on
-the right page (pin functions p7, absolute maximum p2, package outline p28,
-land pattern p29). `land` has not run (it needs Ollama).
+passes. Two models were tried for the rest and dropped
+(2026-11-10): ColQwen2.5 as the page index (606 s for 33 pages on CPU, and
+the text layer gives the same pages in a second) and Qwen2.5-VL-7B through
+Ollama for the land pattern (on the Radeon 890M, 1 to 2 minutes a page; it
+listed callouts as pads, read a 0.4 pitch as 0.6, and on four more pages
+returned 14-digit pad counts) — Claude reading the page is faster and right.
 
