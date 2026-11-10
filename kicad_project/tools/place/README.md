@@ -192,9 +192,10 @@ source with `fp.py tidy --silk-drop <i>` and `refresh.py --layers SilkS`.
    `14_fab.md` by `board_setup.py`).
 2. For each footprint on the board, candidate spots ring its courtyard: text at
    0° or 90°, up to 2 mm out, on a 0.25 mm step. A spot must clear pads (copper
-   + mask expansion + silk clearance), holes, all other silk, **every
+   + mask expansion + silk clearance), holes, **vias** (a designator over a
+   tented via's bump breaks up: board2 RV22.6), all other silk, **every
    courtyard** (a label under a part is unreadable), the board edge, and the
-   labels already placed.
+   labels already placed. So labels move after routing, as the last step.
 3. It places the **most constrained** label first, at the spot that leaves the
    others the most room. Pure greedy walls labels in.
 4. A label with no legal spot is **hidden on silk** and listed. Stock and

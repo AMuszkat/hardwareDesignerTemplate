@@ -775,6 +775,11 @@ def cmd_labels(a):
         # board-level silk on this side: logos, revision text, drawn lines
         obst += [grow(B.box(d.GetBoundingBox()), B.silk_clr) for d in B.b.GetDrawings()
                  if d.GetLayer() == B.SILK[side]]
+        # vias: a tented via is a bump under the mask, and a designator printed over it breaks up
+        # (board2 RV21.4 / RV22.6: 16 labels over the routing's vias). Labels move after routing.
+        for t in B.b.GetTracks():
+            if t.Type() == pn.PCB_VIA_T:
+                obst.append(grow(B.box(t.GetBoundingBox()), B.silk_clr))
         todo = [r for r in P if r not in hide and B.side(P[r]) == side and r in cyd]
 
         def text_box(ref, x, y, ang):
