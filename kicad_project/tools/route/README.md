@@ -571,6 +571,10 @@ net out on three layers. `fanout.py plan` proposes that model;
   reported when split, not enforced. Exit 1 when a net is left over: the
   model or the rules must change, no router will find it. A pass is still a
   bound -- the router has to find it.
+  A layer may carry `"only": [regex, ...]`: the nets it may take -- a pour layer
+  opened to a few low-speed signals (board 1's D78: 22 nets In2 + B could not take
+  went to In5 / In4). "This layer first" is two runs: without the second layer,
+  then with it for what is left.
 
 ## `decap.py` — the decoupling ring as a plan
 

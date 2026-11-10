@@ -71,6 +71,9 @@ The layer file:
 leaves from its ball, no via needed.  Any other outer layer: every via keeps its pad.
 Inner: a via keeps its pad only with "nfp": false or for "pad_nets" (the layer's pours);
 "exit": any | east | west | north | south (screen axes, y down), as escape_bound.py.
+"only": [regex, ...] -- the nets this layer may take (a pour layer opened to a few low-speed
+signals); a fixed net is placed where it is fixed regardless.  To fill one layer before another,
+run without the second first and add it only for what is left.
 Default via pad / drill from the model file's own `via` key or --via.  Exit 0: every net
 placed; 1: some left.
 """
@@ -532,6 +535,8 @@ def cmd_layers(a):
         for L in spec["layers"]:
             o, cand = obstacles(L)
             cand = {n: p for n, p in cand.items() if n not in ban[L["name"]]}
+            if L.get("only"):                            # a layer open to some nets only (a pour layer's signals)
+                cand = {n: p for n, p in cand.items() if any(re.search(r, n) for r in L["only"])}
             layers.append(Layer(L["name"], o, cand, L["width"], L["clearance"], exits[L.get("exit", "any")]))
         S, left = partition(layers, nets, fixed)
         bad = []
