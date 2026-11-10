@@ -41,7 +41,13 @@ its applied manifest's copper), a `placement.json` group's name, or
 `refs:A,B`; the PCB views are then tiled only round it and the sheet tiles
 skipped. A fab release, fixes across the board, or a request with no
 group: no `--scope` (everything). Every snapshot writes `changed.md` against
-the board's previous snapshot of the same kind; the reviewer reads it first.
+the board's previous snapshot of the same kind; a PCB snapshot also writes
+`CHANGES.md` / `changes.json` — the object-level diff against the last PCB
+snapshot **whose id has a verdict in `tools/handoff/reviews/boardN.md`** —
+and `geometry.json`, which the reviewer queries with `tools/review/geom.py`
+instead of scripting. The reviewer reads `CHANGES.md` first; so record every
+verdict under its request id (step 5), or the next review diffs against an
+older state.
 
 It copies the board into `out/reviews/<board>/<id>-<kind>/`, runs the board
 session's own gates on the copy and writes `SUMMARY.md`. Exit 1 is not a
@@ -62,7 +68,8 @@ it; do not review the same thing yourself meanwhile.
 ## 4. Verify, then triage — the reviewer's report is not the verdict
 
 - **Every `must` finding is checked by you** against its evidence before it
-  reaches the board: open the page, rerun the line. A false finding sent to a
+  reaches the board: open the page, rerun the line (a measured one: the
+`geom.py` query it quotes, on the same snapshot). A false finding sent to a
   board session costs a fix that breaks something; drop it with one line in
   the report's *Not proven* ("dropped: <why>").
 - **`handoff` findings are yours**: fix the GENERATOR in the same pass (the

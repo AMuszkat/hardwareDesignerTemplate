@@ -28,14 +28,25 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   `gates/*.txt` (DRC with schematic parity, Board Setup against `14_fab.md`,
   footprint signatures, routing status, copper-to-edge), `netlist.xml`,
   `bom.csv`, `schematic.pdf`;
-  - `changed.md` — **read it first**: what changed since the board's previous
-    PCB snapshot, as regions in board mm and the tiles that show them; a
-    region marked *outside every tile in scope* is a change the request did
-    not declare, and a finding until explained;
+  - `CHANGES.md` — **read it first**: what changed on the board, object by
+    object, since the last PCB snapshot of this board that got a verdict
+    (named in its first line): parts moved, added and removed, copper added
+    and removed per net and layer (segments, length), vias, zones, texts,
+    the outline and the board's rules, each with its position in board mm
+    (`changes.json`: the same, complete, as data). **That list is what you
+    review**; a change it marks *outside the scope* is one the request did
+    not declare, and a finding until explained. "Everything is new" (no
+    reviewed snapshot yet) means the whole board is in scope;
+  - `changed.md` — the same question answered from the pictures, against the
+    board's previous PCB snapshot (reviewed or not): the changed regions and
+    the tiles that show them. Use it to pick the tiles to look at;
   - `pcb/top.png`, `bottom.png`, `inner.png` — each view whole;
     `pcb/tiles/<view>-rRcC.png` — the same views at 600 dpi in overlapping
     tiles you see at full resolution; `pcb/tiles.md` — which parts each tile
     shows; `pcb/words.csv` — every text in a view and which tiles show it;
+  - `geometry.json` — every track, arc, via, pad, zone (outline and filled
+    islands), text and the outline, dumped once. You do not read it: you ask
+    `tools/review/geom.py` (below);
   - `measurements.json` — the board measured for you (`tools/review/measure.py`,
     all mm, KiCad board coordinates; `board.outline_origin` converts the
     handoff's outline-relative ones): `parts` (position, rotation, side,
@@ -66,20 +77,52 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   scratchpad**, whatever your environment says about one: a read outside the
   project stops for the user's approval.
 - **The snapshot already holds what a review needs, as files**: pins and
-  nets from `pins.csv` / `nets.csv`, every measurement from
-  `measurements.json`, the copper from the tiles. Use Read, Grep and Glob.
-  Never re-render or crop a view.
+  nets from `pins.csv` / `nets.csv`, what changed from `CHANGES.md`, every
+  measurement from `measurements.json` or a `geom.py` query, the copper from
+  the tiles. Use Read, Grep and Glob. Never re-render or crop a view.
+
+## Measuring: `geom.py`, not a script
+
+    python3 tools/review/geom.py <snapshot> <query> [SEL ...] [--layer L] [--json]
+
+Plain python3 on `geometry.json`, read only, under a second on any board.
+Every gap is **edge to edge** (0 = touching or overlapping), only between
+objects on a shared copper layer; a centre distance is in a column named
+*centre*. `--help` has each definition.
+
+| the question | the query |
+|---|---|
+| how close is this track / via / pad / net to anything foreign | `nearest SEL [--within G] [--ignore NET] [--no-pours]` |
+| the gap between two named things | `gap SEL SEL` |
+| is a reference label nearer another part's pad than its own | `label [REF ...] [--below M]` |
+| are a net's bends 45 / 90 (anything else is flagged) | `joints NET` or `joints --all-nets` |
+| each via against the nearest pad, its own net's and a foreign one | `via-pad [SEL] [--below G]` |
+| hole-to-hole (vias and drilled pads), wall to wall | `holes [--below G]` |
+| a net's copper per layer: length, segments, widths, vias | `copper NET [--layer L]` |
+| what is in this rectangle (a region `CHANGES.md` or `changed.md` names) | `box X0,Y0,X1,Y1` |
+| what an object is: net, layers, size | `show SEL` |
+| the board's rules and net classes, as set in the PCB | `info` |
+
+`SEL`: `U1.A5` (a pad), `U1` (a part's pads), `net:NAME` (its tracks, arcs
+and vias), `pads:NAME`, `via:X,Y` and `track:X,Y` (the one nearest a
+point — the coordinates `CHANGES.md` prints), `uuid:PREFIX`,
+`box:X0,Y0,X1,Y1`. A net answers to its last path component when that is
+unique.
 
 ## Rules
 
 - **Read only.** Never write in `kicad_project/` or anywhere but your report
   and `tmpWork/`. Every tool runs on `snap/`. Never run Konnect, never open
   KiCad's GUI.
-- **A number comes from `measurements.json`.** One it does not hold (a
-  clearance between two named items, a length along one route) may be
-  measured on `snap/` with `kicad_project/tools/kpy` and pcbnew — read only,
-  never `SaveBoard` — and is then listed in the report under *Measured by
-  hand*, so the snapshot learns to measure it.
+- **A number comes from `measurements.json` or from `geom.py`**, in that
+  order, and is quoted with the query that gave it. **Write a script only for
+  a measurement neither can answer** — on `geometry.json` in plain python3
+  (`import geom` from `tools/review/` gives the same functions), or, for what
+  the dump does not hold, on `snap/` with `kicad_project/tools/kpy` and
+  pcbnew, read only, never `SaveBoard` — and list it in the report under
+  *Measured by hand* as **the measurement that was missing** (what was asked,
+  of which objects, the definition used), so `geom.py` grows by it. A script
+  that re-derives what a query answers is time the review does not have.
 - **`handoff/10_layout.md` and `14_fab.md` are the brief; the datasheets in
   `handoff/datasheets/` the authority on parts and lands.** Quote the rule's
   row or the datasheet page with each finding. A finding the BOARD must act on
@@ -89,7 +132,8 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
 - Look at the views for what numbers miss: a pour cut in two, a split
   return path, a part outside its group, silk on pads — each whole
   (`pcb/*.png`), then the tiles (`pcb/tiles.md`) for the detail. **Order:**
-  the changed tiles `changed.md` lists, then every other tile in scope (a
+  the objects `CHANGES.md` lists and the changed tiles `changed.md` lists,
+  then every other tile in scope (a
   group-scoped snapshot is tiled only round the group); every tile of the
   board only for scope "fab release" or "all".
 
@@ -155,8 +199,10 @@ Write it to the path you were given, exactly in this shape:
     Suspicions without proof, each with what would prove it.
 
     ## Measured by hand
-    Each number measurements.json did not hold and you measured on snap/
-    (what, how); "none" when there was none.
+    Each number neither measurements.json nor a geom.py query gave and you
+    measured with a script: the measurement that was missing (what, between
+    which objects, the definition), and how you made it; "none" when there
+    was none.
 
 - **severity:** `must` — a defect the board would be built with (an open, a
   short, a rule broken, a wrong land, a gate failing) or a contradiction of
