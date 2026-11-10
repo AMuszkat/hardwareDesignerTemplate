@@ -50,7 +50,7 @@ WHAT IS BLOCKED, beyond the board's own copper:
     not just their vias.
 
 OPTIONS
-  "field": {"ref": "U1", "open": ["In2.Cu", "B.Cu"], "clr": 0.1016, "width": 0.127}
+  "field": {"ref": "U1", "open": ["In2.Cu", "B.Cu"], "clr": 0.1016, "width": 0.127(, "box": [x0, y0, x1, y1])}
   (or "fields": [{...}, {...}] -- two BGAs one group joins, a SoC and its DRAM, each at its
   own area rule) names a fine-pitch part whose pad field is shut, and opens it on those
     layers (no lands there; the dog-bones are the obstacles, at the field's own
@@ -305,7 +305,7 @@ def main():
     # cap under the BGA) is judged at the field's clearance, as KiCad's area rule does
     FCY = []
     for F in FO:
-        cy_ = B.courtyard(B.fps[F["ref"]]) if F["ref"] in B.fps else None
+        cy_ = (list(F["box"]) if F.get("box") else B.courtyard(B.fps[F["ref"]])) if F["ref"] in B.fps else None
         if cy_:
             FCY.append((tuple(cy_[:4]), float(F.get("clr", maze.PADCLR)), float(F.get("width", maze.W))))
     for F in FO:
@@ -354,7 +354,11 @@ def main():
         # the field is the part's COURTYARD: KiCad's area rule holds where both items intersect it
         # (intersectsCourtyard), so a field grown past it lets the thin clearance out where DRC
         # applies the class's.  No courtyard: the pads' extent + 0.3, as before.
-        cy = B.courtyard(B.fps[F["ref"]])
+        # "box": [x0, y0, x1, y1] narrows the field to the ball array when the courtyard is far larger
+        # (an eMMC's 11.5 x 13 mm body round a 5 x 5 mm array): inside it the thin escape, outside it the
+        # group's width at its class clearance -- else the whole run inside the courtyard is written thin
+        # and breaks a neck-length cap (board 1's R2: 9.3 mm against #39's 4 mm)
+        cy = list(F["box"]) if F.get("box") else B.courtyard(B.fps[F["ref"]])
         if cy:
             F["_box"], F["_m"] = tuple(cy[:4]), 0.0
         else:

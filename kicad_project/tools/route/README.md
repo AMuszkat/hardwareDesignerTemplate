@@ -366,6 +366,14 @@ its docstring. What the spec has to be told:
   dog-bones keep the group's class clearance between them (SE_50's 0.2032
   where U500's courtyard allows 0.1016) and its goals sit in pockets no net
   reaches ("0 of 4 goal cells").
+- **A net that starts on a field part's land names it: `"src_pad": [REF, PAD]`** (or ends with
+  `"to": [REF, PAD]`). A field's lands are obstacles to every net, its own included, unless the spec says
+  which pad is the net's; a bare `"src"` on the land reads "reaches 1 cell -- walled in" (board 1's R2:
+  eMMC D0 / D2 out of U300's row A).
+- **A field whose courtyard is far larger than its ball array takes `"box"`** (the array + about 0.35).
+  Inside the field box the escape is modelled thin and written thin. Without it the whole run inside the
+  courtyard came out at the neck width: 9.3 mm against #39's 4 mm cap on board 1's eMMC, whose
+  11.5 x 13 mm body surrounds a 6.5 x 6.5 mm array.
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.
