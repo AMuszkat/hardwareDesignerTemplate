@@ -598,6 +598,16 @@ net out on three layers. `fanout.py plan` proposes that model;
   opened to a few low-speed signals (board 1's D78: 22 nets In2 + B could not take
   went to In5 / In4). "This layer first" is two runs: without the second layer,
   then with it for what is left.
+  **It is quick, and it stops when told.** The partition asks thousands of
+  sets that differ by one or two sources; each layer keeps ONE flow and moves
+  it to the set asked for (a source dropped gives its unit back, a source
+  added is one search) instead of building every flow from nothing: the same
+  answer by construction (`tests/test_fanout_flow.py` holds the two against
+  each other), 35 s -> 4 s on a 296-net fixture and 129 s -> 3 s on a real
+  six-layer BGA. `--timeout S` stops at the next question and prints
+  `STOPPED at --timeout`: the sets so far are printed and written as
+  `<out>.partial.json` -- never under `--out`'s own name, which a later step
+  reads as the answer -- and the exit is 1. Use it, never a `timeout` prefix.
 
 ## `decap.py` — the decoupling ring as a plan
 

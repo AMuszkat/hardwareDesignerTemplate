@@ -85,6 +85,7 @@ import json
 import math
 import re
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -356,6 +357,14 @@ def cmd_plan(a):
 
 
 # ----------------------------------------------------------------------------- layers
+class Stopped(Exception):
+    """`layers --timeout` ran out: raised where the time goes (a new flow question), and re-raised
+    by the step it interrupted with (S, left, the step's name)."""
+
+
+DEADLINE = [None]                                        # time.monotonic() to stop at, or None
+
+
 class Layer:
     """One layer's escapable source sets: a flow oracle over a fixed obstacle set."""
 
@@ -396,42 +405,85 @@ class Layer:
                 at.append("T")
             self.att[k] = at
         self.cache = {}
+        self._G, self._cur = None, set()
 
     def ok(self, nets):
+        """Do these sources all escape: is the maximum flow one unit per source?
+
+        The answer is a property of the set, so it is cached by the set; the WORK is kept too.
+        The oracle holds one flow (`_cur`: the sources that each carry a unit, `_G`: its
+        residual graph) and moves it to the set asked for: a source that left gives its unit
+        back along its own path (`_drop`), a new one is one augmenting search (`_push`). The
+        partition asks S + y and S - z + y over and over, each one or two searches from the
+        flow of S instead of a flow built from nothing -- one search per source and a copy of
+        the graph, which was the whole run time of `layers` on a 536-ball field."""
         key = frozenset(nets)
-        if key in self.cache:
-            return self.cache[key]
-        G = {u: dict(v) for u, v in self.base.items()}
-        INF = 10 ** 6
-        for k in nets:
-            s = ("s", k)
-            G.setdefault("S", {})[s] = 1
-            G.setdefault(s, {})["S"] = 0
-            for t in self.att[k]:
-                G[s][t] = INF
-                G.setdefault(t, {}).setdefault(s, 0)
-        f = 0
-        while f < len(nets):
-            par = {"S": None}
-            q = collections.deque(["S"])
-            while q and "T" not in par:
-                u = q.popleft()
-                for v, cp in G.get(u, {}).items():
-                    if cp > 0 and v not in par:
-                        par[v] = u
-                        q.append(v)
-            if "T" not in par:
-                break
-            v = "T"
-            while par[v] is not None:
-                u = par[v]
-                G[u][v] -= 1
-                G[v][u] = G[v].get(u, 0) + 1
-                v = u
-            f += 1
-        r = f == len(nets)
-        self.cache[key] = r
-        return r
+        hit = self.cache.get(key)
+        if hit is None:
+            hit = self.cache[key] = self._reach(key)
+        return hit
+
+    INF = 10 ** 6
+
+    def _reach(self, key):
+        if DEADLINE[0] is not None and time.monotonic() > DEADLINE[0]:
+            raise Stopped()
+        if self._G is None or len(self._cur ^ key) > len(key):
+            self._G = {u: dict(v) for u, v in self.base.items()}
+            self._cur = set()
+        for z in sorted(self._cur - key):
+            self._drop(z)
+        # a source that finds no path with the others in place has none with more of them
+        return all(self._push(k) for k in sorted(key - self._cur))
+
+    def _push(self, k):
+        """One more unit, from source k to the outside; False (and no trace of k) if none."""
+        G, s = self._G, ("s", k)
+        G[s] = {t: self.INF for t in self.att[k]}
+        for t in G[s]:
+            G.setdefault(t, {})[s] = 0
+        par = {s: None}
+        q = collections.deque([s])
+        while q and "T" not in par:
+            u = q.popleft()
+            for v, cp in G[u].items():
+                if cp > 0 and v not in par:
+                    par[v] = u
+                    q.append(v)
+        if "T" not in par:
+            for t in G.pop(s):
+                del G[t][s]
+            return False
+        v = "T"
+        while par[v] is not None:
+            u = par[v]
+            G[u][v] -= 1
+            G[v][u] = G[v].get(u, 0) + 1
+            v = u
+        self._cur.add(k)
+        return True
+
+    def _drop(self, z):
+        """Take source z's unit back: one unit pushed from the outside to z through the residual
+        graph (the unit's own path, reversed, is such a way, so there is always one)."""
+        G, s = self._G, ("s", z)
+        par = {s: None}
+        q = collections.deque([s])
+        while q and "T" not in par:
+            u = q.popleft()
+            for v in G[u]:
+                if v not in par and G[v].get(u, 0) > 0:      # residual v -> u, walked from z's end
+                    par[v] = u
+                    q.append(v)
+        v = "T"
+        while par[v] is not None:
+            u = par[v]
+            G[u][v] += 1
+            G[v][u] -= 1
+            v = u
+        for t in G.pop(s):                                   # z's unit is gone: its edges are idle
+            del G[t][s]
+        self._cur.discard(z)
 
 
 def partition(layers, nets, fixed):
@@ -439,50 +491,53 @@ def partition(layers, nets, fixed):
     S = {L.name: set() for L in layers}
     where = {}
     LY = {L.name: L for L in layers}
-    for x, ln in fixed.items():
-        if ln in LY and x in LY[ln].cand and LY[ln].ok(S[ln] | {x}):
-            S[ln].add(x)
-            where[x] = ln
-    free = [x for x in sorted(nets) if x not in fixed]
-    for x in free:                                       # greedy start
-        for L in layers:
-            if x in L.cand and L.ok(S[L.name] | {x}):
-                S[L.name].add(x)
-                where[x] = L.name
-                break
-    improved = True
-    while improved:
-        improved = False
-        for x0 in [x for x in free if x not in where]:
-            par = {x0: None}
-            q = collections.deque([x0])
-            done = None
-            while q and not done:
-                y = q.popleft()
-                for L in layers:
-                    if y not in L.cand or where.get(y) == L.name:
-                        continue
-                    if L.ok(S[L.name] | {y}):
-                        done = (y, L.name)
-                        break
-                    for z in sorted(S[L.name]):
-                        if z not in par and z not in fixed and L.ok((S[L.name] - {z}) | {y}):
-                            par[z] = (y, L.name)
-                            q.append(z)
-            if done:
-                y, ln = done
-                chain = [(y, ln)]
-                while par[y] is not None:
-                    py_, pl = par[y]
-                    chain.append((py_, pl))
-                    y = py_
-                for el, _ in chain:
-                    if el in where:
-                        S[where[el]].discard(el)
-                for el, l2 in chain:
-                    S[l2].add(el)
-                    where[el] = l2
-                improved = True
+    try:
+        for x, ln in fixed.items():
+            if ln in LY and x in LY[ln].cand and LY[ln].ok(S[ln] | {x}):
+                S[ln].add(x)
+                where[x] = ln
+        free = [x for x in sorted(nets) if x not in fixed]
+        for x in free:                                       # greedy start
+            for L in layers:
+                if x in L.cand and L.ok(S[L.name] | {x}):
+                    S[L.name].add(x)
+                    where[x] = L.name
+                    break
+        improved = True
+        while improved:
+            improved = False
+            for x0 in [x for x in free if x not in where]:
+                par = {x0: None}
+                q = collections.deque([x0])
+                done = None
+                while q and not done:
+                    y = q.popleft()
+                    for L in layers:
+                        if y not in L.cand or where.get(y) == L.name:
+                            continue
+                        if L.ok(S[L.name] | {y}):
+                            done = (y, L.name)
+                            break
+                        for z in sorted(S[L.name]):
+                            if z not in par and z not in fixed and L.ok((S[L.name] - {z}) | {y}):
+                                par[z] = (y, L.name)
+                                q.append(z)
+                if done:
+                    y, ln = done
+                    chain = [(y, ln)]
+                    while par[y] is not None:
+                        py_, pl = par[y]
+                        chain.append((py_, pl))
+                        y = py_
+                    for el, _ in chain:
+                        if el in where:
+                            S[where[el]].discard(el)
+                    for el, l2 in chain:
+                        S[l2].add(el)
+                        where[el] = l2
+                    improved = True
+    except Stopped:                                      # S is whole between two questions
+        raise Stopped(S, sorted(x for x in nets if x not in where), "partition") from None
     return S, sorted(x for x in nets if x not in where)
 
 
@@ -532,61 +587,30 @@ def cmd_layers(a):
             L["outer"] = L["name"] in ("F.Cu", "B.Cu")
     ban = collections.defaultdict(set)
     fixed = dict(spec.get("fixed", {}))
+    t0 = time.monotonic()
+    DEADLINE[0] = t0 + a.timeout if a.timeout else None
+    stopped, prev = None, None
     for rnd in range(40):
-        layers = []
-        for L in spec["layers"]:
-            o, cand = obstacles(L)
-            cand = {n: p for n, p in cand.items() if n not in ban[L["name"]]}
-            if L.get("only"):                            # a layer open to some nets only (a pour layer's signals)
-                cand = {n: p for n, p in cand.items() if any(re.search(r, n) for r in L["only"])}
-            layers.append(Layer(L["name"], o, cand, L["width"], L["clearance"], exits[L.get("exit", "any")]))
-        S, left = partition(layers, nets, fixed)
-        bad = []
-        for L in spec["layers"]:                         # exact: a source keeps its own pad on its layer
-            if L.get("side") == "component" or L.get("outer") or not S[L["name"]]:
-                continue
-            srcs = {src_via[n]: n for n in S[L["name"]]}
-            o, _ = obstacles(L, exact_src=set(srcs))
-            got = exact_escape(o, srcs, L, exits[L.get("exit", "any")])
-            fl, trapped = len(got), sorted(set(srcs.values()) - got)
-            if fl < len(srcs):
-                bad.append((L["name"], fl, len(srcs), trapped))
-        # "pad_gap": two vias of different nets that both keep a pad on this layer (its sources, its pour
-        # vias) must be that far apart copper to copper -- an inner layer's pair rule (board 1's D65:
-        # 0.4 pads at 0.5 mm are 0.100 apart against 0.1016). One of each pair leaves the layer,
-        # the one in most pairs first; a fixed net or a pour via never moves.
-        pairs_moved = []
-        for L in spec["layers"]:
-            g = L.get("pad_gap")
-            if g is None or not S[L["name"]]:
-                continue
-            pn = set(L.get("pad_nets", []))
-            padded = {src_via[n]: n for n in S[L["name"]]}
-            padded.update({p: short(v["net"]) for p, v in vias.items() if short(v["net"]) in pn})
-            pts = sorted(padded)
-            close = [(a_, b_) for i, a_ in enumerate(pts) for b_ in pts[i + 1:]
-                     if padded[a_] != padded[b_] and math.dist(a_, b_) < pad + g - 1e-9]
-            while close:
-                deg = collections.Counter(padded[q] for e in close for q in e
-                                          if padded[q] in S[L["name"]] and padded[q] not in fixed)
-                if not deg:
-                    break
-                n = max(sorted(deg), key=deg.get)
-                ban[L["name"]].add(n)
-                pairs_moved.append((L["name"], n))
-                close = [e for e in close if n not in (padded[e[0]], padded[e[1]])]
-        for ln, n in pairs_moved:
-            print(f"  round {rnd + 1}: {ln} pad gap -- {n} moved off it")
-        if not bad and not pairs_moved:
+        try:
+            S, left, again = _layers_round(spec, rnd, obstacles, exits, nets, fixed, ban, src_via, vias, pad)
+        except Stopped as e:
+            S, left, step = e.args
+            stopped = f"in round {rnd + 1}'s {step}"
+            if prev and sum(map(len, prev.values())) > sum(map(len, S.values())):
+                S, left = prev, sorted(set(nets) - set().union(*prev.values()))
+                stopped += f"; the sets are round {rnd}'s, less the nets its checks moved off"
             break
-        for ln, fl, n, trapped in bad:
-            movable = [t for t in trapped if t not in fixed] or sorted(S[ln] - set(fixed))
-            out = movable[-(n - fl):]                    # the excess, from the min cut
-            ban[ln].update(out)
-            print(f"  round {rnd + 1}: {ln} exact {fl} of {n} -- {' '.join(out)} moved off it")
+        if not again:
+            break
+        prev = {ln: s - ban[ln] for ln, s in S.items()}  # what this round leaves standing
+    DEADLINE[0] = None
+    if stopped:
+        print(f"STOPPED at --timeout {a.timeout:g} s {stopped}: NOT the answer. Each layer's set below "
+              f"passes the bound, but more nets may fit and the exact check has not passed; "
+              f"give it more time, or fewer nets or layers per run.")
     print(f"{a.ref}: {len(nets)} nets over {len(spec['layers'])} layers")
-    for L in layers:
-        print(f"  {L.name:8s} {len(S[L.name]):3d}  {' '.join(sorted(S[L.name]))}")
+    for L in spec["layers"]:
+        print(f"  {L['name']:8s} {len(S[L['name']]):3d}  {' '.join(sorted(S[L['name']]))}")
     print(f"  unplaced {len(left)}{': ' + ' '.join(left) if left else ''}")
     lay = {n: ln for ln, s in S.items() for n in s}
     for grp in spec.get("together", []):
@@ -594,9 +618,69 @@ def cmd_layers(a):
         if len(got) > 1:
             print(f"  split: {', '.join(f'{n} {lay.get(n)}' for n in grp)}")
     if a.out:
-        json.dump(dict(sorted(lay.items())), open(resolve(a, a.out, new=True), "w"), indent=1)
-        print(f"wrote {resolve(a, a.out, new=True)}")
-    return 0 if not left else 1
+        out = resolve(a, a.out, new=True)
+        if stopped:                                      # never under the name a later step reads
+            out = out.with_name(out.stem + ".partial.json")
+        json.dump(dict(sorted(lay.items())), open(out, "w"), indent=1)
+        print(f"wrote {out}")
+    return 0 if not left and not stopped else 1
+
+
+def _layers_round(spec, rnd, obstacles, exits, nets, fixed, ban, src_via, vias, pad):
+    """One round of `layers`: partition, exact re-check, pad gaps. (S, left, another round?)"""
+    layers = []
+    for L in spec["layers"]:
+        o, cand = obstacles(L)
+        cand = {n: p for n, p in cand.items() if n not in ban[L["name"]]}
+        if L.get("only"):                            # a layer open to some nets only (a pour layer's signals)
+            cand = {n: p for n, p in cand.items() if any(re.search(r, n) for r in L["only"])}
+        layers.append(Layer(L["name"], o, cand, L["width"], L["clearance"], exits[L.get("exit", "any")]))
+    S, left = partition(layers, nets, fixed)
+    bad = []
+    for L in spec["layers"]:                         # exact: a source keeps its own pad on its layer
+        if L.get("side") == "component" or L.get("outer") or not S[L["name"]]:
+            continue
+        srcs = {src_via[n]: n for n in S[L["name"]]}
+        o, _ = obstacles(L, exact_src=set(srcs))
+        try:
+            got = exact_escape(o, srcs, L, exits[L.get("exit", "any")])
+        except Stopped:
+            raise Stopped(S, left, "exact check") from None
+        fl, trapped = len(got), sorted(set(srcs.values()) - got)
+        if fl < len(srcs):
+            bad.append((L["name"], fl, len(srcs), trapped))
+    # "pad_gap": two vias of different nets that both keep a pad on this layer (its sources, its pour
+    # vias) must be that far apart copper to copper -- an inner layer's pair rule (board 1's D65:
+    # 0.4 pads at 0.5 mm are 0.100 apart against 0.1016). One of each pair leaves the layer,
+    # the one in most pairs first; a fixed net or a pour via never moves.
+    pairs_moved = []
+    for L in spec["layers"]:
+        g = L.get("pad_gap")
+        if g is None or not S[L["name"]]:
+            continue
+        pn = set(L.get("pad_nets", []))
+        padded = {src_via[n]: n for n in S[L["name"]]}
+        padded.update({p: short(v["net"]) for p, v in vias.items() if short(v["net"]) in pn})
+        pts = sorted(padded)
+        close = [(a_, b_) for i, a_ in enumerate(pts) for b_ in pts[i + 1:]
+                 if padded[a_] != padded[b_] and math.dist(a_, b_) < pad + g - 1e-9]
+        while close:
+            deg = collections.Counter(padded[q] for e in close for q in e
+                                      if padded[q] in S[L["name"]] and padded[q] not in fixed)
+            if not deg:
+                break
+            n = max(sorted(deg), key=deg.get)
+            ban[L["name"]].add(n)
+            pairs_moved.append((L["name"], n))
+            close = [e for e in close if n not in (padded[e[0]], padded[e[1]])]
+    for ln, n in pairs_moved:
+        print(f"  round {rnd + 1}: {ln} pad gap -- {n} moved off it")
+    for ln, fl, n, trapped in bad:
+        movable = [t for t in trapped if t not in fixed] or sorted(S[ln] - set(fixed))
+        out = movable[-(n - fl):]                    # the excess, from the min cut
+        ban[ln].update(out)
+        print(f"  round {rnd + 1}: {ln} exact {fl} of {n} -- {' '.join(out)} moved off it")
+    return S, left, bool(bad or pairs_moved)
 
 
 def exact_escape(o, srcs, L, exit_ok):
@@ -668,6 +752,9 @@ def main():
     q = sub.choices["layers"]
     q.add_argument("--vias", required=True, help="the fanout model (plan's output)")
     q.add_argument("--layers", required=True, help="the layer file (see above)")
+    q.add_argument("--timeout", type=float, default=0,
+                   help="seconds; stops at the next flow question with the split so far printed and written "
+                        "as <out>.partial.json, exit 1 (use this, not a `timeout` prefix)")
     a = ap.parse_args()
     return cmd_plan(a) if a.cmd == "plan" else cmd_layers(a)
 
