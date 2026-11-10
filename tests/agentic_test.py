@@ -669,7 +669,9 @@ def stage_pcb_tools(have):
               "route.py check / audit, place.py drc, board_setup.py run only on a machine with KiCad")
         return
     rc, out = run([ROOT / "kicad_project" / "tools" / "kpy", "-c", "import pcbnew; print(pcbnew.Version())"], ROOT)
-    stage("pcb-tools", "PASS" if rc == 0 else "FAIL", time.time() - t0, "pcbnew " + tail(out, 1))
+    # pcbnew's own assert and Debug lines land in the same stream: the version is the line that looks like one
+    ver = [ln for ln in out.splitlines() if re.match(r"\d+\.\d+", ln.strip()) and "Debug:" not in ln]
+    stage("pcb-tools", "PASS" if rc == 0 else "FAIL", time.time() - t0, "pcbnew " + (ver[-1].strip() if ver else tail(out, 1)))
 
 
 def stage_pcb(copy, board, quick):
