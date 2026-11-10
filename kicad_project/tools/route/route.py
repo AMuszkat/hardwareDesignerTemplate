@@ -51,6 +51,17 @@ A plan may carry, besides tracks/vias/zones:
   thermals  true                                                     type the guide's thermal policy, then refill
 `apply` lays them in that order, in one save, and the manifest records what
 was added (by UUID) and what was removed (a rip is undone from the backup).
+
+A STALE PLAN IS REFUSED BEFORE ANY GATE (origin.py; exit 5).  A planner writes
+<plan>.origin.json beside its plan: the spec's hash and the board file's.
+`check` and `apply` refuse a plan whose spec has changed, whose board has
+changed by anything but route.py's own recorded applies and rips, whose copper
+is not what the planner wrote, or that a later run retired (<plan>.stale.json)
+-- naming each, and what changed in the spec.  `--accept-stale WHAT` (spec,
+board, plan, retired, comma separated, or all) applies it all the same.  A plan
+with no origin record (hand-written, another tool's, an older one) gets one
+line saying it was not tested.  Every apply and rip appends the board's hash
+before and after to <board>/routing/board_steps.jsonl.
 """
 
 import argparse
@@ -74,6 +85,7 @@ boardsel = P.boardsel
 sys.path.insert(0, str(ROOT / "tools" / "route"))
 sys.path.insert(0, str(ROOT / "tools" / "copper"))
 import guide                                                # noqa: E402
+import origin                                               # noqa: E402  (tools/route: a plan's origin record)
 import drccache                                             # noqa: E402  (tools/place)
 
 
@@ -86,6 +98,36 @@ def group_of(plan_path, plan):
 
 def manifest_path(board_dir, group):
     return board_dir / "routing" / f"{group}.applied.json"
+
+
+def stale_gate(a, B, verb):
+    """Is the plan still what its origin record says, on the spec and the board it was planned
+    for (origin.judge)?  Before any gate: a DRC verdict on a plan routed from another spec is a
+    verdict on the wrong copper.  Prints one line each for plan, spec and board -- both the spec
+    and the board are named whether or not they are the reason -- and exits 5 on anything
+    `--accept-stale` does not name.  A plan with no record passes with one line."""
+    accept = {w.strip() for w in (getattr(a, "accept_stale", "") or "").split(",") if w.strip()}
+    if "all" in accept:
+        accept = set(origin.WHAT)
+    if accept - set(origin.WHAT):
+        die(f"--accept-stale: {sorted(accept - set(origin.WHAT))} is not one of {', '.join(origin.WHAT)}, all")
+    v = origin.judge(a.plan, a.board, B.pcb)
+    left = [w for w in origin.WHAT if w in v["stale"] and w not in accept]
+    taken = [w for w in origin.WHAT if w in v["stale"] and w in accept]
+    if v["origin"] is None and not v["stale"]:
+        print("\n".join(v["lines"]))
+        return
+    name = Path(a.plan).name
+    print(f"STALE PLAN {name}" if v["stale"] else f"origin of {name}:")
+    print("\n".join(v["lines"]))
+    if v["origin"] and v["stale"]:
+        print(f"   planned {v['origin'].get('planned', '?')} by: {v['origin'].get('by', '?')}")
+    if taken:
+        print(f"   --accept-stale {','.join(taken)}: {verb} all the same, on your word")
+    if left:
+        print(f"   nothing {verb}. Run the planner again on the spec (it replaces the plan), or pass "
+              f"--accept-stale {','.join(left + taken)} to have this file {verb} as it is")
+        sys.exit(5)
 
 
 # ---------------------------------------------------------------------------
@@ -979,8 +1021,10 @@ def pour_islands(Bx, board):
     return out
 
 
-def cmd_check(a, quiet=False):
+def cmd_check(a, quiet=False, gate=True):
     B = RBoard(a.board)
+    if gate:
+        stale_gate(a, B, "checked")
     plan = json.loads(Path(a.plan).read_text())
     group = group_of(a.plan, plan)
     for k in plan:
@@ -1099,7 +1143,9 @@ def cmd_apply(a):
     B = RBoard(a.board)
     if P.locks(B.pcb):
         die("KiCad has the board open; close it first", 3)
-    if cmd_check(a, quiet=False) != 0:
+    stale_gate(a, B, "applied")
+    sha_before = origin.sha_file(B.pcb)
+    if cmd_check(a, quiet=False, gate=False) != 0:
         die("plan does not pass check; nothing applied", 1)
     plan = json.loads(Path(a.plan).read_text())
     group = group_of(a.plan, plan)
@@ -1144,6 +1190,8 @@ def cmd_apply(a):
     # The manifest FIRST: copper without one cannot be ripped, and the DRC
     # below can fail for reasons that have nothing to do with the copper.
     man.write_text(json.dumps(rec, indent=1) + "\n")
+    # ... and the step: a plan routed on the board as it was is still accounted for (origin.trail)
+    origin.step(a.board, "apply", group, sha_before, origin.sha_file(B.pcb), plan=rec["plan"])
     after_rep = drc_report(B.pcb)
     rec["open_after"] = open_conn(B.pcb)
     man.write_text(json.dumps(rec, indent=1) + "\n")
@@ -1171,6 +1219,7 @@ def cmd_rip(a):
               f"{rm.get('polyrips', 0)} polygons when it was applied; rip takes back only what it added -- "
               f"the removed copper is in the backup {B.pcb.name}.{a.plan}-bak")
     shutil.copy2(B.pcb, B.pcb.with_suffix(f".kicad_pcb.{a.plan}-rip-bak"))
+    sha_before = origin.sha_file(B.pcb)
     n = 0
     for item in list(B.b.GetTracks()) + list(B.b.Zones()) + list(B.b.GetDrawings()):
         if str(item.m_Uuid.AsString()) in want:
@@ -1182,6 +1231,7 @@ def cmd_rip(a):
     if moved:
         print("note: copper changed net when saved (it was already wrong before this rip):\n  "
               + "\n  ".join(moved))
+    origin.step(a.board, "rip", a.plan, sha_before, origin.sha_file(B.pcb))
     man.rename(man.with_suffix(".json.ripped"))
     print(f"ripped {n} of {len(want)} items from {a.plan}; manifest renamed to .ripped")
     return 0
@@ -1391,6 +1441,9 @@ def main():
                     "are in, else this session's board)")
     ap.add_argument("--nets", action="store_true", help="status: list every net with its class")
     ap.add_argument("--force", action="store_true", help="apply: re-apply a group that has a manifest")
+    ap.add_argument("--accept-stale", default="", metavar="WHAT",
+                    help="check/apply: take a plan its origin record says is stale -- spec, board, plan, "
+                         "retired (comma separated) or all; each is named in the refusal")
     ap.add_argument("--out", help="render: output directory (default <board>/routing/renders)")
     ap.add_argument("--dpi-scale", type=float, default=6.0, help="render: PyMuPDF matrix scale")
     a = ap.parse_args()

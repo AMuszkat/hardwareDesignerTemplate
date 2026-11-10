@@ -149,6 +149,15 @@ or the --timeout; 3 stuck; 4 blocked):
     six cells, 433 iterations).
   A net with no path that is NOT shut in (the 45-degree rule at an end, or
     --limit) and a run out of --iters stay exit 1, as does the --timeout.
+
+THE PLAN AT THE OUTPUT PATH IS THIS RUN'S, OR THERE IS NONE (origin.py).  A plan
+already at the spec's "plan" path is moved aside as <plan>.stale.json when the
+run STARTS -- so a run that fails, times out or is killed leaves no older plan
+where its own would have been (board1's R2: a plan from before the widths were
+corrected, still at the path after three minutes of "no solution") -- and
+deleted when this run writes its plan.  Beside the plan the run writes
+<plan>.origin.json: the hash of the spec (normalised) and of the board file it
+was routed on, which `route.py check` and `apply` test before anything else.
 """
 
 import argparse
@@ -165,6 +174,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "place"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import place as P  # noqa: E402
 import maze  # noqa: E402
+import origin  # noqa: E402  (the plan's origin record, and the retiring of an older plan)
 import par  # noqa: E402  (tools/par.py, on the path maze put it)
 from corners import straighten  # noqa: E402
 
@@ -231,6 +241,26 @@ def main():
     lack = [k for k in ("window", "nets", "why", "plan") if k not in S]
     if lack:
         sys.exit(f"{spec_path.name}: the spec lacks {lack} (tools/route/README.md)")
+    # An older plan at the output path goes aside NOW, before anything can fail or be killed:
+    # whatever ends this run, the path holds this run's plan or nothing (origin.py, 3).  Not
+    # when the spec's "plane" reads its zone from that very file -- then the file is an input.
+    plan_path = Path(S["plan"])
+    plan_path = plan_path if plan_path.is_absolute() else Path(a.board) / plan_path
+    zone_in = (S.get("plane") or {}).get("zone")
+    retired = None
+    if not (zone_in and P.boardsel.in_board(a.board, zone_in).resolve() == plan_path.resolve()):
+        retired = origin.retire(plan_path)
+        if retired:
+            print(f"retired {plan_path.name} -> {retired.name}: an earlier run's plan, moved aside until "
+                  "this run has its own (route.py refuses a .stale.json; a plan from this run deletes it)")
+
+    def no_plan():
+        """The last line of a run that ends without a plan."""
+        st = origin.stale_path(plan_path)
+        print(f"no plan at {plan_path}" + (f": the earlier one is {st.name}, which route.py refuses "
+                                           "(rename it and its .origin.json back to use it deliberately)"
+                                           if st.exists() else ""))
+
     for n_, q_ in S["nets"].items():
         stages = [lg.get("stage", i) for i, lg in enumerate(q_.get("legs", []))]
         dup = sorted({x for x in stages if stages.count(x) > 1})
@@ -241,6 +271,7 @@ def main():
     RETRACE = float(S.get("retrace_cost", 20.0))     # per cell of a net's own frozen copper it runs along
     VIA, DRILL = S.get("via", [0.6, 0.3])
     maze.CLR, maze.PADCLR, maze.W, maze.VIA_R = float(S.get("clearance", 0.15)), float(S.get("padclr", 0.2)), W, VIA / 2
+    board_sha = origin.sha_file(P.boardsel.one_pcb(a.board))   # BEFORE it is read: the plan is true of this content
     B = P.Board(a.board)
     import pcbnew
     import guide
@@ -995,6 +1026,7 @@ def main():
             print(f"BLOCKED at this leg: {', '.join(d_['net'] for d_ in shut_in)} -- nothing was negotiated")
             write_partial({}, {}, stage, 0, {}, "blocked", blocked=shut_in)
             print(f"wrote {pp} (the legs that closed, and the diagnosis)")
+            no_plan()
             return 4
 
         opts = dict(iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
@@ -1101,6 +1133,7 @@ def main():
             if last or out or found:          # frozen legs + the last iteration, for a look (never for a gate)
                 write_partial(last, bad, stage, itn[0], reach_rows, state, **found)
                 print(f"wrote {pp} (the last iteration, overlaps and all)")
+            no_plan()
             return code
         for n, (runs, vias) in paths.items():
             out.setdefault(n, []).append((runs, vias))
@@ -1232,12 +1265,17 @@ def main():
         plan["tracks"].append(dict(extra, net=full.get(extra["net"], extra["net"])))
     for extra in S.get("extra_vias", []):
         plan["vias"].append(dict(extra, net=full.get(extra["net"], extra["net"])))
-    p = Path(S["plan"])
-    p = p if p.is_absolute() else Path(a.board) / p
+    p = plan_path
     p.write_text(json.dumps(plan, indent=1) + "\n")
+    sc = origin.write(p, plan, spec_path, S, B.pcb, board_sha, a.board,
+                      by="netgroup.py " + " ".join(sys.argv[1:]))
     print(f"\nwrote {p}: {len(plan['tracks'])} track runs, {len(plan['vias'])} vias"
           + (f" ({n_raw[0]} run(s) left unstraightened: straightening cut a via's halo)" if n_raw[0] else "")
           + (f" ({n_wide[0]} short leg(s) widened to a track width)" if n_wide[0] else ""))
+    print(f"wrote {sc.name}: spec {origin.spec_sha(S)[:12]}, board {board_sha[:12]} (route.py tests both before it applies)")
+    gone = origin.drop_retired(p)
+    if gone:
+        print(f"removed {gone.name}: the plan supersedes it")
     if pp.exists():
         pp.unlink()                    # an earlier run's partial would read as this run's state
         print(f"removed {pp.name}: the plan supersedes it")

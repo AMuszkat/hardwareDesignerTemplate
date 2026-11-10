@@ -183,6 +183,73 @@ the guide has a `joints` row: without one it prints what it finds and
 exits 0. `apply --force` replaces a group: the previous copy's copper is
 removed first, by its manifest.
 
+## A plan's origin: a stale plan is refused (`origin.py`)
+
+A plan file does not say which spec it was routed from or which board it was routed
+on, so a plan left at its path by an earlier run reads exactly like the result of the
+run that just failed (board1's R2: "no solution" after three minutes, and at the
+output path a plan from before the spec's track widths were corrected). Three
+mechanisms, all in `origin.py` (board-free, standard library):
+
+**The record.** `netgroup.py` writes `<plan>.origin.json` beside its plan: the
+spec's path and hash, the board file's hash, the time, the command. A sidecar, not
+keys in the plan — the plan's bytes are what they always were.
+
+**The test.** `route.py check` and `apply` run it before any gate, print one line
+each for plan, spec and board, and exit **5** on anything not accepted:
+
+    STALE PLAN R2_emmc_In2.json
+       plan   R2_emmc_In2.json: as written 2026-11-10 19:02:11
+       spec   routing/R2_emmc_In2_spec.json CHANGED since the plan was made (05487e99c9df then, 460bc6ae62ce now): width 0.2 -> 0.25
+       board  board1.kicad_pcb: unchanged (8cadc3fc7fc8)
+       planned 2026-11-10 19:02:11 by: netgroup.py routing/R2_emmc_In2_spec.json
+       nothing applied. Run the planner again on the spec (it replaces the plan), or pass --accept-stale spec to have this file applied as it is
+
+| what | stale when | not stale when |
+|---|---|---|
+| `spec` | any key that decides the route differs (the refusal names the keys, with both values for a number), or the spec file is gone | it was reformatted, its keys reordered, `1` written `1.0`, its `"why"` reworded, its `"plan"` path or a `"_..."` comment changed |
+| `board` | the `.kicad_pcb`'s content differs and route.py did not record how | the file was copied, touched, checked out or restored (same content); or it moved only by recorded `apply`/`rip` steps |
+| `plan` | a key the planner wrote differs (a moved point, another file copied over the path) | a key was ADDED by hand (`accept`, `edge_ok`, `marks`) |
+| `retired` | the file is a `<plan>.stale.json` | — |
+
+`--accept-stale WHAT` (`spec`, `board`, `plan`, `retired`, comma separated, or
+`all`) takes the file all the same; the refusal prints the exact flag. A plan with
+no record (hand-written, from `fanout.py` / `pour.py` / `stitch.py` / `decap.py`,
+or older than this) gets one `note:` line and is checked as before.
+
+*Why a content hash for the board, not time and size:* a copy to a scratch folder, a
+`touch`, a git checkout and a restore from a backup all change the time and keep the
+content — false refusals, which teach the flag — and a save that moves one coordinate
+can keep the size. Hashing a board file costs milliseconds.
+
+*Why recorded steps are not a refusal:* several plans routed on one board and
+applied one after the other is how a bus on three layers is done. Every `apply` and
+`rip` appends the board's hash before and after to
+`<board>/routing/board_steps.jsonl`; a plan whose board hash leads to the present one
+through those steps is taken, the gate names the steps, and `check` judges it against
+that copper on the scratch copy — the test that matters. Plans gated one at a time
+are still not gated against each other until the first is on the board.
+
+**Retiring.** `netgroup.py` moves a plan already at its output path aside as
+`<plan>.stale.json` (its record as `<plan>.stale.origin.json`) when it **starts**, so
+a run that fails, hits `--timeout` or is killed leaves **no plan at its path** — its
+last line says so — and a run that writes its plan deletes the retired one. Moved,
+not deleted: it may be the only copy of a route that took an hour, and nothing has
+replaced it yet. Unchanged: rename both files back and it is the plan it was, judged
+by its record like any other. (Not retired: a plan the spec's own `plane.zone`
+reads.) Two runs on ONE output path: each retires only when it starts, so a run that
+fails later never removes the plan another wrote meanwhile.
+
+A plan routed on a **copy** of the board (a what-if in the scratchpad, a race of
+variants) keeps a record that fits the real board — the same content is the same
+hash — provided its `.origin.json` is copied back WITH it and the spec is at the same
+path inside the board folder. Copied back alone it is a plan with no record.
+
+Another planner gets the same guard with two calls: `origin.retire(plan_path)` when
+it starts, `origin.write(plan_path, plan, spec_path, spec, pcb, board_sha,
+board_dir)` when it writes. `tests/test_plan_guard.py` holds all of it on the fixture
+board.
+
 ## `netgroup.py` + `maze.py` — the negotiated router, driven by a spec
 
 A group of signal nets from a JSON spec: legs to pads, points or prelaid copper
