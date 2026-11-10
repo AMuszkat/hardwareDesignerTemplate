@@ -35,7 +35,8 @@ CHROMES = [c for c in (os.environ.get("CHROME_BIN"), "google-chrome-stable", "go
                        "/Applications/Chromium.app/Contents/MacOS/Chromium") if c]
 PROJECT_SKILLS_CONCEPT = ["decision", "answer-question", "datasheet", "study"]
 HOOK_SCRIPTS = ["kicad_project/tools/session/relay.py", "kicad_project/tools/session/guard.py",
-                "kicad_project/tools/session/wall.py", "kicad_project/tools/boardsel.py"]
+                "kicad_project/tools/session/wall.py", "kicad_project/tools/session/bashguard.py",
+                "kicad_project/tools/boardsel.py"]
 LAUNCHERS = ["bin/concept", "bin/board", "bin/relay", "setup.sh", "verify.sh",
              "kicad_project/tools/kpy", "kicad_project/tools/setup.sh",
              "kicad_project/tools/freerouting/freerouting-mcp.sh", "kicad_project/tools/render/setup.sh"]
@@ -205,7 +206,7 @@ def project():
     relay = load_json(KP / "relay.json") or {}
     add("ok", "relay switch", "ON" if relay.get("enabled") else "OFF (default; bin/relay on)")
     rc, out = run([sys.executable, str(ROOT / "tools/setup/render_settings.py"), "--check"])
-    add("ok" if rc == 0 else "FAIL", "per-machine settings (deny rules, CLAUDE.md exclude)",
+    add("ok" if rc == 0 else "FAIL", "per-machine settings (deny rules, CLAUDE.md exclude, Bash guard hook)",
         "rendered for this path" if rc == 0 else "; ".join(out.splitlines()),
         "./setup.sh render-settings" if proj else "./setup.sh init <ProjectName> (renders them)")
     sk = KP / ".claude" / "skills"
