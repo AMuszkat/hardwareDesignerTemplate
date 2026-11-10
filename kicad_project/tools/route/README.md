@@ -480,6 +480,8 @@ docstring.
   the count.
 - `tests/fixture_pcb.py --kind prelayout` is the three historical failures;
   each must FAIL.
+- A waiver's `target` is a part (every check on it) or, for `rows`, `REF:SIDE`
+  (`"U400:S"`): one side waived, the part's other `rows` entries still run.
 
 ## `fanout.py` — where a BGA's vias go, and how many nets leave over several layers
 

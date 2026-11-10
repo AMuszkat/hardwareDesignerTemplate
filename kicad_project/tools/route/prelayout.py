@@ -27,7 +27,8 @@ THE SPEC, <board>/routing/prelayout.json (every number from the handoff; each en
    "rows":    [{"ref": "J1", "pads": "outer", "side": "S", "via": [0.6, 0.3], "gap": 0.2,
                 "clearance": 0.2, "width": 0.2, "edge": 0.45, "lateral": 0.6, "skip": "^$", "strip": null}],
    "bundles": [{"a": "J1", "b": "J_MAIN1", "max": 0, "why": "one free layer in the corridor"}],
-   "waive":   [{"check": "rows", "target": "J7", "why": "..."}]}
+   "waive":   [{"check": "rows", "target": "J7", "why": "..."},
+               {"check": "rows", "target": "U400:S", "why": "one side's rows entry; the part's others still run"}]}
 
 fanout   fanout.py plan (model to routing/prelayout/vias_<ref>.json), then `layers` when a
          layer file is given. FAIL: an own-via ball fell back into its pad and in_pad_ok is
@@ -345,6 +346,9 @@ def main():
             say("rows", ref, "FAIL", "not on the board")
             continue
         for c in conf[ref]:
+            # one side of a part waived on its own ("target": "U400:S"): the other sides still run
+            if waive("rows", f"{ref}:{c['side']}"):
+                continue
             st, why = row_check(B, c)
             sel = c.get("pads", "outer")
             say("rows", f"{ref}({sel if isinstance(sel, str) else f'{len(sel)} pads'},{c['side']})", st, why)

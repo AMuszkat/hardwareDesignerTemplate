@@ -752,6 +752,8 @@ def cmd_labels(a):
     import fnmatch
     strict_pats = B.cfg.get("labels", {}).get("own_nearest", [])
     strict = lambda ref: any(fnmatch.fnmatch(ref, pat) for pat in strict_pats)
+    own_margin = float(B.cfg.get("labels", {}).get("own_margin", 0.5))
+    own_center = float(B.cfg.get("labels", {}).get("own_center", 0.3))   # off its pad's axis, at most
     o = B.outline
     # labels.edge_min: a label's distance from Edge.Cuts (the outline AND every cut-out); default the
     # silk clearance.  A routed outline wanders by its tolerance, so a label 0.149 mm off a cut-out
@@ -814,6 +816,11 @@ def cmd_labels(a):
             for_p = [ctr(p["box"]) for q, f in B.fps.items() if q != r and B.side(f) == side
                      for p in B.pads(f) if rgap(c, p["box"]) < 8.0]
 
+            def own_by(sx, sy, m):
+                if not own_p or not for_p:
+                    return True
+                return min(math.dist((sx, sy), q) for q in for_p) - min(math.dist((sx, sy), q) for q in own_p) >= m
+
             def foreign(sx, sy):
                 if not own_p or not for_p:
                     return 0.0
@@ -848,9 +855,19 @@ def cmd_labels(a):
                         # by it lands on the wrong part (board1 RV8.4: a row of test points at
                         # 2.13 mm took five labels by the clash count alone, the penalty outbid)
                         fo = foreign(sx, sy)
-                        if fo > 0 and strict(r):
-                            continue
-                        out.append((math.dist((sx, sy), (cx, cy)) + (0.4 if ang else 0.0) + fo,
+                        off = 0.0
+                        if strict(r):
+                            # a probe user must SEE whose label it is: its own pad by a plain margin
+                            # (labels.own_margin, 0.5 mm), and the label over / under / beside its pad
+                            # centre, not half-way to the next (board1 RV9.3)
+                            if fo > 0 or not own_by(sx, sy, own_margin):
+                                continue
+                            off = min(abs(sx - q[0]) for q in own_p) if abs(sy - cy) > abs(sx - cx) \
+                                else min(abs(sy - q[1]) for q in own_p)
+                            if off > own_center:         # over / under / beside its pad, not between two
+                                continue
+                            off *= 2.0
+                        out.append((math.dist((sx, sy), (cx, cy)) + (0.4 if ang else 0.0) + fo + off,
                                     ang, sx, sy, bx))
             out.sort(key=lambda t: t[0])
             cands[r] = out
@@ -860,6 +877,8 @@ def cmd_labels(a):
         while todo:
             feas = {r: [k for k in cands[r] if not any(clash(k[4], t) for t in taken)] for r in todo}
             for r in [r for r in todo if not feas[r]]:
+                if os.environ.get("HW_LABEL_DEBUG") and strict(r):
+                    print("  lost", r, "first candidates", [[round(v, 2) for v in k[1:4]] for k in cands[r][:4]])
                 hidden.append(r)
                 todo.remove(r)
             if not todo:
@@ -871,6 +890,8 @@ def cmd_labels(a):
                 sum(1 for q in others for m in others[q] if clash(k[4], m[4]))
                 + 100 * sum(1 for q in others if all(clash(k[4], m[4]) for m in others[q])), k[0]))
             result[r] = best[1:4]
+            if os.environ.get("HW_LABEL_DEBUG") and strict(r):
+                print("  placed", r, [round(v, 2) for v in best[1:4]], [round(v, 2) for v in best[4]])
             taken.append(best[4])
             todo.remove(r)
     for r, (ang, sx, sy) in result.items():

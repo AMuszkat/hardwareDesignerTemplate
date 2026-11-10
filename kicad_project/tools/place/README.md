@@ -51,6 +51,7 @@ board):
 | `net_report_limit` | how many nets `check` lists in its span report |
 | `labels.hide` | references whose designator never goes on silk |
 | `labels.own_nearest` | fnmatch patterns (`["TP*"]`) whose label may never sit nearer another part's pad than its own, and which are placed first -- a test point's label is what a probe is set by (board1 RV8.4). Every other label only pays for it: a hard rule there hides labels a dense board needs |
+| `labels.own_margin` / `labels.own_center` | for those parts: the label at least this much nearer its own pad than any other (0.5 mm default) and at most this far off its pad's axis (0.3 mm default) -- a probe user reads a label by eye, and 0.06 mm is no margin (board1 RV9.3). On a crowded edge 0.3 / 0.8 |
 | `shared_pad` | `[{refs: [A, B], net, source}]`: two stock parts drawn as one selector, their `net` pads on one point and the parts at 90° (a 3-pad selector made of two 0402s). That pair skips the courtyard test -- their courtyards overlap by design -- and `check` proves the merge instead: the `net` pads coincide, one side, 90° apart. Everything else (foreign-net pads, holes, silk) is still tested. KiCad's own DRC reports the overlap: exclude it there with the handoff's comment |
 
 A keep-out may carry `"side": "F" | "B" | "both"` (default `F`) and an
