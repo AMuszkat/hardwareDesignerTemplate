@@ -92,8 +92,9 @@ LAYOUT = [
 # forms the board's tools/route/guide.py reads -- rule names: joints, copper to
 # edge, via to pad gap, 45-degree via link, copper shape, class width, thermals,
 # plane layer, no vias, class layers, keep-out, via field, bga field, ground
-# beside, frozen, thermal pad (kicad_project/tools/route/README.md has the
-# forms). Validated by guide.py's own parser at publish, published as
+# beside, frozen, thermal pad, and the five checks -- cap reach, layers apart,
+# stitch via, neck length, distance (kicad_project/tools/route/README.md has
+# the forms). Validated by guide.py's own parser at publish, published as
 # handoff/rules.json and as a table in 10_layout.md; the board's guide table is
 # generated from it (`guide.py sync`), so nobody types it twice.
 #                                                [rules.json, 10_layout.md]
@@ -106,6 +107,8 @@ WORKMANSHIP = [
     # ("class width", "on", "14_fab Net classes"),
     # ("thermals", "outer: all pads; inner: THT only", "10_layout #4"),
     # ("plane layer", "In1.Cu: GND", "14_fab Physical Stackup"),
+    # ("cap reach", "U1: 1.27 mm (C12, C13)", "10_layout #5"),   a check: `route.py audit` measures it
+    # ("stitch via", "Pairs: GND within 1.27 mm", "10_layout #6"),
 ]
 
 # The floorplan's reservations as DATA (the SVG stays for the eye): each zone a
@@ -234,7 +237,24 @@ DATASHEETS_EXTRA = []
 #     ],
 #     # Custom DRC rules: (title, rule text, why). Same (rule "fab: <name>")
 #     # as a derived rule replaces it -- that is how an exception is stated.
+#     # Once the board has a PCB, a NEW or CHANGED rule (a derived one too)
+#     # does not publish until `python3 tools/review/rulecheck.py --board
+#     # boardN` has proven that exact text on the board.
 #     "rules": [],
+#     # The escape bound a rule about a BGA's ball field carries: one row per
+#     # BGA and escape layer, `args` being the rest of
+#     # kicad_project/tools/route/escape_bound.py's command line (paths
+#     # relative to the board folder; --board and --ref are added).
+#     # rulecheck.py runs it, a bound PROVEN SHORT fails the BGA's rules, and
+#     # 14_fab.md states the number. {"ref": "U5", "waive": "<why>"} for a
+#     # BGA no bound applies to (nothing escapes inside its courtyard).
+#     "escape": [
+#         {"ref": "U1", "layer": "In1.Cu", "args": ["--spec", "routing/fanout_U1.json",
+#                                                   "--width", "0.09", "--clearance", "0.09"]},
+#     ],
+#     # A rule that cannot be proven on the board yet, published anyway:
+#     # {rule name: why}. It is a lint note at every publish until dropped.
+#     "unproven": {},
 #     "why": [],                         # numbered arithmetic behind the numbers
 #     "sources": [],                     # (source, where, what it gave)
 #     "order_notes": None,               # None = generated from the order rows

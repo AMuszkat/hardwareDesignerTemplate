@@ -120,6 +120,89 @@ def grow(b, g):
     return (b[0] - g, b[1] - g, b[2] + g, b[3] + g)
 
 
+class RectGrid:
+    """Rectangles (x0, y0, x1, y1) in a bucket grid: the ones near a box without a scan of them all.
+
+    A rectangle is listed in every cell it reaches, so two that share a point share a cell:
+    `near` and `hits` never miss an overlap, and decide it by the same comparisons rgap makes
+    (rgap < 0 between two rectangles is exactly: they overlap on both axes)."""
+
+    def __init__(self, rects, cell=1.0):
+        self.rects, self.cell, self.cells = rects, cell, {}
+        for i, r in enumerate(rects):
+            for ix in range(int(r[0] // cell), int(r[2] // cell) + 1):
+                for iy in range(int(r[1] // cell), int(r[3] // cell) + 1):
+                    self.cells.setdefault((ix, iy), []).append(i)
+
+    def near(self, b):
+        """Indices of the rectangles that share a cell with the box (a superset of those that touch it)."""
+        c, cells, out = self.cell, self.cells, set()
+        for ix in range(int(b[0] // c), int(b[2] // c) + 1):
+            for iy in range(int(b[1] // c), int(b[3] // c) + 1):
+                got = cells.get((ix, iy))
+                if got:
+                    out.update(got)
+        return out
+
+    def hits(self, b, among):
+        """Does the box overlap one of the rectangles whose index is in `among`?"""
+        x0, y0, x1, y1 = b
+        c, cells, rects = self.cell, self.cells, self.rects
+        for ix in range(int(x0 // c), int(x1 // c) + 1):
+            for iy in range(int(y0 // c), int(y1 // c) + 1):
+                for i in cells.get((ix, iy), ()):
+                    if i in among:
+                        r = rects[i]
+                        if r[0] < x1 and x0 < r[2] and r[1] < y1 and y0 < r[3]:
+                            return True
+        return False
+
+
+class PointGrid:
+    """Points in a bucket grid, for the distance from a place to the nearest of them.
+
+    `nearest(x, y)` is exactly min(math.hypot(x - qx, y - qy) for qx, qy in pts): the same hypot
+    on the same floats, asked only of the points in the rings of cells round the place, out to the
+    ring past which no point can be nearer than the best found -- or of every point, once the
+    rings have cost more cells than there are points (a few far targets: the plain scan is cheaper)."""
+
+    def __init__(self, pts, cell=1.0):
+        self.cell, self.cells, self.pts = cell, {}, [tuple(q) for q in pts]
+        for q in pts:
+            self.cells.setdefault((int(q[0] // cell), int(q[1] // cell)), []).append(q)
+        ks = list(self.cells)
+        self.span = (min(k[0] for k in ks), min(k[1] for k in ks), max(k[0] for k in ks), max(k[1] for k in ks))
+
+    def nearest(self, x, y):
+        c, cells, hypot = self.cell, self.cells, math.hypot
+        n = len(self.pts)
+        if n <= 8:
+            return min(hypot(x - qx, y - qy) for qx, qy in self.pts)
+        ix, iy = int(x // c), int(y // c)
+        s = self.span
+        last = max(ix - s[0], s[2] - ix, iy - s[1], s[3] - iy, 0)    # the ring that holds the farthest cell
+        best, k = 1e300, 0
+        while True:
+            if k == 0:
+                ring = ((ix, iy),)
+            else:
+                ring = [(i, iy - k) for i in range(ix - k, ix + k + 1)] + [(i, iy + k) for i in range(ix - k, ix + k + 1)] \
+                    + [(ix - k, j) for j in range(iy - k + 1, iy + k)] + [(ix + k, j) for j in range(iy - k + 1, iy + k)]
+            for key in ring:
+                got = cells.get(key)
+                if got:
+                    for qx, qy in got:
+                        h = hypot(x - qx, y - qy)
+                        if h < best:
+                            best = h
+            # a point in ring k + 1 or beyond is at least k cells away
+            if k >= last or best <= k * c - 1e-9:
+                return best
+            k += 1
+            if (2 * k + 1) ** 2 > 4 * n:
+                return min(hypot(x - qx, y - qy) for qx, qy in self.pts)
+
+
 # ---------------------------------------------------------------------------
 # board model
 # ---------------------------------------------------------------------------
@@ -144,6 +227,11 @@ class Board:
         self.nocrt = set()                    # footprints judged by their pads: no courtyard
         self.outline = self._outline()
         self.rings = self._rings()
+        # each ring's segments once -- (x1, y1, x2, y2, dx, dy, dx^2 + dy^2) -- and the edge distance at
+        # the centre of every EDGE_CELL cell asked about (edge_clear)
+        self._segs = [[(x1, y1, x2, y2, x2 - x1, y2 - y1, (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1))
+                       for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1])] for pts in self.rings or []]
+        self._edge_at = {}
         ds = self.b.GetDesignSettings()
         self.mask_exp = self.mm(ds.m_SolderMaskExpansion)
         self.silk_clr = self.mm(ds.m_SilkClearance)
@@ -197,26 +285,30 @@ class Board:
             o = self.outline
             return o[0] <= x <= o[2] and o[1] <= y <= o[3]
 
-        def inside(pts):
+        def inside(segs):
             c = False
-            for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]):
+            for x1, y1, x2, y2, _dx, _dy, _l in segs:
                 if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
                     c = not c
             return c
-        return inside(self.rings[0]) and not any(inside(h) for h in self.rings[1:])
+        return inside(self._segs[0]) and not any(inside(h) for h in self._segs[1:])
 
     def edge_dist(self, x, y):
         """Distance from a point to the nearest board edge; negative off the board."""
         if not self.rings:
             o = self.outline
             return min(x - o[0], y - o[1], o[2] - x, o[3] - y)
-        best = 1e9
-        for pts in self.rings:
-            for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]):
-                dx, dy = x2 - x1, y2 - y1
-                L = dx * dx + dy * dy
-                t = 0.0 if L == 0 else max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / L))
-                best = min(best, math.hypot(x - x1 - t * dx, y - y1 - t * dy))
+        best, hypot = 1e9, math.hypot
+        for segs in self._segs:
+            for x1, y1, _x2, _y2, dx, dy, L in segs:
+                if L == 0:
+                    t = 0.0
+                else:
+                    t = ((x - x1) * dx + (y - y1) * dy) / L
+                    t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
+                h = hypot(x - x1 - t * dx, y - y1 - t * dy)
+                if h < best:
+                    best = h
         return best if self.on_board(x, y) else -best
 
     def box_edge_dist(self, bx):
@@ -225,6 +317,31 @@ class Board:
         return min(self.edge_dist(x, y) for x, y in
                    ((bx[0], bx[1]), (bx[2], bx[1]), (bx[2], bx[3]), (bx[0], bx[3]),
                     (xm, bx[1]), (xm, bx[3]), (bx[0], ym), (bx[2], ym)))
+
+    EDGE_CELL = 0.5
+
+    def edge_clear(self, bx, need):
+        """box_edge_dist(bx) >= need, without the exact distances where a bound settles it.
+
+        The edge distance is signed (negative off the board) and changes by at most the distance
+        moved, so the value at the centre of the box's EDGE_CELL cell, less the farthest any point
+        of the box can be from that centre, is a floor under all eight points box_edge_dist
+        measures (and the same sum a ceiling over them).  Only a box within that reach of an edge
+        pays for the exact test -- on a 300-part board `labels` asked for 6 million exact distances,
+        47 % of its 100 s (am27 board1), and nearly every one was millimetres inside."""
+        if self.rings:
+            c = self.EDGE_CELL
+            xm, ym = (bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2
+            key = (int(xm // c), int(ym // c))
+            at = self._edge_at.get(key)
+            if at is None:
+                at = self._edge_at[key] = self.edge_dist((key[0] + 0.5) * c, (key[1] + 0.5) * c)
+            reach = c * 0.7072 + math.hypot(bx[2] - bx[0], bx[3] - bx[1]) / 2 + 1e-9
+            if at - reach >= need:
+                return True
+            if at + reach < need:
+                return False
+        return self.box_edge_dist(bx) >= need
 
     def box(self, bb):
         return (self.mm(bb.GetLeft()), self.mm(bb.GetTop()), self.mm(bb.GetRight()), self.mm(bb.GetBottom()))
@@ -762,17 +879,23 @@ def cmd_labels(a):
     inner = (o[0] + e_min, o[1] + e_min, o[2] - e_min, o[3] - e_min)
     g_pad = B.mask_exp + B.silk_clr
     STEP, TOP = 0.25, 40
-    clash = lambda p, q: rgap(p, q) < B.silk_clr
+    clr = B.silk_clr
+    clash = lambda p, q: rgap(p, q) < clr
     result, hidden = {}, sorted(r for r in P if r in hide)
+    # every footprint's pads and side read from pcbnew ONCE: the loops below asked for all of them again
+    # for every label (326 x 326 footprints on the harness's large board)
+    pads_of = {r: B.pads(f) for r, f in B.fps.items()}
+    side_of = {r: B.side(f) for r, f in B.fps.items()}
+    ctr = lambda bb: ((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2)
     for side in ("F", "B"):
         # obstacles on this side: pads with copper here (or a hole), silk marks here,
         # every courtyard on this side (a label under a part is unreadable)
         obst, cyd = [], {}
         for r, f in B.fps.items():
-            for p in B.pads(f):
+            for p in pads_of[r]:
                 if side in p["cu"] or p["hole"]:
                     obst.append(grow(p["box"], g_pad))
-            if B.side(f) == side:
+            if side_of[r] == side:
                 obst += [grow(s, B.silk_clr) for s in B.silk(f)]
                 # ... and its other silk text (a value, a note drawn in the footprint)
                 obst += [grow(B.box(g.GetBoundingBox()), B.silk_clr) for g in f.GraphicalItems()
@@ -792,7 +915,13 @@ def cmd_labels(a):
         for t in B.b.GetTracks():
             if t.Type() == pn.PCB_VIA_T:
                 obst.append(grow(B.box(t.GetBoundingBox()), B.silk_clr))
-        todo = [r for r in P if r not in hide and B.side(P[r]) == side and r in cyd]
+        todo = [r for r in P if r not in hide and side_of[r] == side and r in cyd]
+        # bucket grids: the obstacles, the courtyards and this side's pads near a box, without a scan of all
+        og = RectGrid(obst)
+        cyd_refs = list(cyd)
+        cg = RectGrid([cyd[q] for q in cyd_refs])
+        side_pads = [(q, p["box"]) for q in B.fps if side_of[q] == side for p in pads_of[q]]
+        pg = RectGrid([pb[:4] for _q, pb in side_pads])
 
         def text_box(ref, x, y, ang):
             ref.SetTextAngleDegrees(ang)
@@ -806,15 +935,16 @@ def cmd_labels(a):
             ref = P[r].Reference()
             c = cyd[r]
             cx, cy = (c[0] + c[2]) / 2, (c[1] + c[3]) / 2
-            near_obst = [ob for ob in obst if rgap(c, ob) < 6.0]
-            near_cyd = [cc for q, cc in cyd.items() if rgap(c, cc) < 6.0]
+            # what a spot is tested against: the obstacles and courtyards within 6 mm of the part
+            # (1e-6 on the query box: the grid must hand back everything the exact test keeps)
+            near_obst = {i for i in og.near(grow(c, 6.0 + 1e-6)) if rgap(c, obst[i]) < 6.0}
+            near_cyd = {i for i in cg.near(grow(c, 6.0 + 1e-6)) if rgap(c, cg.rects[i]) < 6.0}
             # a label reads as the part whose pad is nearest it: a spot nearer a
             # FOREIGN pad than any of its own pays heavily (board2 RV5.4 / RV6.1:
             # "SW2" printed over J7's pin 1, "C8" under C9's pad)
-            ctr = lambda bb: ((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2)
-            own_p = [ctr(p["box"]) for p in B.pads(P[r])]
-            for_p = [ctr(p["box"]) for q, f in B.fps.items() if q != r and B.side(f) == side
-                     for p in B.pads(f) if rgap(c, p["box"]) < 8.0]
+            own_p = [ctr(p["box"]) for p in pads_of[r]]
+            for_p = [ctr(side_pads[i][1]) for i in sorted(pg.near(grow(c, 8.0 + 1e-6)))
+                     if side_pads[i][0] != r and rgap(c, side_pads[i][1]) < 8.0]
 
             def own_by(sx, sy, m):
                 if not own_p or not for_p:
@@ -842,13 +972,13 @@ def cmd_labels(a):
                     for sx, sy in spots:
                         bx = (sx - tw / 2, sy - th / 2, sx + tw / 2, sy + th / 2)
                         if bx[0] < inner[0] or bx[1] < inner[1] or bx[2] > inner[2] or bx[3] > inner[3] \
-                                or B.box_edge_dist(bx) < e_min:
+                                or not B.edge_clear(bx, e_min):
                             why_[r]["edge"] = why_[r].get("edge", 0) + 1
                             continue
-                        if any(rgap(bx, ob) < 0 for ob in near_obst):
+                        if og.hits(bx, near_obst):
                             why_[r]["obst"] = why_[r].get("obst", 0) + 1
                             continue
-                        if any(rgap(bx, cc) < 0 for cc in near_cyd):
+                        if cg.hits(bx, near_cyd):
                             why_[r]["courtyard"] = why_[r].get("courtyard", 0) + 1
                             continue
                         # a label nearer a FOREIGN pad than its own is never placed: a probe set
@@ -873,9 +1003,24 @@ def cmd_labels(a):
             cands[r] = out
             if os.environ.get("HW_LABEL_DEBUG") and strict(r):
                 print("  label", r, len(out), "candidates; courtyard", [round(v, 2) for v in c], dict(why_[r]))
-        taken = []
+
+        # The greedy assignment.  feas[r]: r's spots that clash with no label placed so far, kept as the
+        # labels are placed (a new label only strikes spots within the clearance of its own box) instead
+        # of every spot being re-tested against every placed label on every turn.  A label's spots can
+        # only clash with a box inside the hull of those spots grown by the clearance, so the hulls
+        # (all of a label's spots; its first TOP) decide most pairs with four comparisons.
+        def hull(ks):
+            return (min(k[4][0] for k in ks), min(k[4][1] for k in ks),
+                    max(k[4][2] for k in ks), max(k[4][3] for k in ks))
+
+        def apart(h, bx):                       # no rectangle inside h is within the clearance of bx
+            return h[0] - bx[2] >= clr or bx[0] - h[2] >= clr or h[1] - bx[3] >= clr or bx[1] - h[3] >= clr
+
+        feas = {r: cands[r] for r in todo}
+        top = {r: feas[r][:TOP] for r in todo}
+        all_hull = {r: hull(feas[r]) for r in todo if feas[r]}
+        top_hull = {r: hull(top[r]) for r in todo if top[r]}
         while todo:
-            feas = {r: [k for k in cands[r] if not any(clash(k[4], t) for t in taken)] for r in todo}
             for r in [r for r in todo if not feas[r]]:
                 if os.environ.get("HW_LABEL_DEBUG") and strict(r):
                     print("  lost", r, "first candidates", [[round(v, 2) for v in k[1:4]] for k in cands[r][:4]])
@@ -885,15 +1030,34 @@ def cmd_labels(a):
                 break
             # the own-nearest labels first: their spots are few, and a free label takes one for nothing
             r = min(todo, key=lambda r: (not strict(r), len(feas[r]), feas[r][0][0]))
-            others = {q: feas[q][:TOP] for q in todo if q != r}
-            best = min(feas[r][:TOP], key=lambda k: (
-                sum(1 for q in others for m in others[q] if clash(k[4], m[4]))
-                + 100 * sum(1 for q in others if all(clash(k[4], m[4]) for m in others[q])), k[0]))
+            mine = top_hull[r]
+            rivals = [q for q in todo if q != r and not apart(top_hull[q], mine)]
+            best = best_key = None
+            for k in top[r]:
+                kb, n_clash, n_shut = k[4], 0, 0
+                for q in rivals:
+                    if apart(top_hull[q], kb):
+                        continue
+                    n = sum(1 for m in top[q] if clash(kb, m[4]))
+                    n_clash += n
+                    if n == len(top[q]):         # this spot would leave q none of its first TOP
+                        n_shut += 1
+                key = (n_clash + 100 * n_shut, k[0])
+                if best is None or key < best_key:
+                    best, best_key = k, key
             result[r] = best[1:4]
             if os.environ.get("HW_LABEL_DEBUG") and strict(r):
                 print("  placed", r, [round(v, 2) for v in best[1:4]], [round(v, 2) for v in best[4]])
-            taken.append(best[4])
             todo.remove(r)
+            took = best[4]
+            for q in todo:
+                if apart(all_hull[q], took):
+                    continue
+                kept = [k for k in feas[q] if not clash(k[4], took)]
+                if len(kept) != len(feas[q]):
+                    feas[q], top[q] = kept, kept[:TOP]
+                    if kept:
+                        top_hull[q] = hull(top[q])
     for r, (ang, sx, sy) in result.items():
         ref = P[r].Reference()
         ref.SetTextAngleDegrees(ang)
@@ -901,6 +1065,10 @@ def cmd_labels(a):
         ref.SetVisible(True)
     for r in hidden:
         P[r].Reference().SetVisible(False)
+    if a.dry_run and a.json:                     # the whole result, for a diff or a hash
+        print(json.dumps({"placed": {r: list(result[r]) for r in sorted(result)}, "hidden": sorted(hidden)},
+                         indent=1))
+        return 0
     print(f"labels: {len(B.fps)} designators set to {H:g} mm / {T:g} mm stroke; "
           f"{len(result)} placed next to their part, {len(hidden)} hidden on silk "
           f"(still on Fab as ${{REFERENCE}}): {', '.join(sorted(hidden)) or '-'}")
@@ -995,7 +1163,9 @@ def cmd_auto(a):
                 pool = [placed_info[q] for q in (anchors or others) if q in placed_info and q != r]
                 pts = [pp["pos"] for v in pool for pp in v["pads"] if pp["net"] == n]
             if pts:
-                targets[p["num"]] = (pts, weights.get(n.split("/")[-1], weights.get(n, 1.0)))
+                # the nearest target from a bucket grid: the cost loop below asks it for every place
+                # in the region, and a rail's pads under a BGA are hundreds of points
+                targets[p["num"]] = (PointGrid(pts).nearest, weights.get(n.split("/")[-1], weights.get(n, 1.0)))
         # nearby obstacles only
         reach = grow(region, 12.0)
         near = {q: v for q, v in others.items() if v["box"] and rgap(v["box"], reach) < 0}
@@ -1014,9 +1184,8 @@ def cmd_auto(a):
                 for j in range(ny):
                     y = region[1] + j * step
                     cost = 0.0
-                    for (px, py), (pts, w) in tp:
-                        ax, ay = px + x, py + y
-                        cost += w * min(math.hypot(ax - qx, ay - qy) for qx, qy in pts)
+                    for (px, py), (nearest, w) in tp:
+                        cost += w * nearest(px + x, py + y)
                     best.append((cost, rot, x, y))
         best.sort()
         chosen = None
@@ -1025,7 +1194,7 @@ def cmd_auto(a):
             cb = shift(cyr, x, y)
             # check's own measure (the outline itself, not its bounding box), 1e-4 inside: a courtyard
             # flush with the edge passed here and failed check (board1 P50: TP100 at x 54.0, edge 55.0)
-            if r not in overhang and r not in fixed and B.box_edge_dist(cb) < 1e-4:
+            if r not in overhang and r not in fixed and not B.edge_clear(cb, 1e-4):
                 continue
             # 1e-4 over the minimum: `check` measures the courtyard's own rectangles, this the
             # shifted box -- a spot exactly at the gap rounds either way, and auto's output must pass check
@@ -1182,16 +1351,25 @@ def near_silk(B):
     out = []
     for r, f in B.fps.items():
         own = str(f.GetFPID().GetLibNickname()) == stem
+        pads = {}                                        # copper layer -> [(polygon, its box in mm)], built once
+
+        def pad_polys(cu):
+            if cu not in pads:
+                pads[cu] = []
+                for p in f.Pads():
+                    if p.IsOnLayer(cu):
+                        s_ = pn.SHAPE_POLY_SET()
+                        p.TransformShapeToPolygon(s_, cu, 0, pn.FromMM(0.002), pn.ERROR_OUTSIDE)
+                        bb = s_.BBox()
+                        pads[cu].append((s_, (pn.ToMM(bb.GetLeft()), pn.ToMM(bb.GetTop()),
+                                              pn.ToMM(bb.GetRight()), pn.ToMM(bb.GetBottom()))))
+            return pads[cu]
         for g in f.GraphicalItems():
             if g.GetLayer() not in (pn.F_SilkS, pn.B_SilkS) or g.GetClass() != "PCB_SHAPE":
                 continue
             cu = pn.F_Cu if g.GetLayer() == pn.F_SilkS else pn.B_Cu
-            polys = []
-            for p in f.Pads():
-                if p.IsOnLayer(cu):
-                    s_ = pn.SHAPE_POLY_SET()
-                    p.TransformShapeToPolygon(s_, cu, 0, pn.FromMM(0.002), pn.ERROR_OUTSIDE)
-                    polys.append(s_)
+            boxed = pad_polys(cu)
+            polys = [s_ for s_, _ in boxed]
             if not polys:
                 continue
             w = pn.ToMM(g.GetWidth())
@@ -1205,6 +1383,17 @@ def near_silk(B):
                 continue
             a_, b_ = g.GetStart(), g.GetEnd()
             L = pn.ToMM(int(((b_.x - a_.x) ** 2 + (b_.y - a_.y) ** 2) ** 0.5))
+            # Only a pad whose box comes within reach of the stroke's own box can fail a sample or
+            # set the gap of a failing stroke: every other pad is at least `need` off all of it (a
+            # pad lies inside its box, the stroke inside its own; 0.001 mm covers the rounding).
+            # A BGA's outline was sampled against all its balls: 8 M distance calls of 8.4 M.
+            x0, x1 = sorted((pn.ToMM(a_.x), pn.ToMM(b_.x)))
+            y0, y1 = sorted((pn.ToMM(a_.y), pn.ToMM(b_.y)))
+            reach = need + w / 2 + 1e-3
+            polys = [s_ for s_, (l_, t_, r_, b2) in boxed
+                     if math.hypot(max(l_ - x1, x0 - r_, 0.0), max(t_ - y1, y0 - b2, 0.0)) < reach]
+            if not polys:
+                continue
             n = max(2, int(L / 0.005))
             ok = []
             dmin = 1e9
@@ -1505,6 +1694,8 @@ def main():
                     "you are in, else this session's board)")
     ap.add_argument("--refs", help="gaps: only these references; park: references to leave in place")
     ap.add_argument("--dry-run", action="store_true", help="apply / labels / park: write nothing")
+    ap.add_argument("--json", action="store_true", help="labels --dry-run: print the result as JSON "
+                    "({placed: {ref: [angle, x, y]}, hidden: [ref]}) instead of the summary")
     ap.add_argument("--side", choices=["F", "B"], default="F", help="render: the side to draw")
     ap.add_argument("--box", help="render: X0,Y0,X1,Y1 in board mm")
     ap.add_argument("--margin", type=float, default=2.0, help="render: mm round the --refs courtyards")
@@ -1516,6 +1707,8 @@ def main():
         a.moves = str(boardsel.in_board(a.board, a.moves))    # as typed, else inside the board folder
     if a.dry_run and a.command not in ("apply", "labels", "park", "silk", "seed"):
         die(f"--dry-run has no meaning for {a.command} (it writes nothing anyway)")
+    if a.json and not (a.command == "labels" and a.dry_run):
+        die("--json goes with labels --dry-run")
     if a.command in ("check", "apply", "auto") and not a.moves:
         die(f"{a.command} needs a plan or spec file")
     sys.exit({"gaps": cmd_gaps, "check": cmd_check, "apply": cmd_apply, "sync": cmd_sync,

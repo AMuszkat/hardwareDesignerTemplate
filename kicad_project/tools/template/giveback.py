@@ -48,7 +48,7 @@ BRANCH = "main"
 DATA = ("design/", "history/", "reference/", "studies/baselines/", "studies/reports/",
         "studies/designpoint.py", "studies/components_", "studies/s0", "studies/s1", "studies/s2",
         "tools/diagrams/", "tools/handoff/boards/", "tools/handoff/answers/", "tools/handoff/reviews/",
-        "tools/handoff/fabs/",
+        "tools/handoff/fabs/", "tools/handoff/rulechecks/",
         "kicad_project/project.json", "kicad_project/relay.json", ".gitignore", "LICENSE")
 DATA_KEEP = ("tools/diagrams/sheet.py", "tools/diagrams/check_diagrams.py",
              "tools/diagrams/test_diagrams.py", "tools/handoff/fabs/_blank.py")

@@ -149,6 +149,15 @@ guard: another board's project open means do nothing and tell the user —
 killing KiCad then destroys that session's unsaved work. A project the user
 had open is reopened after your closed-board step, and you say so.
 
+**A command that runs for minutes goes through `tools/bgwait.py`**: `run
+--name N -- <command>` starts it detached, `wait N --timeout 100` waits on its
+pid and returns the exit code, the CPU it used and the log's tail — ended,
+failed, or still running (exit 124), never silent. **Never wait in a loop on
+a process NAME** (`while pgrep -f …; do sleep`): the pattern matches the
+loop's own shell, and one such loop sat 4 h 52 min on three runs that had
+ended in three minutes. A hook (`tools/session/bashguard.py`) refuses that
+loop and names the line to run instead.
+
 ## Footprints are yours
 
 A footprint derives from a datasheet, and the datasheets are in
@@ -207,7 +216,9 @@ reviewers check a frozen copy of the board against the handoff, the
 datasheets and the drawing standard; the verdict and each finding come back
 in `handoff/15_reviews.md`. PASS: go on. CHANGES: fix every must-fix finding
 or dispute it under **Replies** with its evidence, then request again. Until
-the verdict, build nothing on the change (independent work may go on).
+the verdict, build nothing on the change — **and do not wait for it**: the
+request's `Meanwhile:` line names the independent work you start in the turn
+you ring, or the planning you do where nothing is independent.
 `RELAY_PROTOCOL.md` section 10 is the whole loop. The user may still review
 anything; a finding of theirs is fixed the same way.
 
@@ -221,7 +232,10 @@ own, in the same `REVIEW.md` form. Until a verdict, build nothing on the
 change under review; **independent** work may go on: a group is independent when it shares no corridor with the change under review, uses none of the copper that change reserved, and moves no part that change touched — write that claim in
 `ROUTING_PLAN.md` §5 and the reviewer checks it at the next milestone.
 `route.py rip` removes exactly a group's copper, by its applied manifest, if
-a verdict undoes what was built beside it.
+a verdict undoes what was built beside it. **A finding does not come back**:
+a must-fix finding a number decides is published with its check
+(`handoff/findings.json`), and `route.py audit --findings` runs every one,
+closed too, before each pcb request — `FINDINGS FAIL` is fixed, not requested.
 `<board>/general_routing_guide.md` holds the rules (joints, polygons, copper
 shape, via links, pours); `<board>/ROUTING_PLAN.md` the groups and the status
 table.

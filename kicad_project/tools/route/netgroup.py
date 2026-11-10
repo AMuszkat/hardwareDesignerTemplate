@@ -122,11 +122,42 @@ renamed over it): the legs that closed, the open leg's latest iteration, its
 contested cells and, from iteration 3 of a leg, the `reach` table -- so a run
 killed by a timeout keeps all of it.  "state" says how the run left it:
 "running" (still going, or killed), "stalled", "stopped" (--timeout),
-"walled".  For a look with view.py --plan, never for a gate; a run that
-writes its plan removes it.  --timeout S stops between iterations when the
-next would not finish inside S seconds and leaves the partial as "stopped";
-use it instead of a `timeout` prefix.  The log is line-buffered, so a killed
-run's log is complete to its last line.
+"walled", "stuck", "blocked".  For a look with view.py --plan, never for a
+gate; a run that writes its plan removes it.  --timeout S stops between
+iterations when the next would not finish inside S seconds and leaves the
+partial as "stopped"; use it instead of a `timeout` prefix.  The log is
+line-buffered, so a killed run's log is complete to its last line.
+
+A RUN THAT CANNOT END SAYS SO, AND WHY (exit codes: 0 a plan; 1 no solution,
+or the --timeout; 3 stuck; 4 blocked):
+
+  BLOCKED (exit 4), before any negotiation: one END of a net is shut in by
+    what the run cannot move -- pads, vias, tracks, a field, the edge band,
+    the spec's own block / reserve_* / extra_* -- so it reaches a few hundred
+    cells and none of its goal.  The block names the net, the end, the cells
+    it reaches and the obstacles of the wall, nearest first, with what each
+    one is and where (maze.Grid.blocked_end; every obstacle is labelled as it
+    is stamped, maze.Grid.mark).  A start point to move, not a route to
+    negotiate: no option of this tool opens it.
+  STUCK (exit 3), `--stall N` (default 20; 0: off): the overlaps have sat on
+    the same cells for N iterations -- no new cell, no fewer of them -- and
+    no net on them has any way round the others as they lie
+    (maze.Grid.negotiate, "stuck").  The block names the nets and the cells
+    as a box in board mm per layer: those nets need the same channel.  Give
+    one another layer, move the via, widen the window.  Before this a run
+    like that used every one of its --iters (board1's R2 on In2.Cu: two nets,
+    six cells, 433 iterations).
+  A net with no path that is NOT shut in (the 45-degree rule at an end, or
+    --limit) and a run out of --iters stay exit 1, as does the --timeout.
+
+THE PLAN AT THE OUTPUT PATH IS THIS RUN'S, OR THERE IS NONE (origin.py).  A plan
+already at the spec's "plan" path is moved aside as <plan>.stale.json when the
+run STARTS -- so a run that fails, times out or is killed leaves no older plan
+where its own would have been (board1's R2: a plan from before the widths were
+corrected, still at the path after three minutes of "no solution") -- and
+deleted when this run writes its plan.  Beside the plan the run writes
+<plan>.origin.json: the hash of the spec (normalised) and of the board file it
+was routed on, which `route.py check` and `apply` test before anything else.
 """
 
 import argparse
@@ -143,8 +174,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "place"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import place as P  # noqa: E402
 import maze  # noqa: E402
+import origin  # noqa: E402  (the plan's origin record, and the retiring of an older plan)
 import par  # noqa: E402  (tools/par.py, on the path maze put it)
 from corners import straighten  # noqa: E402
+
+
+# blocked_end()'s flood stops at this many (cell, layer) states before a leg is negotiated: a closed
+# region this small is a start point shut in, and the two capped floods cost milliseconds per net.
+# A bigger closed room is found by the uncapped test after negotiate() reports the net walled in.
+BLOCK_CAP = 4000
 
 
 def heading(a, b):
@@ -184,6 +222,10 @@ def main():
     ap.add_argument("--timeout", type=float, default=0,
                     help="seconds: stop between iterations when the next would not end inside it, "
                          "partial written (use this, not a `timeout` prefix)")
+    ap.add_argument("--stall", type=int, default=20,
+                    help="stop a leg as STUCK (exit 3) when its overlaps have sat on the same cells for this "
+                         "many iterations -- no new cell, no fewer -- and no net on them has a way round the "
+                         "others; the nets and the place are printed.  0: never (run to --iters)")
     a = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)   # a killed run's log ends at its last line, not its last buffer
     print(f"router core: {maze.CORE}")
@@ -199,6 +241,26 @@ def main():
     lack = [k for k in ("window", "nets", "why", "plan") if k not in S]
     if lack:
         sys.exit(f"{spec_path.name}: the spec lacks {lack} (tools/route/README.md)")
+    # An older plan at the output path goes aside NOW, before anything can fail or be killed:
+    # whatever ends this run, the path holds this run's plan or nothing (origin.py, 3).  Not
+    # when the spec's "plane" reads its zone from that very file -- then the file is an input.
+    plan_path = Path(S["plan"])
+    plan_path = plan_path if plan_path.is_absolute() else Path(a.board) / plan_path
+    zone_in = (S.get("plane") or {}).get("zone")
+    retired = None
+    if not (zone_in and P.boardsel.in_board(a.board, zone_in).resolve() == plan_path.resolve()):
+        retired = origin.retire(plan_path)
+        if retired:
+            print(f"retired {plan_path.name} -> {retired.name}: an earlier run's plan, moved aside until "
+                  "this run has its own (route.py refuses a .stale.json; a plan from this run deletes it)")
+
+    def no_plan():
+        """The last line of a run that ends without a plan."""
+        st = origin.stale_path(plan_path)
+        print(f"no plan at {plan_path}" + (f": the earlier one is {st.name}, which route.py refuses "
+                                           "(rename it and its .origin.json back to use it deliberately)"
+                                           if st.exists() else ""))
+
     for n_, q_ in S["nets"].items():
         stages = [lg.get("stage", i) for i, lg in enumerate(q_.get("legs", []))]
         dup = sorted({x for x in stages if stages.count(x) > 1})
@@ -209,6 +271,7 @@ def main():
     RETRACE = float(S.get("retrace_cost", 20.0))     # per cell of a net's own frozen copper it runs along
     VIA, DRILL = S.get("via", [0.6, 0.3])
     maze.CLR, maze.PADCLR, maze.W, maze.VIA_R = float(S.get("clearance", 0.15)), float(S.get("padclr", 0.2)), W, VIA / 2
+    board_sha = origin.sha_file(P.boardsel.one_pcb(a.board))   # BEFORE it is read: the plan is true of this content
     B = P.Board(a.board)
     import pcbnew
     import guide
@@ -257,26 +320,28 @@ def main():
         n = t.GetNetname().rsplit("/", 1)[-1]
         if t.Type() == pcbnew.PCB_VIA_T:
             bvias.append(dict(net=n, x=B.mm(t.GetPosition().x), y=B.mm(t.GetPosition().y),
-                              r=B.mm(t.GetWidth(pcbnew.F_Cu)) / 2))
+                              r=B.mm(t.GetWidth(pcbnew.F_Cu)) / 2, o="on the board"))
         else:
             tracks.append(dict(net=n, layer=canon(t.GetLayer()), a=(B.mm(t.GetStart().x), B.mm(t.GetStart().y)),
-                               b=(B.mm(t.GetEnd().x), B.mm(t.GetEnd().y)), w=B.mm(t.GetWidth())))
+                               b=(B.mm(t.GetEnd().x), B.mm(t.GetEnd().y)), w=B.mm(t.GetWidth()), o="on the board"))
     # the spec's own extra copper (ground and supply vias, pad links) is on the board
     # as far as the router is concerned -- else it routes through where they will go
     for e in S.get("extra_tracks", []):
         for a_, b_ in zip(e["pts"], e["pts"][1:]):
             tracks.append(dict(net=e["net"].rsplit("/", 1)[-1], layer=e["layer"], a=tuple(a_), b=tuple(b_),
-                               w=float(e["width"])))
+                               w=float(e["width"]), o="the spec's extra_tracks"))
     for e in S.get("extra_vias", []):
-        bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2))
+        bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2,
+                          o="the spec's extra_vias"))
     # a LATER group's copper, reserved: an obstacle here, never written to this plan
     # (reserve the later groups' tracks, not just their vias)
     for e in S.get("reserve_tracks", []):
         for a_, b_ in zip(e["pts"], e["pts"][1:]):
             tracks.append(dict(net=e["net"].rsplit("/", 1)[-1], layer=e["layer"], a=tuple(a_), b=tuple(b_),
-                               w=float(e["width"])))
+                               w=float(e["width"]), o="reserved by the spec's reserve_tracks"))
     for e in S.get("reserve_vias", []):
-        bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2))
+        bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2,
+                          o="reserved by the spec's reserve_vias"))
 
     # On a slot grid (pitch = track + clearance) the next slot is EXACTLY at the
     # clearance distance, which a non-strict grid counts as blocked: say so with
@@ -311,10 +376,17 @@ def main():
     for F in FO:
         if F["ref"] not in B.fps:
             sys.exit(f"field: {F['ref']} is not on the board")
+    # every static obstacle is LABELLED as it is stamped (G.mark): a net that turns out to be shut
+    # in is then told by what -- "via of GND at (23.4, 17.4), reserved by the spec's reserve_vias"
+    # -- instead of being left to find it on the board
+    def at_(x, y):
+        return f"({x:.3f}, {y:.3f})"
     for p in pads:
         k = (p["ref"], p["pad"])
         lays = LAYERS if p["tht"] else [L_ for L_ in (p["cu"],) if L_ in LAYERS]
         owner = goal_net.get(k) or (p["net"] if p["net"] in fixed and p["ref"] not in FREFS else None)
+        G.mark(f"pad {p['ref']}.{p['pad']} ({p['net'] or 'no net'}) at {at_(p['x'], p['y'])}"
+               + (": no via in a pad of a net routed here" if owner else ""))
         if owner:                         # a pad of a net routed here is that net's copper (no via in it)
             # "pad_via_gap": how far a via's ring stays from its own net's pad (default the foreign
             # clearance) -- a pull-up whose only legal via site is 0.15-0.3 mm from its pad.
@@ -400,6 +472,7 @@ def main():
             # a through via lands on every layer (static_track skips the layer block itself)
             F = field_of(*t["a"])
             inside = F is not None and t["layer"] in F.get("open", []) and field_of(*t["b"]) is F
+            G.mark(f"track of {t['net'] or 'no net'} on {t['layer']}, {at_(*t['a'])} to {at_(*t['b'])}, {t['o']}")
             G.static_track(t["layer"], t["a"], t["b"], t["w"], clr=F["_clr"] - F["_shrink"] if inside else maze.PADCLR)
     board_vias = collections.defaultdict(list)
     for v in bvias:
@@ -458,6 +531,7 @@ def main():
         elif in_field(v["x"], v["y"]):
             # a dog-bone: the field's clearance on its open layers, the full one on the rest
             F = field_of(v["x"], v["y"])
+            G.mark(f"via of {v['net'] or 'no net'} at {at_(v['x'], v['y'])}, {v['o']} (in field {F['ref']})")
             for L_ in LAYERS:
                 cl = F["_clr"] - F["_shrink"] if L_ in F.get("open", []) else maze.PADCLR
                 G.block_disc([L_], v["x"], v["y"], v["r"] + cl + maze.W / 2)
@@ -469,6 +543,7 @@ def main():
                                if not in_field(*G.xy(c_))})
             G.block(["via"], G.disc(v["x"], v["y"], v["r"] + maze.PADCLR + maze.VIA_R))
         else:
+            G.mark(f"via of {v['net'] or 'no net'} at {at_(v['x'], v['y'])}, {v['o']}")
             G.static_via(v["x"], v["y"], v["r"])
             for L_ in LAYERS:
                 ROUND[L_].append((v["x"], v["y"], v["r"] + maze.PADCLR + maze.W / 2, v["net"]))
@@ -479,6 +554,7 @@ def main():
     for F in FO:
         fL, fT, fR, fB = F["_box"]
         shut = [L_ for L_ in LAYERS if L_ not in F.get("open", [])]
+        G.mark(f"field {F['ref']}: its pad area, shut on the layers its \"open\" does not list, no new via in it")
         G.block(shut, G.rect(fL, fT, fR, fB, 0.30))
         G.block(["via"], G.rect(fL, fT, fR, fB, 0.30 + maze.VIA_R))
     # the board edge
@@ -505,9 +581,11 @@ def main():
                 band.add(c)
             if d < EDGE + maze.VIA_R + 1e-6:
                 vband.add(c)
+    G.mark(f"the board edge band (copper {EDGE} mm off the edge and every cut-out)")
     G.block(LAYERS, band)
     G.block(["via"], vband)
     for r in S.get("block", []):
+        G.mark(f"the spec's \"block\" rectangle {list(r['rect'])}")
         G.block(r.get("layers", LAYERS), G.rect(*r["rect"]))
         if r.get("vias", True):
             G.block(["via"], G.rect(*r["rect"], maze.VIA_R))
@@ -567,6 +645,7 @@ def main():
             cells = G.rect(B.mm(bb.GetLeft()), B.mm(bb.GetTop()), B.mm(bb.GetRight()), B.mm(bb.GetBottom()),
                            maze.PADCLR + W / 2)
             hit = {c for c in cells if z.HitTestFilledArea(lid, pcbnew.VECTOR2I(*(int(v * 1e6) for v in G.xy(c))), acc)}
+            G.mark(f"pour of {zn or 'no net'} on {L_} (the board's filled zone)")
             G.block([L_], hit)            # a via through it is only an antipad: vias stay legal
             nz += 1
     print(f"{nz} other pour(s) blocked on the routing layers")
@@ -597,6 +676,8 @@ def main():
                     ocells.add(c)
                 elif not any(math.dist((x, y), q) <= r for q, r in aprons.values()):
                     cells.add(c)
+        G.mark(f"the {pl['net']} plane on {pl['layer']} (the spec's \"plane\": open only in each net's apron "
+               "and its \"open\" rectangles)")
         G.block([pl["layer"]], cells)
         nv = 0
         if pl.get("vias") is False:
@@ -712,14 +793,16 @@ def main():
     pp = Path(S["plan"])
     pp = (pp if pp.is_absolute() else Path(a.board) / pp).with_suffix(".partial.json")
 
-    def write_partial(last, bad, stage, iteration, reach_rows, state):
+    def write_partial(last, bad, stage, iteration, reach_rows, state, **found):
         """Frozen legs + one iteration of the open leg, for a look (never for a gate).  Written
-        whole and renamed over the old one, so a run killed mid-write leaves the previous file."""
+        whole and renamed over the old one, so a run killed mid-write leaves the previous file.
+        found: the diagnosis a failed run ends on ("stuck": maze.Grid.stuck, "blocked":
+        [maze.Grid.blocked_end reports]), as data beside the printed block."""
         part = dict(group=S["group"] + "-partial", why="legs that closed, then the last iteration "
                     "of the one that did not", state=state, leg=stage + 1, iteration=iteration,
                     elapsed_s=round(time.monotonic() - t0, 1), closed_legs=stage,
                     contested={n: [[k, *G.xy(c)] for k, c in v] for n, v in bad.items() if v},
-                    reach=reach_rows, tracks=[], vias=[], zones=[])
+                    reach=reach_rows, **found, tracks=[], vias=[], zones=[])
         done = [(n, rv, "closed") for n, legs in out.items() for rv in legs]
         for n, (runs, vias), tag in done + [(n, rv, "open") for n, rv in last.items()]:
             for layer, cells in runs:
@@ -933,9 +1016,23 @@ def main():
                 return f"--timeout {a.timeout:g} s: the next iteration (up to {clock[1]:.0f} s) would not end inside it"
             return None
 
+        # BLOCKED: an end shut in by what this run cannot move is found here, in milliseconds, and
+        # named with its wall -- not after a negotiation that can only say "walled in".  Each flood
+        # stops at BLOCK_CAP states: a closed region smaller than that is a start point, not a room.
+        shut_in = [d_ for d_ in (G.blocked_end(jb_, cap=BLOCK_CAP) for jb_ in jobs) if d_]
+        if shut_in:
+            for d_ in shut_in:
+                print("\n".join(maze.Grid.blocked_lines(d_)))
+            print(f"BLOCKED at this leg: {', '.join(d_['net'] for d_ in shut_in)} -- nothing was negotiated")
+            write_partial({}, {}, stage, 0, {}, "blocked", blocked=shut_in)
+            print(f"wrote {pp} (the legs that closed, and the diagnosis)")
+            no_plan()
+            return 4
+
         opts = dict(iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
                     hist_decay=a.hist_decay, layer_cost=S.get("layer_cost"), limit=a.limit,
-                    rip="full" if a.full else "conflict", corridor=a.corridor or None, jacobi=a.jacobi)
+                    rip="full" if a.full else "conflict", corridor=a.corridor or None, jacobi=a.jacobi,
+                    stuck=a.stall)
         won = None
         if a.seeds > 1:
             # each seed negotiates in a forked child against the same frozen copper; the lowest seed
@@ -967,7 +1064,9 @@ def main():
             if a.seeds > 1:
                 print(f"   no seed converged: seed {a.seed} again, with its partial and its stall report")
             paths = G.negotiate(jobs, seed=a.seed, on_iter=on_iter, **opts)
-        if paths is None and getattr(G, "last", None) and a.repair and not stopped:
+        if paths is None and getattr(G, "last", None) and a.repair and not stopped and not G.stuck:
+            # (not when STUCK: the stop is the proof that none of these nets has a way with the
+            # rest hard, which is all a repair round tries)
             # REPAIR: negotiation left a few overlaps.  Re-route the nets involved one at a time
             # with everything else HARD (pres=None) -- a stall is often one net that simply has
             # another way, which the ever-rising price no longer lets it try.
@@ -1007,12 +1106,35 @@ def main():
                 r_ = reach_rows[j["net"]]
                 print(f"   {j['net']:12s} reaches {r_['cells']}{'+' if r_.get('capped') else ''} cells; "
                       f"{r_['goals_hit']}{'+' if r_.get('capped') else ''} of {r_['goals']} goal cells")
-            print("STOPPED at the timeout" if stopped else "NO SOLUTION at this leg")
-            if last or out:                   # frozen legs + the last iteration, for a look (never for a gate)
-                write_partial(last, bad, stage, itn[0], reach_rows,
-                              "stopped" if stopped else ("walled" if G.walled else "stalled"))
+            state, code, found = "stalled", 1, {}
+            if stopped:
+                state = "stopped"
+                print("STOPPED at the timeout")
+            elif G.stuck:
+                state, code, found = "stuck", 3, dict(stuck=G.stuck)
+                print("\n".join(G.stuck_lines()))
+                print(f"STUCK at this leg (--stall {a.stall}; --stall 0 runs to --iters)")
+            elif G.walled:
+                # no path even through the others.  Shut in (a region too big for the test before
+                # the negotiation, or closed by an earlier leg's via spacing)?  Then say by what.
+                state = "walled"
+                d_ = G.blocked_end(next(j for j in jobs if j["net"] == G.walled))
+                if d_:
+                    state, code, found = "blocked", 4, dict(blocked=[d_])
+                    print("\n".join(maze.Grid.blocked_lines(d_)))
+                    print(f"BLOCKED at this leg: {G.walled}")
+                else:
+                    print(f"   {G.walled}: not shut in -- its goal is reachable cell by cell, so it is the "
+                          "45-degree rule at one of its ends (\"dir\", \"goal_dirs\", a start hemmed to one "
+                          "heading) or --limit (a big window: raise it)")
+                    print("NO SOLUTION at this leg")
+            else:
+                print("NO SOLUTION at this leg")
+            if last or out or found:          # frozen legs + the last iteration, for a look (never for a gate)
+                write_partial(last, bad, stage, itn[0], reach_rows, state, **found)
                 print(f"wrote {pp} (the last iteration, overlaps and all)")
-            return 1
+            no_plan()
+            return code
         for n, (runs, vias) in paths.items():
             out.setdefault(n, []).append((runs, vias))
             own.setdefault(n, set())
@@ -1029,6 +1151,7 @@ def main():
             fixed[n]["tracks"] += tr
             fixed[n]["vias"] += vv
             for x, y, _r, _s in vv:
+                G.mark(f"via spacing round {n}'s via at {at_(x, y)} (laid by leg {stage + 1})")
                 G.block(["via"], G.disc(x, y, 0.8))
 
     def width_runs(cells):
@@ -1142,12 +1265,17 @@ def main():
         plan["tracks"].append(dict(extra, net=full.get(extra["net"], extra["net"])))
     for extra in S.get("extra_vias", []):
         plan["vias"].append(dict(extra, net=full.get(extra["net"], extra["net"])))
-    p = Path(S["plan"])
-    p = p if p.is_absolute() else Path(a.board) / p
+    p = plan_path
     p.write_text(json.dumps(plan, indent=1) + "\n")
+    sc = origin.write(p, plan, spec_path, S, B.pcb, board_sha, a.board,
+                      by="netgroup.py " + " ".join(sys.argv[1:]))
     print(f"\nwrote {p}: {len(plan['tracks'])} track runs, {len(plan['vias'])} vias"
           + (f" ({n_raw[0]} run(s) left unstraightened: straightening cut a via's halo)" if n_raw[0] else "")
           + (f" ({n_wide[0]} short leg(s) widened to a track width)" if n_wide[0] else ""))
+    print(f"wrote {sc.name}: spec {origin.spec_sha(S)[:12]}, board {board_sha[:12]} (route.py tests both before it applies)")
+    gone = origin.drop_retired(p)
+    if gone:
+        print(f"removed {gone.name}: the plan supersedes it")
     if pp.exists():
         pp.unlink()                    # an earlier run's partial would read as this run's state
         print(f"removed {pp.name}: the plan supersedes it")

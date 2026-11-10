@@ -12,7 +12,7 @@ the reference designators go.
     tools/kpy tools/place/place.py apply  --board board1 plan.json     # KiCad closed
     tools/kpy tools/place/place.py auto   --board board1 spec.json
     tools/kpy tools/place/place.py sync   --board board1
-    tools/kpy tools/place/place.py labels --board board1 [--dry-run]
+    tools/kpy tools/place/place.py labels --board board1 [--dry-run [--json]]
     tools/kpy tools/place/place.py park   --board board1 [--refs H1,H2]  # KiCad closed
     tools/kpy tools/place/place.py drc    --board board1                  # DRC cached by content (drccache.py)
     tools/kpy tools/place/place.py render --board board1 --refs U2,C10 [--side B]   # the area, as a PNG
@@ -122,6 +122,11 @@ Parts are placed in the order listed, each becoming an obstacle for the next,
 so put the big or critical ones first. It writes `<spec>.plan.json` for
 `check` and `apply`; it never writes the board.
 
+The search stays exhaustive; the distance to a rail's nearest pad comes from a bucket grid
+(`PointGrid.nearest`, the same minimum) -- under a BGA a rail is hundreds of pads, and asking
+each of them at every grid position was the whole run time (42 s -> 6 s on the large fixture,
+80 s -> 12 s on a real spec, the same plan).
+
 **`avoid` is how a BGA's fanout keeps its room.** Before placing decoupling on
 the back under a BGA, reserve one via per *used* ball (via pad + clearance).
 Where the via goes depends on the pitch, and the model must prove it against
@@ -199,6 +204,10 @@ the widening, which grows a stroke toward its pads. Edited stock footprints diff
 KiCad's copy and DRC reports `lib_footprint_mismatch`. `silk` records them in
 `placement.json` `silk_edited` (refs and why), and `drc` sets exactly those aside and says
 how many.
+A stroke is sampled only against the pads whose box comes within reach of its own: a
+296-ball BGA's outline was measured against every ball at every 5 um (8 of `drc`'s 10.5 s
+on a 300-part board; now 0.1 s, the same strokes and gaps). What is left of `drc` is
+`kicad-cli` itself, and the report cache skips that when the board has not changed.
 
 ## `labels`
 
@@ -232,6 +241,13 @@ how many.
 Run it when a placement round is finished; labels are the last thing to move -- after the
 last via too (stitching added after the labels put four designators back on vias).
 It writes `<board>.kicad_pcb.labels-bak` first.
+
+`--dry-run --json` prints the result alone -- `{"placed": {ref: [angle, x, y]}, "hidden": [...]}`,
+sorted -- so two runs compare by hash (the harness's `pcb-large` stage does). The search is
+exhaustive and its result does not depend on how it is indexed: obstacles, courtyards and pads
+are asked through bucket grids (`RectGrid`), the edge through a memoised bound (`Board.edge_clear`)
+and the greedy step re-scores only the labels the last one could touch. 326 parts with a
+536-ball BGA: 316 s before, 4 s now, the same placement byte for byte.
 
 ## `sites.py` — where can this part go so that every pad reaches a via?
 

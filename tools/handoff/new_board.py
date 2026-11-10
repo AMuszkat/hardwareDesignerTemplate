@@ -71,6 +71,18 @@ Concept writes here and nowhere else; publish.py renders it as
 session's QUESTIONS.md. A durable fact goes into the generated tables (the
 value bus, NETS, LAYOUT, PIN_TREATMENT) too, never only into an answer.
 
+Every answer names the problem it belongs to, on a line under its heading --
+the same words when the same problem comes back:
+
+    ## Q7 — <their title>
+    Topic: <the problem, e.g. U1 escape>
+
+publish.py counts the answers on a topic. Two publish; the third, and each
+one after it, does not until the question has gone to the user
+(RELAY_PROTOCOL.md section 5) and the answer says so:
+
+    Escalated: <date, what the user decided>
+
 Nothing answered yet.
 """
 

@@ -68,6 +68,19 @@ fixtures (the `pcb` stage's board is `tests/fixture_pcb.py`'s).
 | H3 | Phase 3 PR | `publish.py --selftest` on the fixture handoff with a NETS row deleted reported that hole (and 12 real fixture gaps), 4 min |
 | R4 | Phase 3 PR | the same routes both cores; 16 nets 52.5 s → 4.5 s (`--full`), 21 s → 1.0 s (default); PCB fixture 20 s → 2.2 s |
 | H4 | Phase 3 PR | Docling's pin table matched the i.MX 8M Mini pinout, 486 of 486, now from 24 of 96 pages (`--pages auto`). Widened 2026-11-09 against KiCad's stock symbols (`extract_corpus.py`, 19 vendor datasheets): 461 of 728 pins named alike, 2 parts exact after a multi-package parser — the gate fails, so the consumers stay unwired; drawn-only pinouts, prose tables and ball-map grids are what it cannot read. the page index is the text layer (ColQwen2.5 gave the same pages at 18 s a page); the Qwen2.5-VL `land` stage was run on the iGPU and dropped — it read a 0.4 pitch as 0.6 and returned 14-digit pad counts, where Claude reading the page is faster and right |
+| W1 | Phase 4 PR | the board-side wall never returns `ask`: 11 cases (own / other board / handoff × claim, no claim, one board) end allow or deny with the line to run. Evidence: two board sessions parked 20 h each on the prompt |
+| M1 | Phase 4 PR | `tools/measure/sessions.py`: wall-clock by class (model, tool, waiting, permission stall), stage, tool family, review turnaround, reviewer runs, question chains. First finding: a 626.6 min reviewer run was 618.0 min of permission-prompt stall |
+| M2 | Phase 4 PR | `fixture_pcb.py --kind large`: 326 parts, a 536-ball 0.5 mm BGA, 366 vias, seeded so two builds are the same board; `tests/test_pcb_large.py` holds each tool to a result hash and a time ceiling |
+| P1 | Phase 4 PR | `place.py labels`: 316 s → 4.3 s on M2 (87.7 s → 5.4 s on a real 300-part board), result hash identical — bucket grids in place of all-pairs |
+| P2 | Phase 4 PR | on M2, hashes identical: `place.py auto` 42 s → 5.5 s; `place.py drc` 10.5 s → 2.6 s (silk sampling 8.0 s → 0.1 s); `fanout.py layers` 35 s → 4.4 s (129 s → 3 s on a real BGA: one flow moved per layer, not re-solved). `check` 1.0 s and `plan` 0.6 s were already at the pcbnew-load floor |
+| R9 | Phase 4 PR | `maze.py` prints one stderr line on the Python core or a stale build; `setup.sh check` and the harness's router stage FAIL a missing or stale core where a compiler exists |
+| RA | Phase 4 PR | `netgroup.py`: `BLOCKED` (exit 4) before negotiating, with the wall named nearest first; `STUCK` (exit 3, `--stall N`) naming the nets and the cells they recycle — seconds, where board1 R2 ran 433 iterations to "no solution". A plan carries its origin (spec and board hash): `check` / `apply` refuse a stale one (exit 5), and a failed run retires the old plan at its path |
+| RB | Phase 4 PR | `tools/bgwait.py` (run, wait by pid with a limit, status, kill) and a PreToolUse Bash guard on both sides that refuses a wait loop on a process name. Evidence: a `while pgrep -f` loop matched its own shell for 4 h 52 min after three 3-minute runs |
+| R10 | Phase 4 PR | `race.py`: three spec variants as processes, each on its own board copy with its own check, one table, the winner by a stated order — 1.7–2× over serial, each plan's sha equal to its solo run |
+| V6 | Phase 4 PR | `snapshot --kind pcb` writes `geometry.json` (queried by `geom.py`: 70 hand values exact, 639 object pairs within 1 µm of pcbnew) and `CHANGES.md`, the object diff against the last REVIEWED snapshot |
+| V5 | Phase 4 PR | five check rules (`cap reach`, `layers apart`, `stitch via`, `neck length`, `distance`) in `route.py audit`; a verdict's `Check RVn.k:` line → `handoff/findings.json` → `route.py audit --findings` (6 findings on a real board in 0.4 s) → the snapshot's `audit` and `findings` gates |
+| Q1 | Phase 4 PR | a new or changed custom DRC rule is proven on the PCB before it publishes (`rulecheck.py`, 1.7 s a run); a third answer on one `Topic:` is refused without an `Escalated:` line |
+| V7 | Phase 4 PR | `REVIEW.md`'s form has a `Meanwhile:` line; the contract and both skills say ring, then start it. Unmeasured until M1 reads the next real board |
 
 ## Phase 0 — hours each, no behaviour change
 
@@ -165,7 +178,8 @@ calls, and a redraw keeps every symbol UUID the PCB references so
 `tools/handoff/board_template.py` with exactly the rows `guide.py` knows
 (joints, copper to edge, via to pad gap, 45-degree via link, copper shape,
 class width, thermals, plane layer, no vias, class layers, keep-out, via
-field, ground beside, frozen, thermal pad), each with its source; published
+field, ground beside, frozen, thermal pad — and, since V5, the five checks),
+each with its source; published
 as `handoff/rules.json` and rendered as rows of `10_layout.md`. `guide.py`
 reads `rules.json` first, and the table in `general_routing_guide.md` becomes
 a generated block between markers (as STATUS has) that a tool refreshes and
@@ -383,13 +397,60 @@ session's first day in minutes, without the round trip. **Done when:** on a
 fixture handoff with one NETS row deleted it reports that hole. **Size:** 1
 day. **Gate:** tool.
 
+## Phase 4 — from the sessions' own time
+
+Phases 0–3 were planned from the tools' logs. Phase 4 was planned from the
+sessions' transcripts on a real project (two boards, one with a 486-ball BGA),
+read with what became M1: where the wall-clock went was not where the logs
+said. The largest items were not compute at all — a permission prompt nobody
+saw (W1), a wait loop that could not end (RB), a router that ran 433
+iterations to say "no solution" (RA), a finding found twice (V5). Each row of
+the Progress table above is one item; this section holds what a row cannot.
+
+**The measured question: would Rust or threads make the tools faster?** Each
+tool was profiled on M2's fixture before anything was rewritten. Every hot
+spot was an algorithm, not an interpreter: all-pairs loops over labels, pads
+and silk strokes; a max-flow solved again from nothing for each layer tried.
+Replacing them (a bucket grid, an incremental flow, a reach filter) gave
+4–80× in plain Python with byte-identical results, and left each tool at or
+near its floor — loading the board in pcbnew (0.4–0.6 s) and kicad-cli's own
+DRC. What is left for native code is what already has it: the router's core
+(`_maze.c`, R4). Parallelism pays at the process level, where the work is
+independent: `race.py` (R10), `--seeds` (R5), the snapshot's gates (V4).
+
+**Trials — one measurement each, built only if the number says so.** None is
+built; M1 is the instrument.
+
+- **V8 · A PCB review split by concern**: three reviewers on one snapshot,
+  merged here. Keep if wall-clock halves and no verified finding is lost;
+  tokens rise 50–100 %. Run after V6 has been measured on five reviews — it
+  may make this unnecessary. **Gate:** user (token cost).
+- **A1 · An apply lock, then forked planners for independent groups**: only
+  the main conversation writes the board (a hook on `agent_id`); forks return
+  plans checked on scratch copies. Try only if V7's `Meanwhile:` lines show
+  independent groups exist in practice. **Gate:** user.
+- **P3 · Placement seeds ranked by a cheap routing result**: `place.py auto
+  --seeds N`, each scored by `prelayout.py` and `escape_bound.py`. Possible
+  now that `auto` is seconds (P2). **Gate:** tool.
+- **R11 · Replay the applied plans after a re-placement**: `route.py replay`
+  re-checks and re-applies each applied plan in manifest order and stops at
+  the first that fails; RA's origin record is its first half. **Gate:** tool.
+
 ## Not doing, and why
 
 - **Rewriting the tools in another language.** pcbnew pins the interpreter;
   the time is in kicad-cli, which is already C++, and in one Python loop
-  (R4).
+  (R4). Measured again in Phase 4 on a 326-part board: the remaining hot
+  spots were algorithms, and fixing them in Python left nothing for a
+  rewrite to take.
 - **Python threads for CPU work.** The GIL; threads only for waiting on
   child processes (V4, R6).
+- **Subagents per schematic sheet, per footprint or per placement group.**
+  The tool is seconds (`sch.py plan` 3.7 s, `draw` 3.4 s for a whole board);
+  a fresh agent's start-up costs more than the part, and placement groups are
+  coupled through courtyards and the fanout.
+- **Two writers on one board, in any form.** One file, pcbnew on a closed
+  board: plan in parallel, apply serially (A1), is the only shape.
 - **numba, PyPy, a free-threaded Python.** KiCad's interpreter cannot host
   them.
 - **A vision model on review tiles.** A 7B model cannot read 0.5 mm pitch
@@ -432,6 +493,6 @@ The per-board metrics the harness cannot take, from a real board's records:
 ## Order and PR shape
 
 One pull request per phase, one commit per item, each commit message opening
-with the item id. An item gated `user` opens the PR description with the
+with the item id (Phase 4: one pull request, a commit per change). An item gated `user` opens the PR description with the
 decision it needs. This repository is the template, so nothing here goes
 through `giveback.py`; a project takes the items with `giveback.py merge`.

@@ -8,6 +8,11 @@ Every item is REQUIRED -- a missing one prints FAIL with the command that
 fixes it, and the script exits 1 -- except those marked OPT: a feature the
 user chooses per use (Blender, for one render engine), never counted.  MANUAL items cannot be tested from a shell and
 are listed for you to confirm once.
+
+The router's compiled search core is REQUIRED on a machine with a C compiler
+(missing, stale or built for another ABI is a FAIL: the router would run its
+Python search, the same routes about ten times slower) and OPT only where
+there is no compiler to build it with.
 """
 import json
 import os
@@ -35,7 +40,8 @@ CHROMES = [c for c in (os.environ.get("CHROME_BIN"), "google-chrome-stable", "go
                        "/Applications/Chromium.app/Contents/MacOS/Chromium") if c]
 PROJECT_SKILLS_CONCEPT = ["decision", "answer-question", "datasheet", "study"]
 HOOK_SCRIPTS = ["kicad_project/tools/session/relay.py", "kicad_project/tools/session/guard.py",
-                "kicad_project/tools/session/wall.py", "kicad_project/tools/boardsel.py"]
+                "kicad_project/tools/session/wall.py", "kicad_project/tools/session/bashguard.py",
+                "kicad_project/tools/boardsel.py"]
 LAUNCHERS = ["bin/concept", "bin/board", "bin/relay", "setup.sh", "verify.sh",
              "kicad_project/tools/kpy", "kicad_project/tools/setup.sh",
              "kicad_project/tools/freerouting/freerouting-mcp.sh", "kicad_project/tools/render/setup.sh"]
@@ -156,18 +162,36 @@ def venvs():
         "easyeda2kicad, PyMuPDF, Pillow, matplotlib" if rc == 0 else out.splitlines()[-1], "./setup.sh install")
 
 
+def router_core():
+    """The router's compiled search core (ROADMAP R9).  REQUIRED wherever a C compiler exists:
+    the Python search gives the same routes about ten times slower, and a machine that could
+    run compiled and does not is a machine where every routing group costs minutes it need
+    not.  Asked of maze.py itself, not of the file's presence: a library built for an older
+    ABI, or one older than route/_maze.c, is there and is still not the core the router runs
+    (maze.CORE says which runs and why, maze.CORE_NOTE is the stderr line a run prints).
+    With no compiler it stays OPT -- the fallback is the design, and the fix is the user's."""
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    what = "router core (C, compiled)"
+    env = {k: v for k, v in os.environ.items() if k != "HW_MAZE_CORE"}
+    rc, out = run([sys.executable, "-c",
+                   "import sys, json; sys.path.insert(0, sys.argv[1]); import maze; "
+                   "print('CORE=' + json.dumps([maze.CORE, maze.CORE_NOTE]))",
+                   str(KP / "tools" / "route")], env=env)
+    line = next((ln for ln in out.splitlines() if ln.startswith("CORE=")), None)
+    core, note = json.loads(line[5:]) if rc == 0 and line else (f"maze.py did not load: {out[-200:]}", "?")
+    if core.startswith("compiled") and not note:
+        add("ok" if cc else "opt", what, f"{core} -- the router runs compiled")
+    elif cc:
+        detail = (f"{core}, but a stale build: route/_maze.c is newer than the library"
+                  if core.startswith("compiled") else f"{core} -- the same routes, about 10x slower")
+        add("FAIL", what, detail, "./setup.sh install  (kicad_project/tools/setup.sh rebuilds the core)")
+    else:
+        add("OPT", what, f"{core}; no C compiler -- the same routes, about 10x slower",
+            "sudo apt install -y build-essential (macOS: xcode-select --install), then ./setup.sh install")
+
+
 def optional():
     """Only for a feature the user chooses per use: never counted as missing."""
-    nat = KP / "tools" / ".native"
-    if any((nat / n).exists() for n in ("libmaze.so", "libmaze.dylib")):
-        add("opt", "router core (C, compiled)", "kicad_project/tools/.native/ -- the router runs compiled")
-    else:
-        import shutil as _sh
-        cc = _sh.which("cc") or _sh.which("gcc") or _sh.which("clang")
-        add("OPT", "router core (C, compiled)", "not built -- the router runs in pure Python (the same routes, "
-            "about 10x slower)" + ("" if cc else "; no C compiler"),
-            "./setup.sh install" if cc else
-            "sudo apt install -y build-essential (macOS: xcode-select --install), then ./setup.sh install")
     rc, out = run(["sh", str(KP / "tools" / "render" / "setup.sh"), "--check"])
     line = (out.splitlines() or ["missing"])[-1]
     if line.startswith("ok "):
@@ -251,6 +275,7 @@ def main():
     venvs()
     keys()
     project()
+    router_core()
     optional()
     manual()
     w = max(len(r[1]) for r in results)

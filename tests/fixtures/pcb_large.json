@@ -1,0 +1,27 @@
+{
+ "kicad": "10.0.7",
+ "sha256_16": {
+  "labels": "df18778ec1d206c2",
+  "auto": "109eb1abbc54b9cf",
+  "check": "d2c8de8a3ffb9314",
+  "drc": "46232763ee2bc4f0",
+  "plan": "29ffdf18ee07a352",
+  "layers": "bd2c017f4165b36f"
+ },
+ "seconds_before": {
+  "labels": 316.0,
+  "auto": 42.0,
+  "check": 1.0,
+  "drc": 10.5,
+  "plan": 0.63,
+  "layers": 35.0
+ },
+ "seconds_when_recorded": {
+  "labels": 4.26,
+  "auto": 5.46,
+  "check": 0.49,
+  "drc": 2.57,
+  "plan": 0.59,
+  "layers": 4.36
+ }
+}

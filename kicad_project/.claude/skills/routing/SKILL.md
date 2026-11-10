@@ -101,20 +101,38 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    group (bound a long run with its own `--timeout S`, never a `timeout`
    prefix: it stops between iterations and every iteration leaves
    `<plan>.partial.json`). It survives the session and can be re-gated.
+   **A run of minutes is started and waited on with `tools/bgwait.py`**
+   (`run --name N -- <command>`, then `wait N --timeout 100`): by pid, with a
+   time limit, and every return shows the exit code, the CPU and the log's
+   tail. Never a `while pgrep …; do sleep` loop — it matches its own shell and
+   never ends (a hook refuses it). Variants of one spec that do not depend on
+   each other (a layer, a window, a seed) are one `race.py` call, not three
+   runs. **A run that fails says why, and the exit code is the next move:**
+   `4 BLOCKED` — a net is shut in at one end: move the nearest blocker it
+   lists; `3 STUCK` — the named nets need the same channel at the cells
+   printed: another layer, a moved via, a wider window. Neither is answered
+   with more `--iters` or another seed. A failed run leaves no plan at its
+   path (the older one is `<plan>.stale.json`).
 3. **Gate**: `route.py check`. KiCad's own DRC on a scratch copy with schematic
    parity on — any violation not in the baseline fails — then every rule of
    the guide: joints, edge, class width, planes, via caps, fields, keep-outs,
    and the copper rules on the scratch copy (a new shape site or a new via-link
    site fails; ground beside is reported before → after). Iterate until
    `CHECK PASS`. Every neck, `edge_ok` and `accept` carries a reason the user
-   will read.
+   will read. `check` and `apply` exit 5 on a **stale plan** — the spec or the
+   board changed since it was routed: run `netgroup.py` again;
+   `--accept-stale` only on purpose, with the reason in the report.
 4. **Apply** with KiCad closed: `route.py apply` (backup, write with `pcbnew`,
    read back, UUID manifest). Then **`route.py audit`**: DRC, joints, edge,
    shape, via links, ground beside, pour islands, in one `AUDIT PASS|FAIL`
    line. The open count must drop by what the plan claims, and nothing outside
    the group may change. For any pour: `pour.py` — islands, vias the fill
    misses, what lies under it. What the audit still lists is polished with
-   the `copper-shape` and `via-links` skills, as a group of its own.
+   the `copper-shape` and `via-links` skills, as a group of its own. Then
+   **`route.py audit --findings`**: every check a review finding carries
+   (`handoff/findings.json`), closed ones too. `FINDINGS FAIL` names the
+   findings that are open on the board again — fixed now, never sent to a
+   reviewer to be found a second time.
 5. **Render** (`route.py render`) and write `routing/Rn_REPORT.md`: nets,
    lengths, vias, the audit line before → after, every neck-down, every
    deviation, every shape or via-link site left and why, every part moved,
@@ -123,8 +141,12 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    (fanout and escape, buses, power, pours, close-out) — or it is one you
    want reviewed alone — **STOP for review**: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
    — Scope: the milestone's groups (`--scope` takes a group id), their
-   reports `routing/Rn_REPORT.md`. A group started while one is under review
-   names in §5 why it is independent. A CHANGES verdict is
+   reports `routing/Rn_REPORT.md`; Gates: the `AUDIT` and `FINDINGS` lines.
+   **Ring, then start the request's `Meanwhile:` group in the same turn** — a
+   review is not a wait. A group started while one is under review
+   names in §5 why it is independent. Where nothing is independent, plan the
+   next group instead: its spec, its window, its plan routed and checked on a
+   scratch copy — nothing applied until the verdict. A CHANGES verdict is
    cheap: fix and request again, or `route.py rip Rn` removes exactly that
    group's copper. After the last group, one more request, `pcb: fab
    release`, before the fab package: it passes only with no open finding.

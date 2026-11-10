@@ -106,6 +106,11 @@ listing the names the tools know.
 | `ground beside` | `Fast: GND within 0.6 mm` | reported by `audit` and `check`: mm of the class's track with ground on 2 / 1 / 0 sides, before → after |
 | `frozen` | `class X, net Y` | copper `viafix.py --push` never moves |
 | `thermal pad` | `U5.5: solid` | one pad's own connection to the pour |
+| `cap reach` | `U1: 1.27 mm (C12, C13)` | `audit`: a pad of a listed part farther than that (centre to centre) from every same-net pad of U1 and every same-net via — the decoupling cap that drifted off its pin. The parts are named, so one that leaves a courtyard does not leave the rule |
+| `layers apart` | `In4.Cu / In5.Cu: 0 mm` | `audit`: two nets, one on each layer, whose tracks lie over each other for more than that per net pair. A square crossing is free |
+| `stitch via` | `Pairs: GND within 1.27 mm` | `audit`: a via of a net in the class with no via of the named net within the distance |
+| `neck length` | `4 mm` or `Fast: 4 mm` | `audit`: a connected run of track narrower than the net's width (its class's, or the narrowest its custom rules give on that layer) longer than that |
+| `distance` | `C12.1 to U1.A5 <= 1.27 mm` | `audit`: two named objects, `REF.PAD` or `REF` (its nearest pad), centre to centre; `<=` or `>=` |
 
 A plan declares its exceptions, each with a reason printed every run and
 reviewed with the group:
@@ -127,6 +132,24 @@ and if they ever disagree, something moved.
 `place.py drc`, joints, edge, shape, via links, ground beside, pour islands —
 and ends `AUDIT PASS` or `AUDIT FAIL (...)`. It is the line a group report
 quotes, before and after.
+
+**The last five rows are checks (`checks.py`): what a review measured once,
+measured by a tool from then on.** They are plain geometry on the board's
+pads, vias and tracks, and they have a second home. A review finding a
+number decides carries one — `Check RV4.5: cap reach | U1: 1.27 mm (C65)`
+under its verdict — and the handoff publishes them all as
+`handoff/findings.json`:
+
+    tools/kpy tools/route/route.py audit --findings --board board1
+
+runs every one on the board as it is, one `PASS|FAIL` line per finding id
+with the sites, and ends `FINDINGS PASS` or `FINDINGS FAIL (...)` (exit 1).
+Closed findings are run too, which is the point: the one that comes back
+fails here in a second, not in the next review. Both lines — `AUDIT` and
+`FINDINGS` — go in every pcb review request, and the review snapshot runs
+both itself. A check does not replace DRC (copper under the minimum) or
+`fanout.py layers`' `pad_gap` (padded vias of an inner-layer pair): neither
+is repeated here.
 
 ## The plan file
 
@@ -182,6 +205,73 @@ the order segments are stored in, so the two agree). It is a **report** unless
 the guide has a `joints` row: without one it prints what it finds and
 exits 0. `apply --force` replaces a group: the previous copy's copper is
 removed first, by its manifest.
+
+## A plan's origin: a stale plan is refused (`origin.py`)
+
+A plan file does not say which spec it was routed from or which board it was routed
+on, so a plan left at its path by an earlier run reads exactly like the result of the
+run that just failed (board1's R2: "no solution" after three minutes, and at the
+output path a plan from before the spec's track widths were corrected). Three
+mechanisms, all in `origin.py` (board-free, standard library):
+
+**The record.** `netgroup.py` writes `<plan>.origin.json` beside its plan: the
+spec's path and hash, the board file's hash, the time, the command. A sidecar, not
+keys in the plan — the plan's bytes are what they always were.
+
+**The test.** `route.py check` and `apply` run it before any gate, print one line
+each for plan, spec and board, and exit **5** on anything not accepted:
+
+    STALE PLAN R2_emmc_In2.json
+       plan   R2_emmc_In2.json: as written 2026-11-10 19:02:11
+       spec   routing/R2_emmc_In2_spec.json CHANGED since the plan was made (05487e99c9df then, 460bc6ae62ce now): width 0.2 -> 0.25
+       board  board1.kicad_pcb: unchanged (8cadc3fc7fc8)
+       planned 2026-11-10 19:02:11 by: netgroup.py routing/R2_emmc_In2_spec.json
+       nothing applied. Run the planner again on the spec (it replaces the plan), or pass --accept-stale spec to have this file applied as it is
+
+| what | stale when | not stale when |
+|---|---|---|
+| `spec` | any key that decides the route differs (the refusal names the keys, with both values for a number), or the spec file is gone | it was reformatted, its keys reordered, `1` written `1.0`, its `"why"` reworded, its `"plan"` path or a `"_..."` comment changed |
+| `board` | the `.kicad_pcb`'s content differs and route.py did not record how | the file was copied, touched, checked out or restored (same content); or it moved only by recorded `apply`/`rip` steps |
+| `plan` | a key the planner wrote differs (a moved point, another file copied over the path) | a key was ADDED by hand (`accept`, `edge_ok`, `marks`) |
+| `retired` | the file is a `<plan>.stale.json` | — |
+
+`--accept-stale WHAT` (`spec`, `board`, `plan`, `retired`, comma separated, or
+`all`) takes the file all the same; the refusal prints the exact flag. A plan with
+no record (hand-written, from `fanout.py` / `pour.py` / `stitch.py` / `decap.py`,
+or older than this) gets one `note:` line and is checked as before.
+
+*Why a content hash for the board, not time and size:* a copy to a scratch folder, a
+`touch`, a git checkout and a restore from a backup all change the time and keep the
+content — false refusals, which teach the flag — and a save that moves one coordinate
+can keep the size. Hashing a board file costs milliseconds.
+
+*Why recorded steps are not a refusal:* several plans routed on one board and
+applied one after the other is how a bus on three layers is done. Every `apply` and
+`rip` appends the board's hash before and after to
+`<board>/routing/board_steps.jsonl`; a plan whose board hash leads to the present one
+through those steps is taken, the gate names the steps, and `check` judges it against
+that copper on the scratch copy — the test that matters. Plans gated one at a time
+are still not gated against each other until the first is on the board.
+
+**Retiring.** `netgroup.py` moves a plan already at its output path aside as
+`<plan>.stale.json` (its record as `<plan>.stale.origin.json`) when it **starts**, so
+a run that fails, hits `--timeout` or is killed leaves **no plan at its path** — its
+last line says so — and a run that writes its plan deletes the retired one. Moved,
+not deleted: it may be the only copy of a route that took an hour, and nothing has
+replaced it yet. Unchanged: rename both files back and it is the plan it was, judged
+by its record like any other. (Not retired: a plan the spec's own `plane.zone`
+reads.) Two runs on ONE output path: each retires only when it starts, so a run that
+fails later never removes the plan another wrote meanwhile.
+
+A plan routed on a **copy** of the board (a what-if in the scratchpad, a race of
+variants) keeps a record that fits the real board — the same content is the same
+hash — provided its `.origin.json` is copied back WITH it and the spec is at the same
+path inside the board folder. Copied back alone it is a plan with no record.
+
+Another planner gets the same guard with two calls: `origin.retire(plan_path)` when
+it starts, `origin.write(plan_path, plan, spec_path, spec, pcb, board_sha,
+board_dir)` when it writes. `tests/test_plan_guard.py` holds all of it on the fixture
+board.
 
 ## `netgroup.py` + `maze.py` — the negotiated router, driven by a spec
 
@@ -454,8 +544,8 @@ its docstring. What the spec has to be told:
 - **Wait on a background run by its pid, never with `pgrep -f <its command line>`.** A wait loop written
   as `while pgrep -f "netgroup.py ... spec"; do sleep 20; done` carries that string in its own shell's
   command line, matches itself and never ends: board1's three R2 runs were over in 3 minutes and the loop
-  sat for 4 h 50. Start with `... & echo $! > run.pid` and wait with `tail --pid=$(cat run.pid) -f /dev/null`
-  (or `pgrep -f '[n]etgroup.py ...'`), and read the log when the notification is late.
+  sat for 4 h 50. Start it with `tools/bgwait.py run --name N -- ...` and wait with
+  `tools/bgwait.py wait N --timeout 100` (below): by pid, bounded, and it prints the CPU and the log's tail.
 - **Plans gated one at a time against the fanout are not gated against each other.** `route.py check`
   lays only what its plan holds on the scratch copy, so two plans that each pass can still collide: board1's
   In2 escape proof ran two tracks through a through via of the pairs' plan, and only `apply` (which checks
@@ -491,6 +581,91 @@ its docstring. What the spec has to be told:
   distance between the two limits, and give the leg its grid-aligned end.
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
+
+## When `netgroup.py` cannot end: BLOCKED, STUCK, and the exit codes
+
+A run that cannot produce a plan stops early and prints which nets, where, and by
+what. Read the block; do not re-run with more `--iters` or another `--seed` first.
+
+| exit | last line | what it means | what to do |
+|---|---|---|---|
+| 0 | `wrote <plan>` | a plan | `route.py check` |
+| 4 | `BLOCKED at this leg: NET` | one END of a net is shut in by what the run cannot move | move or drop the nearest blocker in the list, start the net elsewhere, open a layer to it, widen the window |
+| 3 | `STUCK at this leg` | the nets named need the same channel and none has a way round the others | give one another layer, move the via, widen the window |
+| 1 | `NO SOLUTION at this leg` / `STOPPED at the timeout` | out of `--iters`, the `--timeout`, or a net with no path that is not shut in (the 45° rule at an end, `--limit`) | the contested cells and the `reach` table, as before |
+
+**BLOCKED** is found before anything is negotiated, in milliseconds per net
+(`maze.Grid.blocked_end`): a flood from the net's source and one back from its goal,
+over static obstacles and the other nets' fixed copper only. A flood that ends in a
+small closed region without meeting the other end has found a blocked start (or end)
+point. The block lists the wall, nearest first, and says what each piece IS, because
+`netgroup.py` labels every obstacle as it stamps it (`maze.Grid.mark`):
+
+    BLOCKED SOURCE: EMMC_D3 is shut in at its source, near (16.450, 15.150) mm
+       from its source it reaches 419 cell(s) (419 on B.Cu) and none of its 29 goal cell(s)
+       what closes it, nearest first (distance from the source; cells of the wall):
+           0.200 mm  B.Cu    EMMC_D4's own copper  -- 25 cell(s), nearest at (16.250, 15.150)
+           0.200 mm  B.Cu    via of EMMC_VDDI at (16.450, 14.650), reserved by the spec's reserve_vias (in field U300)  -- 11 cell(s), ...
+           0.354 mm  B.Cu    pad C300.1 (EMMC_VDDI) at (16.430, 14.500)  -- 8 cell(s), ...
+
+(board1's R2 on B.Cu: the reserved via beside the start point, which the session had
+found by hand.) The origin of a track or via is one of `on the board`, `the spec's
+extra_*`, `reserved by the spec's reserve_*`; the other labels are pads, a field's
+shut pad area, the edge band, a `block` rectangle, a pour, the `plane`, and the via
+spacing round a via an earlier leg laid. The pre-check floods at most 4000 cells per
+end; a net that `negotiate` then finds walled in gets the same test without the cap.
+
+**STUCK** (`--stall N`, default 20; `--stall 0` turns it off) stops a negotiation
+that no price can settle. Three conditions, all needed (`maze.Grid.negotiate`,
+`stuck`):
+
+1. for N iterations every contested cell had already been contested in the N
+   iterations before it — the overlaps recycle the same cells (the same ones every
+   time when two nets want one lane; lane after lane when three want two);
+2. the overlap count made no new minimum in those N iterations;
+3. no net that overlaps now can be laid clear of all the others as they lie — a
+   flood with no turn rule and no expansion limit, so "no way" is certain.
+
+1 and 2 alone would stop a net whose clean detour is merely long (the rising price
+reaches it at iteration 25–40); a flat overlap COUNT is no test at all (it sits flat
+in runs that converge); 3 alone fires in the middle of a reshuffle. The block:
+
+    STUCK at iteration 30: the same 20 cell(s) have been contested for 20 iterations with no new cell and no fewer overlaps, and no net on them has a way round the others
+       nets: EMMC_RST_N (9 cell(s)), EMMC_STROBE (11 cell(s))
+       In2.Cu: 20 cell(s) in x 22.850 .. 23.100, y 17.350 .. 17.600 mm
+       these nets need the same channel: give one another layer / move the via / widen the window
+
+(board1's R2 on In2.Cu: 9 s and 30 iterations; before, 433 iterations and three
+minutes to a bare "no solution".) The last line of the block says whether the nets
+would pass with the nets that are NOT in conflict lifted — then another `--seed` or
+`--full` may still open it — or not even then: the board has too few lanes there.
+`--repair` is skipped after a STUCK stop (the stop is the proof it cannot help). The
+detector reads the grid and changes nothing: a run that converges gives the same plan
+with it on or off.
+
+`<plan>.partial.json` carries the same diagnosis as data: `"state": "blocked"` with
+a `"blocked"` list, or `"state": "stuck"` with `"stuck"` (nets, boxes per layer in
+mm, every cell). `tests/test_router_stall.py` holds all of this on board-free
+fixtures with both search cores.
+
+## The search core says when it is the slow one
+
+`maze.py` runs its search in C (`_maze.c`, built by `kicad_project/tools/setup.sh`
+into `kicad_project/tools/.native/`) and falls back to the same algorithm in Python
+when the library is missing, was built from an older ABI, or cannot be loaded. The
+results are identical; the time is not. So the fallback is never silent: every tool
+that imports `maze` prints ONE line on stderr,
+
+    router core: python (about 10x slower) - run kicad_project/tools/setup.sh
+
+and, when the library loads but `_maze.c` is newer than it (a pull that changed the
+core, no rebuild),
+
+    router core: compiled, but route/_maze.c is newer than .native/libmaze.so (a stale build) - run kicad_project/tools/setup.sh
+
+`HW_MAZE_CORE=python` (asking for the Python core, as the tests that compare the two
+do) prints nothing. `maze.CORE_NOTE` holds the line, or None. `./setup.sh check`
+reports the compiled core as REQUIRED on a machine with a C compiler.
 
 ## `prelayout.py` — can it be routed, before any copper
 
@@ -598,6 +773,16 @@ net out on three layers. `fanout.py plan` proposes that model;
   opened to a few low-speed signals (board 1's D78: 22 nets In2 + B could not take
   went to In5 / In4). "This layer first" is two runs: without the second layer,
   then with it for what is left.
+  **It is quick, and it stops when told.** The partition asks thousands of
+  sets that differ by one or two sources; each layer keeps ONE flow and moves
+  it to the set asked for (a source dropped gives its unit back, a source
+  added is one search) instead of building every flow from nothing: the same
+  answer by construction (`tests/test_fanout_flow.py` holds the two against
+  each other), 35 s -> 4 s on a 296-net fixture and 129 s -> 3 s on a real
+  six-layer BGA. `--timeout S` stops at the next question and prints
+  `STOPPED at --timeout`: the sets so far are printed and written as
+  `<out>.partial.json` -- never under `--out`'s own name, which a later step
+  reads as the answer -- and the exit is 1. Use it, never a `timeout` prefix.
 
 ## `decap.py` — the decoupling ring as a plan
 
@@ -694,6 +879,82 @@ listed (`MISSED`), never forced. Its output is an ordinary plan for `route.py ch
   pocket with nothing else, between tracks. There is no via site, so a zone `holes` entry round the pin
   and its pocket removes the pour there; the pin reaches the net on the other layers. Each hole changes
   the fill beside it, so gate again until DRC is quiet (board2: J5 S1, J_MAIN1 21 / 23 / 27 / 29).
+
+## Background runs: `tools/bgwait.py` — started and waited on by pid, with a time limit
+
+A run that takes minutes is started in the background and waited on with `tools/bgwait.py` (board-free,
+plain `python3`; its module docstring is the manual). It is not a routing tool -- any long command of
+either session goes through it -- but the router is where the waiting happens:
+
+    python3 tools/bgwait.py run --name R2_a -- tools/kpy tools/route/netgroup.py --board board1 routing/R2_a.json --timeout 900
+    python3 tools/bgwait.py wait R2_a R2_b --timeout 100     # 0 all ended with exit 0 | 1 one failed | 124 still running
+    python3 tools/bgwait.py status                           # every job of this session, without waiting
+    python3 tools/bgwait.py kill R2_b                        # its whole process group
+
+- **`run` makes the job a (pid, start time) pair with a recorded exit code.** The command runs detached in
+  its own session, stdout and stderr in `<jobs>/NAME.log` (or `--log`), Python unbuffered; a wrapper
+  records the exit code in `<jobs>/NAME.json`, so `wait` reports it long after the process is gone. The
+  job folder is git-ignored and per session: `kicad_project/bgwait.tmp/<boardN>/` for a board session,
+  `out/bgwait/` for the concept session, the system temp folder when neither can be written.
+- **`wait` always has a limit and always comes back with evidence.** `--timeout` defaults to 100 s (inside
+  the Bash tool's default 120 s; the cap is 3600 s -- give the Bash call a longer timeout too). It returns
+  the moment ALL jobs ended, or at the limit with exit 124, and each time prints per job: state, exit code,
+  elapsed time, CPU seconds, CPU in the last interval (`0.0 s CPU in the last 60 s: idle or hung`) and the
+  log's last lines with the log's age. Read them before waiting again: a job at 0 CPU will not end by
+  itself. A bare PID (a process started some other way) is waited on too; only its exit code is unknown.
+- **A wait by NAME is refused, by a hook.** `while pgrep -f "netgroup.py ... R2_emmc_"; do sleep 20; done`
+  matched its own shell and sat 4 h 52 min at 0 CPU on three runs that had ended within 3 minutes. The
+  PreToolUse hook `tools/session/bashguard.py` blocks a `while` / `until` loop that polls `pgrep` with a
+  pattern, `ps | grep` or `pidof` and sleeps -- the bracket form `pgrep -f '[n]etgroup.py'` included: it
+  still ends on a name any other process can hold, and still has no limit. A one-shot `pgrep`, and a loop
+  on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is declared in both
+  sessions' `.claude/settings.json`, beside the wall.
+- **Several specs of one group at once are a race, not three background runs:** `race.py`, below.
+
+## `race.py` — spec variants raced as processes, one table, one winner
+
+When a group does not converge, or converges badly, the next tries -- the other layer first, a wider
+window, another seed, `--repair` -- do not depend on each other. `race.py` runs them at once:
+
+    tools/kpy tools/route/race.py --board board1 routing/R3_a.json routing/R3_b.json "routing/R3_a.json --seed 2"
+    tools/kpy tools/route/race.py --board board1 --timeout 900 a.json b.json c.json -- --repair
+
+A variant is ONE argument: a spec, optionally followed inside the same quotes by netgroup options for that
+variant alone; options after a bare `--` go to every variant. Each variant gets its own process group, its
+own copy of the board folder under `<race>/<variant>/` (the system temp folder, or `--out DIR` outside
+`kicad_project/`), `netgroup.py --timeout S` (default 600 s; killed at 1.5 x S + 60 s) and, when it
+converged, its own `route.py check`. It prints one table -- variant, converged, iterations, route seconds,
+check, new DRC, rule failures, vias, track length -- and `<race>/race.json` holds it as data.
+
+- **Nothing is written to the real board.** Plans, partials and logs stay in `<race>/<variant>/`
+  (`plan.json` with its `plan.origin.json`, `partial.json`, `netgroup.log`, `check.log`, `spec.json`);
+  the board copies are deleted unless `--keep`. Under the table are the commands that take the winner
+  over: `cp` its plan AND its origin record into the board (without the record `route.py` cannot tell
+  that the plan is this spec's and this board's, and says so), `route.py check` it THERE (the gate of
+  record is the real board's), `apply`. A variant that did not converge says why in its row: `BLOCKED`
+  (netgroup exit 4, an end shut in), `STUCK` (exit 3, the same cells recycled), the timeout, or its last line.
+- **The winner's order is fixed, and printed:** converged; the check ran to a verdict; fewest new DRC;
+  fewest rule failures; fewest vias; shortest track length; command-line order. It is the best of what
+  ran, not a pass -- the line says `CHECK PASS` or `NOT a pass`, and the exit code is 0 only for a
+  converged winner that passed (1: none did; 2: usage).
+- **A raced plan is the plan the same command writes on the real board**, byte for byte: the copy and the
+  neighbours change nothing (`tests/test_race.py` holds three variants to the same sha as three runs one
+  after another). So the last printed line -- route it there again -- is an equal way to take a winner.
+- **How many at a time:** `--jobs`, else `HW_JOBS`, else one per variant up to the cores less one. Each
+  child gets `HW_JOBS` = cores / jobs, so a variant with `--seeds` or `--jacobi` does not oversubscribe.
+  The checks are what load the machine (two `kicad-cli` each, many threads): on the fixture three variants
+  took 6.4 s raced against 12.1 s one after another (a 24-core machine busy with other work), and eight
+  at a time took 18 s for 123 s of route + check summed. A copy keeps `routing/.drc_cache/`, so a board that has been checked once does not
+  pay its baseline again in every variant.
+- **Race variants that differ in the SPEC before variants that differ in the seed.** When every variant
+  stops at the same contested cells, the group lacks capacity there and no seed will find it (`prelayout.py`,
+  the partial's `contested` and `reach`); when they stop in different places, the order is the problem
+  and a seed or `--repair` is a fair try.
+- **A long race goes through `bgwait.py`** (`run --name R3_race -- tools/kpy tools/route/race.py ...`,
+  then `wait R3_race --timeout ...`). `bgwait.py kill` -- or any SIGTERM to `race.py` -- ends every
+  variant's processes with it.
+- A spec whose `"plan"` is an absolute path, or leaves the board folder, is refused: a variant writes only
+  into its own copy.
 
 ## `corners.py` — the angle rule for a polyline
 

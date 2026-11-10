@@ -209,5 +209,9 @@ refresh tools run on the closed board.
 5. **The placement stops for review as a whole**: with every group's
    `place.py check`, `place.py drc` and `prelayout.py` clean, write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line).
    Until the verdict, build nothing on it; independent work (a group that
-   touches none of its parts or corridors) may go on. Routing starts after
-   the placement passes (the `routing` skill).
+   touches none of its parts or corridors) may go on — **name it on the
+   request's `Meanwhile:` line and start it in the turn you ring.** With the
+   whole placement under review nothing placed is independent, so prepare the
+   routing: `ROUTING_PLAN.md`, the guide's rows, the first groups' specs and
+   plans routed and checked on a scratch copy, nothing applied. Routing starts
+   after the placement passes (the `routing` skill).

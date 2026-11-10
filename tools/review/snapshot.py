@@ -46,6 +46,12 @@ tiles skipped; all / fab (the default) tiles everything. Every snapshot also
 diffs each page and view against the board's previous snapshot of the same
 kind and writes changed.md: the changed regions and the tiles that show them.
 
+A PCB snapshot also holds geometry.json -- every track, via, pad, zone fill,
+text and the outline as numbers, dumped ONCE by dump.py -- so a reviewer
+measures with `tools/review/geom.py <snapshot> <query>` instead of writing a
+pcbnew script, and CHANGES.md / changes.json: the object-level diff against
+the board's last PCB snapshot that got a verdict (changes.py).
+
 Writes SUMMARY.md (one row per gate) beside the outputs. Exit 0 = every gate
 passed, 1 = a gate failed (the review starts from it), 2 = the snapshot itself
 could not be made.
@@ -87,7 +93,7 @@ OVERLAP_MM = 12
 DRC_NOTE = re.compile(r"^drc: .*(: kicad-cli run,|from the cache)")
 # Rows that are outputs for the reader, not gates.
 EXPORTS = ("netlist", "bom", "sch-pdf", "sch-png", "pcb-render", "pins", "sheet-tiles", "pcb-tiles", "changes",
-           "measure")
+           "measure", "geometry", "object-diff")
 TMPWORK_README = """\
 tmpWork -- the reviewer's temporary workspace.
 
@@ -485,16 +491,36 @@ def exports(run, out, root_sch):
 
 def pcb(run, b, out):
     kpy = [KPY]
-    run.gate("drc", kpy + [TOOLS / "place" / "place.py", "drc", "--board", b])
+    drc = run.gate("drc", kpy + [TOOLS / "place" / "place.py", "drc", "--board", b])
     run.gate("board-setup", kpy + [TOOLS / "board_setup" / "board_setup.py", "check", "--board", b])
     run.gate("footprints", [VPY, TOOLS / "fp" / "fp.py", "check", "--board", b])
     run.gate("route-status", kpy + [TOOLS / "route" / "route.py", "status", "--board", b],
              ok=lambda c, t: c in (0, 1), note="unrouted nets per group (information)")
     run.gate("route-edge", kpy + [TOOLS / "route" / "route.py", "edge", "--board", b])
     run.gate("guide-block", ["python3", TOOLS / "route" / "guide.py", "check", "--board", b])
+    # every rule of the guide, and every check a review finding carries (handoff/findings.json):
+    # what a reviewer measured once is measured here, before one is spawned.  After `drc`: the
+    # audit's first gate reads that run's report from the cache
+    run.gate("audit", kpy + [TOOLS / "route" / "route.py", "audit", "--board", b], after=drc)
+    run.gate("findings", kpy + [TOOLS / "route" / "route.py", "audit", "--findings", "--board", b])
     run.gate("pcb-render", kpy + [TOOLS / "route" / "route.py", "render", "--board", b,
                                   "--out", out / "pcb"], note="pcb/top.png, bottom.png, inner.png")
     run.gate("measure", kpy + [Path(__file__).resolve().parent / "measure.py", b, out / "measurements.json"])
+    run.gate("geometry", kpy + [Path(__file__).resolve().parent / "dump.py", b, out / "geometry.json"])
+
+
+def object_diff(run, out, board, scope):
+    """CHANGES.md / changes.json: this snapshot's geometry.json against the board's last PCB
+    snapshot with a verdict (changes.objects). A row for the reader, never a gate."""
+    if not (out / "geometry.json").exists():
+        run.skip("object-diff", "no geometry.json: the geometry row above failed (gates/geometry.txt)")
+        return
+    try:
+        line = changes.objects(out, ROOT, board, KPY, scope)
+    except (OSError, ValueError, KeyError) as e:
+        run.rows.append(("object-diff", "ERROR", f"changes.objects: {type(e).__name__}: {e}"[:160], ""))
+        return
+    run.rows.append(("object-diff", "done", line, "CHANGES.md, changes.json"))
 
 
 def main():
@@ -554,6 +580,8 @@ def main():
     serial = sum(run.times.values())
     scope = changes.scope_box(b, a.scope) if a.kind == "pcb" else (a.scope or "all", None, "every tile")
     reader(run, out, a.kind, scope)
+    if a.kind == "pcb":
+        object_diff(run, out, src.name, scope)
     print(f"gates: {len(run.times)} in {wall:.1f} s on {run.n_jobs} worker(s) "
           f"({serial:.1f} s if run one at a time)", file=sys.stderr)
 
@@ -579,6 +607,13 @@ def main():
           "- `snap/<board>/` — the frozen board and its `handoff/` (with `datasheets/`); "
           "`gates/*.txt` — each gate's whole output."]
     if a.kind == "pcb":
+        L += ["- `CHANGES.md` FIRST, with `changed.md` — the board against its last REVIEWED PCB snapshot, object "
+              "by object: parts moved / added / removed, copper added and removed per net and layer, vias, "
+              "zones, texts, the outline, the board's rules (`changes.json` holds every row).",
+              "- `geometry.json` — every track, via, pad, zone fill, text and the outline as numbers. Measure "
+              "with `python3 tools/review/geom.py <this folder> <query>` (nearest foreign copper, a gap, a "
+              "label's own and other pad, joint angles, via-to-pad, hole-to-hole, a net's copper, a box) "
+              "instead of writing a script; `geom.py --help` lists the queries and their definitions."]
         L += ["- `measurements.json` — the board measured (measure.py): parts, groups, per-net lengths and "
               "vias, pairs (skew, gap), pours and islands, silk over mask openings, and each "
               "`10_layout.md` row's parts, points and distances. Read it instead of measuring."]

@@ -51,6 +51,14 @@ repository (nothing here is written; the copy is deleted unless --keep):
              via fixed under --push and none by the 45-degree last resort
   lint       tools/lint_docs.py on the scratch copy after the publish
 
+and, each a test of its own under tests/ (runnable alone: `python3
+tests/test_<name>.py`; its last line is the stage's verdict and numbers):
+
+  wall       tests/test_wall.py -- the board wall never ASKS: own folder,
+             another board and handoff/ with HW_BOARD set, with only this
+             session's claim, with neither; the session brief writes the
+             claim and exports HW_BOARD on a resume (W1)
+
 A stage is PASS, FAIL or SKIP (a dependency this machine lacks, named). The
 report goes to out/agentic/report.{md,json}; out/ is disposable.
 """
@@ -506,7 +514,17 @@ def stage_router(quick, rip="conflict"):
     import maze                                   # noqa: E402
     core = maze._CORE
     if core is None:
-        return _route_fixture(quick, rip, maze.CORE)
+        _route_fixture(quick, rip, maze.CORE)
+        # R9: the slow search running unasked is a machine fault, not a pass -- a board session on it
+        # waits minutes for what takes seconds, and nothing else says so
+        asked = os.environ.get("HW_MAZE_CORE", "").lower() == "python"
+        if not asked and any(shutil.which(c) for c in ("cc", "gcc", "clang")):
+            s = STAGES[-1]
+            s["status"] = "FAIL"
+            s["detail"] += (f"; the router ran on the {maze.CORE} search although a C compiler is here: "
+                            "run kicad_project/tools/setup.sh (HW_MAZE_CORE=python asks for the Python core)")
+            print(f"  {'':10s} (router: FAIL -- not the compiled core; run kicad_project/tools/setup.sh)")
+        return
     maze._CORE = None
     try:
         _route_fixture(quick, rip, "python")
@@ -651,7 +669,9 @@ def stage_pcb_tools(have):
               "route.py check / audit, place.py drc, board_setup.py run only on a machine with KiCad")
         return
     rc, out = run([ROOT / "kicad_project" / "tools" / "kpy", "-c", "import pcbnew; print(pcbnew.Version())"], ROOT)
-    stage("pcb-tools", "PASS" if rc == 0 else "FAIL", time.time() - t0, "pcbnew " + tail(out, 1))
+    # pcbnew's own assert and Debug lines land in the same stream: the version is the line that looks like one
+    ver = [ln for ln in out.splitlines() if re.match(r"\d+\.\d+", ln.strip()) and "Debug:" not in ln]
+    stage("pcb-tools", "PASS" if rc == 0 else "FAIL", time.time() - t0, "pcbnew " + (ver[-1].strip() if ver else tail(out, 1)))
 
 
 def stage_pcb(copy, board, quick):
@@ -697,7 +717,9 @@ def stage_pcb(copy, board, quick):
         rc, out = run([kpy, str(tools / "route" / "route.py"), "check", "--board", str(board), "routing/R1_plan.json"], kp)
         nums[f"check{k}_s"] = round(time.time() - t1, 2)
         nums[f"check{k}_kicad_cli"] = len(re.findall(r"^drc: .*: kicad-cli run,", out, re.M))
-        outs.append([ln for ln in out.splitlines() if not ln.startswith("drc:") and "property.h" not in ln])
+        # wx prints "HH:MM:SS: Debug: ..." lines of its own when pcbnew loads: a clock, not a result
+        outs.append([ln for ln in out.splitlines() if not ln.startswith("drc:") and "property.h" not in ln
+                     and not re.match(r"\d\d:\d\d:\d\d: Debug: ", ln)])
         # the scaffold guide's shape / via-link rows fail raw router output (the board session's
         # next step); the stage judges that check RAN to its verdict, and the same verdict twice
         verdict = next((ln for ln in out.splitlines() if ln.startswith("CHECK ")), None)
@@ -835,6 +857,43 @@ def stage_lint(copy):
     stage("lint", "PASS" if rc == 0 else "FAIL", time.time() - t0, tail(out, 1))
 
 
+# == the stand-alone tests ===================================================
+
+def stage_script(name, script, timeout=1800):
+    """A tests/test_<x>.py as a stage: it works on its own scratch copies, exits 0/1, and its
+    last stdout line is `PASS: ...`, `FAIL: ...` or `SKIP: ...` (a dependency this machine lacks)."""
+    t0 = time.time()
+    try:
+        rc, out = run([sys.executable, ROOT / "tests" / script], ROOT, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return stage(name, "FAIL", time.time() - t0, f"tests/{script}: no result in {timeout} s")
+    lines = [ln for ln in out.strip().splitlines() if ln.strip()]
+    last = lines[-1] if lines else ""
+    m = re.match(r"(PASS|FAIL|SKIP):\s*(.*)", last)
+    if not m or (rc != 0 and m.group(1) != "FAIL") or (rc == 0 and m.group(1) == "FAIL"):
+        return stage(name, "FAIL", time.time() - t0, f"tests/{script} exit {rc}: {tail(out)}")
+    stage(name, m.group(1), time.time() - t0, m.group(2)[:600])
+
+
+# (stage, script, skipped under --quick)
+SCRIPT_STAGES = [
+    ("wall", "test_wall.py", False),
+    ("bashguard", "test_bashguard.py", False),
+    ("bgwait", "test_bgwait.py", False),
+    ("stall", "test_router_stall.py", False),
+    ("planguard", "test_plan_guard.py", False),
+    ("race", "test_race.py", False),
+    ("flow", "test_fanout_flow.py", False),
+    ("pcb-large", "test_pcb_large.py", True),
+    ("rev-geom", "test_review_geom.py", False),
+    ("rev-diff", "test_review_changes.py", False),
+    ("findings", "test_findings.py", False),
+    ("rule-gate", "test_rule_gate.py", False),
+    ("topic", "test_answer_topic.py", False),
+    ("sessions", "test_sessions.py", False),
+]
+
+
 # == main ====================================================================
 
 IGNORE = shutil.ignore_patterns(".git", ".venv", "out", "__pycache__", "*.pyc", ".claude", "tests")
@@ -880,6 +939,11 @@ def main():
             stage_pcb(copy, board, a.quick)
         else:
             stage("pcb", "SKIP", 0.0, "needs a board, kicad-cli and pcbnew")
+        for name_, script_, slow_ in SCRIPT_STAGES:
+            if slow_ and a.quick:
+                stage(name_, "SKIP", 0.0, f"--quick (python3 tests/{script_})")
+            else:
+                stage_script(name_, script_)
         stage_lint(copy)
     finally:
         if a.keep:
