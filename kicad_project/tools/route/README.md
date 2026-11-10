@@ -636,6 +636,11 @@ listed (`MISSED`), never forced. Its output is an ordinary plan for `route.py ch
 - **A fill-based clearance is not tight enough alone.** A via inside the fill shrunk by its radius
   stood 0.166 mm from a track, because a 45° fill edge is approximate. Every layer is also tested
   against the copper itself.
+- **`--fill-gaps` aims at the gaps.** The ring pass tries evenly spaced spots and skips one
+  near a via already there, so a gap between two vias 7.5 mm apart was never aimed at
+  (board2 RV23.3: two bottom-edge gaps had legal sites). After the ring, it puts a via at the
+  nearest legal site to each gap's farthest point, and repeats until none fits (board2: 27
+  vias, the farthest ring point 3.87 -> 2.95 mm from GND).
 - **Every gap is a number.** After placing, `stitch.py` prints a `GAP` line for each stretch of
   the ring path farther than pitch / 2 from a via or a through-hole pin of the net, with its length
   and the farthest point. A report quotes those lines; "no legal site within 1.5 mm" is not a

@@ -1298,7 +1298,7 @@ def cmd_audit(a):
     viol = next((ln for ln in lines if ln.startswith("violations:")), "violations: ?")
     unc = next((ln for ln in lines if ln.startswith("unconnected:")), "unconnected: ?")
     par = next((ln for ln in lines if ln.startswith("schematic parity:")), "")
-    gate("drc", rc == 0 and viol.strip() == "violations: none" and unc.strip() == "unconnected: 0",
+    gate("drc", rc == 0 and viol.strip().startswith("violations: none") and unc.strip() == "unconnected: 0",
          f"{viol}; {unc}; {par}" if rc != 4 else lines[-1])
     if G.get("via_clear"):
         vc = via_clear_sites(B)

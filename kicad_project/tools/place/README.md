@@ -187,6 +187,18 @@ nudge each, through `check`/`apply` -- and one `silk_over_copper`: a
 converter's second, inner pin-1 dot on pad 1's mask opening, dropped at the
 source with `fp.py tidy --silk-drop <i>` and `refresh.py --layers SilkS`.
 
+**A footprint's silk against its OWN pads.** KiCad's DRC tests silk against other
+footprints' copper, not against its own pads, and KiCad's stock 0402 bars sit 0.085 mm
+off theirs, under 14_fab's "silk >= 0.15 mm off every pad" (board2 RV23.1: 24 bars on 12
+parts, found by the reviewer and missed by every gate). `drc` now counts every silk stroke
+nearer its own footprint's pads than the silk clearance + the mask expansion, and exits 1.
+`silk` trims each one on a stock footprint to the longest stretch that clears, or drops it
+when what is left is shorter than twice its width (an 0402's bar between its pads), after
+the widening, which grows a stroke toward its pads. Edited stock footprints differ from
+KiCad's copy and DRC reports `lib_footprint_mismatch`. `silk` records them in
+`placement.json` `silk_edited` (refs and why), and `drc` sets exactly those aside and says
+how many.
+
 ## `labels`
 
 1. Every designator gets the Board Setup minimum silk text (typed from
@@ -208,7 +220,16 @@ source with `fp.py tidy --silk-drop <i>` and `refresh.py --layers SilkS`.
    derived footprints carry `${REFERENCE}` on F.Fab, so the assembly drawing
    still has it.
 
-Run it when a placement round is finished; labels are the last thing to move.
+`placement.json` `labels`:
+- `hide`: references that never go on silk.
+- `own_nearest`: fnmatch patterns whose label is never nearer another part's pad than its
+  own; `["*"]` for a fab release (board2 RV23.2: C4 / D5 / R2 read as their neighbours').
+- `edge_min`: a label's distance from Edge.Cuts, the outline and every cut-out. Set it to
+  the outline tolerance + the silk clearance, or a routed cut-out can nick it (board2
+  RV23.2: 0.149 mm against +-0.2).
+
+Run it when a placement round is finished; labels are the last thing to move -- after the
+last via too (stitching added after the labels put four designators back on vias).
 It writes `<board>.kicad_pcb.labels-bak` first.
 
 ## `sites.py` — where can this part go so that every pad reaches a via?

@@ -69,6 +69,8 @@ def main():
                     help="mm from the net's OWN copper on layers it does not pour (a closer via leaves a slot the "
                          "shape rule calls a notch: 2 x CLOSE)")
     ap.add_argument("--min-island", type=float, default=0.3, help="mm2: smaller untied islands are left (listed)")
+    ap.add_argument("--fill-gaps", action="store_true",
+                    help="after the ring: aim a via at the farthest point of every gap, again until none fits")
     ap.add_argument("--pads", action="store_true",
                     help="also drop every SMD pad of the net that no track of it touches to a via of its own, "
                          "on one of the pad's axes, linked straight out of its centre")
@@ -417,11 +419,10 @@ def main():
                 new_links.append(((cx, cy), (x, y), w, p_))
                 n_pad += 1
 
-    # coverage: along every ring path, the stretches farther than pitch / 2 from any via or
-    # through-hole pin of the net -- each one printed with its length, so a gap is a number in the
-    # report, not "left" (board2 RV22.1)
-    gaps = []
-    if not a.only_pads:
+    def coverage():
+        """[(where, [p0, p1, length, farthest])]: the ring stretches farther than pitch / 2 from a
+        via or a through-hole pin of the net"""
+        gaps = []
         ties = [(vx, vy) for vx, vy, own in vias if own] + \
                [(mm(p_.GetPosition().x), mm(p_.GetPosition().y)) for p_ in tht_own]
         for i in range(board.OutlineCount()):
@@ -443,22 +444,40 @@ def main():
                         samples += [(p[0] + (q[0] - p[0]) * k / n_, p[1] + (q[1] - p[1]) * k / n_) for k in range(n_)]
                     far = [min(math.dist(s_, t) for t in ties) if ties else 1e9 for s_ in samples]
                     run = None
-                    for k, (s_, d_) in enumerate(zip(samples + samples[:1], far + far[:1])):
+                    for s_, d_ in zip(samples + samples[:1], far + far[:1]):
                         if d_ > a.pitch / 2:
-                            run = run or [s_, s_, 0.0, 0.0]
+                            if run is None:
+                                run = [s_, s_, 0.0, 0.0, s_]
                             run[2] += 0.25
                             run[1] = s_
-                            run[3] = max(run[3], d_)
+                            if d_ > run[3]:
+                                run[3], run[4] = d_, s_
                         elif run:
                             gaps.append((("outline" if ri == 0 else "cut-out"), run))
                             run = None
                     if run:
                         gaps.append((("outline" if ri == 0 else "cut-out"), run))
+        return gaps
+
+    gaps = []
+    if not a.only_pads:
+        n_fill = 0
+        for _round in range(4 if a.fill_gaps else 0):
+            added = 0
+            for _w, (p0, p1, L, d, worst) in coverage():
+                # aim at the gap's farthest point; the search finds the nearest legal site to it
+                if place(worst[0], worst[1], "fills a stitching gap"):
+                    added += 1
+            n_fill += added
+            if not added:
+                break
+        gaps = coverage()
 
     out = dict(plan) if (a.merge and plan) else {}
     out["group"] = a.group or plan.get("group") or "stitch"
     why = (f"{net} stitching ({Path(__file__).name}): {n_tie} tie, {n_ring} ring at {a.pitch:g} mm"
            + (f", {n_grid} grid at {a.grid:g} mm" if a.grid else "")
+           + (f", {n_fill} gap fill(s)" if (a.fill_gaps and not a.only_pads) else "")
            + (f", {n_pad} pad(s) dropped" if (a.pads or a.only_pads) else "") + f"; via {a.via}, sep {a.sep:g}")
     out["why"] = (plan.get("why", "") + " -- " if a.merge and plan else "") + why
     out["vias"] = (plan.get("vias", []) if a.merge and plan else []) + [
@@ -466,7 +485,7 @@ def main():
     out["tracks"] = (plan.get("tracks", []) if a.merge and plan else []) + tracks_out
     Path(a.out).write_text(json.dumps(out, indent=1))
     print(f"{why}\n-> {a.out}")
-    for where, (p0, p1, L, d) in gaps:
+    for where, (p0, p1, L, d, _w) in gaps:
         print(f"  GAP {where} ({p0[0]:.2f}, {p0[1]:.2f}) -> ({p1[0]:.2f}, {p1[1]:.2f}): {L:.1f} mm of the ring "
               f"farther than {a.pitch / 2:g} mm from a {net} via or pin (at most {d:.2f} mm)")
     for m in diag45:

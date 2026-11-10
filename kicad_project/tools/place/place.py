@@ -753,7 +753,11 @@ def cmd_labels(a):
     strict_pats = B.cfg.get("labels", {}).get("own_nearest", [])
     strict = lambda ref: any(fnmatch.fnmatch(ref, pat) for pat in strict_pats)
     o = B.outline
-    inner = (o[0] + B.silk_clr, o[1] + B.silk_clr, o[2] - B.silk_clr, o[3] - B.silk_clr)
+    # labels.edge_min: a label's distance from Edge.Cuts (the outline AND every cut-out); default the
+    # silk clearance.  A routed outline wanders by its tolerance, so a label 0.149 mm off a cut-out
+    # can be nicked (board2 RV23.2): set it to the outline tolerance + the silk clearance
+    e_min = float(B.cfg.get("labels", {}).get("edge_min", B.silk_clr))
+    inner = (o[0] + e_min, o[1] + e_min, o[2] - e_min, o[3] - e_min)
     g_pad = B.mask_exp + B.silk_clr
     STEP, TOP = 0.25, 40
     clash = lambda p, q: rgap(p, q) < B.silk_clr
@@ -831,7 +835,7 @@ def cmd_labels(a):
                     for sx, sy in spots:
                         bx = (sx - tw / 2, sy - th / 2, sx + tw / 2, sy + th / 2)
                         if bx[0] < inner[0] or bx[1] < inner[1] or bx[2] > inner[2] or bx[3] > inner[3] \
-                                or B.box_edge_dist(bx) < B.silk_clr:
+                                or B.box_edge_dist(bx) < e_min:
                             why_[r]["edge"] = why_[r].get("edge", 0) + 1
                             continue
                         if any(rgap(bx, ob) < 0 for ob in near_obst):
@@ -1145,6 +1149,73 @@ def thin_silk(B):
     return floor, out
 
 
+def near_silk(B):
+    """Silk strokes nearer a pad of their OWN footprint than the silk clearance + the mask
+    expansion (14_fab's "silk >= N mm off every pad", which board_setup types as clearance to
+    the mask opening).  KiCad's DRC does not test a footprint's silk against its own pads, and
+    KiCad's stock 0402 bars sit 0.085 mm off theirs (board2 RV23.1).  [(ref, own_lib, shape,
+    gap, keep)]: keep is the longest stretch of a segment that clears every own pad, or None."""
+    pn = B.pn
+    need = B.silk_clr + B.mask_exp
+    stem = next((p.name[:-len(".pretty")] for p in (Path(B.pcb).parent / "lib").glob("*.pretty")), None)
+    out = []
+    for r, f in B.fps.items():
+        own = str(f.GetFPID().GetLibNickname()) == stem
+        for g in f.GraphicalItems():
+            if g.GetLayer() not in (pn.F_SilkS, pn.B_SilkS) or g.GetClass() != "PCB_SHAPE":
+                continue
+            cu = pn.F_Cu if g.GetLayer() == pn.F_SilkS else pn.B_Cu
+            polys = []
+            for p in f.Pads():
+                if p.IsOnLayer(cu):
+                    s_ = pn.SHAPE_POLY_SET()
+                    p.TransformShapeToPolygon(s_, cu, 0, pn.FromMM(0.002), pn.ERROR_OUTSIDE)
+                    polys.append(s_)
+            if not polys:
+                continue
+            w = pn.ToMM(g.GetWidth())
+            if g.GetShape() != pn.SHAPE_T_SEGMENT:
+                pts = [g.GetPosition()]
+                sh = g.GetEffectiveShape()
+                d = min(pn.ToMM(int(q.SquaredDistance(sh.Centre() if hasattr(sh, "Centre") else pts[0]) ** 0.5))
+                        for q in polys) - w / 2
+                if d < need - 1e-4:
+                    out.append((r, own, g, d, None))
+                continue
+            a_, b_ = g.GetStart(), g.GetEnd()
+            L = pn.ToMM(int(((b_.x - a_.x) ** 2 + (b_.y - a_.y) ** 2) ** 0.5))
+            n = max(2, int(L / 0.005))
+            ok = []
+            dmin = 1e9
+            for k in range(n + 1):
+                v = pn.VECTOR2I(int(a_.x + (b_.x - a_.x) * k / n), int(a_.y + (b_.y - a_.y) * k / n))
+                d = min(pn.ToMM(int(q.SquaredDistance(v) ** 0.5)) for q in polys) - w / 2
+                dmin = min(dmin, d)
+                # the stroke's round end reaches w / 2 past its point along the segment as well
+                ok.append(d >= need - 1e-4)
+            if dmin >= need - 1e-4:
+                continue
+            best, run = None, None
+            for k, o in enumerate(ok + [False]):
+                if o and run is None:
+                    run = k
+                elif not o and run is not None:
+                    if best is None or k - run > best[1] - best[0]:
+                        best = (run, k - 1)
+                    run = None
+            keep = None
+            if best:
+                # pull each kept end back by w / 2 (its round cap) unless it is the stroke's own end
+                k0, k1 = best
+                t0 = k0 / n + (0 if k0 == 0 else (w / 2) / L)
+                t1 = k1 / n - (0 if k1 == n else (w / 2) / L)
+                if (t1 - t0) * L >= 2 * w:
+                    keep = (pn.VECTOR2I(int(a_.x + (b_.x - a_.x) * t0), int(a_.y + (b_.y - a_.y) * t0)),
+                            pn.VECTOR2I(int(a_.x + (b_.x - a_.x) * t1), int(a_.y + (b_.y - a_.y) * t1)))
+            out.append((r, own, g, dmin, keep))
+    return need, out
+
+
 def cmd_silk(a):
     """Raise every unfilled silk stroke narrower than the project's default silk
     line (14_fab's, via board_setup) on the STOCK footprints the board carries
@@ -1163,8 +1234,35 @@ def cmd_silk(a):
         g.SetWidth(B.pn.FromMM(floor))
     print(f"{len(thin)} silk stroke(s) on {len({r for r, *_ in thin})} stock footprint(s) "
           f"raised to {floor:g} mm" + (" (dry run)" if a.dry_run else ""))
-    if a.dry_run or not thin:
+    # ... then every stroke nearer its own pads than 14_fab allows: trimmed to the longest stretch
+    # that clears them, or dropped when that is shorter than twice its width (an 0402's bar
+    # between its pads carries nothing) -- AFTER the widening, which grows a stroke toward them
+    need, near = near_silk(B)
+    own_n = sorted({r for r, o, *_ in near if o})
+    if own_n:
+        die(f"project-library footprints with silk under {need:g} mm off their own pads: {', '.join(own_n)} -- "
+            f"fp.py tidy <name> --silk-drop / --silk-keep, then refresh.py --layers SilkS", 2)
+    trimmed = dropped = 0
+    for r, _, g, d, keep in near:
+        if keep:
+            g.SetStart(keep[0]); g.SetEnd(keep[1]); trimmed += 1
+        else:
+            g.GetParentFootprint().Remove(g); dropped += 1
+    print(f"{len(near)} silk stroke(s) under {need:g} mm off their own pads on "
+          f"{len({r for r, *_ in near})} stock footprint(s): {trimmed} trimmed, {dropped} dropped"
+          + (" (dry run)" if a.dry_run else ""))
+    if a.dry_run or not (thin or near):
         return 0
+    # the stock footprints edited here now differ from KiCad's library copy, and DRC says so
+    # (lib_footprint_mismatch): recorded in placement.json, which `drc` reads to set exactly
+    # those aside -- the edit is this tool's, made for 14_fab's silk rule, and said once
+    cfg_file = Path(B.pcb).parent / "placement.json"
+    cfg = json.loads(cfg_file.read_text()) if cfg_file.exists() else {}
+    ed = cfg.setdefault("silk_edited", {"refs": [], "why": "place.py silk: stock footprints' silk widened "
+                                         "to 14_fab's line, or trimmed / dropped off their own pads; KiCad "
+                                         "then reports lib_footprint_mismatch for them"})
+    ed["refs"] = sorted(set(ed.get("refs", [])) | {r for r, *_ in near})
+    cfg_file.write_text(json.dumps(cfg, indent=2) + "\n")
     backup = B.pcb.with_suffix(".kicad_pcb.silk-bak")
     shutil.copy2(B.pcb, backup)
     with quiet_stderr():
@@ -1342,8 +1440,17 @@ def drc_summary(B, d, msg):
     cfg_file = Path(B.pcb).parent / "placement.json"
     fixed = set((json.loads(cfg_file.read_text()) if cfg_file.exists() else {}).get("fixed", []))
     out = []
-    viol = collections.Counter(v["type"] for v in d.get("violations", []))
-    out.append(f"violations: {dict(viol) or 'none'}")
+    edited = set((json.loads(cfg_file.read_text()) if cfg_file.exists() else {}).get("silk_edited", {}).get("refs", []))
+
+    def set_aside(v):
+        # a stock footprint `place.py silk` edited for 14_fab's silk rule differs from KiCad's copy
+        refs = {i.get("description", "").split()[-1] for i in v.get("items", [])}
+        return v["type"] == "lib_footprint_mismatch" and refs and refs <= edited
+    aside = [v for v in d.get("violations", []) if set_aside(v)]
+    viol = collections.Counter(v["type"] for v in d.get("violations", []) if not set_aside(v))
+    out.append(f"violations: {dict(viol) or 'none'}"
+               + (f" ({len(aside)} lib_footprint_mismatch on footprints `place.py silk` edited -- "
+                  f"placement.json 'silk_edited' -- set aside)" if aside else ""))
     out.append(f"unconnected: {len(d.get('unconnected_items', []))}")
     bad = []
     for v in d.get("schematic_parity", []):
@@ -1361,7 +1468,11 @@ def drc_summary(B, d, msg):
     out.append(f"silk strokes under {floor:g} mm: {len(thin)}"
                + (f" on {', '.join(sorted({r for r, *_ in thin}))} -- `place.py silk` (stock) / "
                   f"`fp.py tidy --silk-width` (library)" if thin else ""))
-    return out, (1 if bad or thin else 0)
+    need, near = near_silk(B)
+    out.append(f"silk strokes under {need:g} mm off their own pads: {len(near)}"
+               + (f" on {', '.join(sorted({r for r, *_ in near}))} -- `place.py silk` (stock) / "
+                  f"`fp.py tidy --silk-drop` (library)" if near else ""))
+    return out, (1 if bad or thin or near else 0)
 
 
 def main():
