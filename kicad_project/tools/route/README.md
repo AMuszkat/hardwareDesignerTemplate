@@ -89,6 +89,7 @@ listing the names the tools know.
 | `plane layer` | `In1.Cu: GND` | any track on that layer; a zone there not of the plane's net |
 | `no vias` | `Class (NET: 1)` | a net of the class with more vias on the whole board than its cap (0 for the class, the named exceptions' own) |
 | `class layers` | `Class: F.Cu (except NET)` | a track of the class on any other layer |
+| `via clear of class` | `PAIRS: 0.625 mm (except GND)` | a via of another net (the plan's in `check`, every one on the board in `audit`) whose centre is nearer a class track's centreline than that. The case: tracks may run beneath a pair on a layer below its reference plane, but a via's antipad in the plane opens it under the pair. DRC cannot see it, because the antipad is on another layer and the nets never touch. Set it to via pad / 2 + plane clearance + the class track's half width. board2 Q10: 0.3 + 0.2 + 0.125; R5's routes had been checked by hand until RV21.5 asked for it as a gate |
 | `keep-out` | `name: Class` | a track of that class touching the `placement.json` keep-out of that name |
 | `via field` | `U1: 0.45/0.15 lattice, widths 0.1016-0.127, margin 0.4` | inside the part's pad field: a via not exactly that size, or off the pad lattice; a track whose width is outside the range. Outside it: a via of exactly that size. The copper tools skip the field |
 | `ground beside` | `Fast: GND within 0.6 mm` | reported by `audit` and `check`: mm of the class's track with ground on 2 / 1 / 0 sides, before → after |

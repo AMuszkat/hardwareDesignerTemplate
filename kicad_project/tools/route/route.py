@@ -452,6 +452,50 @@ def _seg_hits_rect(a, b, r):
                for k in range(n + 1))
 
 
+def via_clear_sites(B, plan=None):
+    """The guide's "via clear of class": vias (the plan's, else the board's) whose centre lies
+    nearer a class track's centreline than the rule's minimum -- the via's inner-layer antipad
+    opening the reference plane under that class's tracks.  DRC cannot see it: the antipad is
+    on another layer, and the two nets never touch.  [(rule, via net, (x, y), track net, d)]"""
+    rules = B.gates.get("via_clear", [])
+    if not rules:
+        return []
+    pn, mm = B.pn, B.pn.ToMM
+    segs = defaultdict(list)                   # class -> [(net, a, b)]
+    def add(net, a, b):
+        for c in B.netclasses(net):
+            segs[c].append((net, a, b))
+    for t in B.b.GetTracks():
+        if t.Type() == pn.PCB_TRACE_T:
+            add(t.GetNetname(), (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)))
+    vias = []
+    if plan is None:
+        vias = [(t.GetNetname(), (mm(t.GetPosition().x), mm(t.GetPosition().y)))
+                for t in B.b.GetTracks() if t.Type() == pn.PCB_VIA_T]
+    else:
+        for t in plan.get("tracks", []):
+            for a, b in zip(t["pts"], t["pts"][1:]):
+                add(t["net"], tuple(a), tuple(b))
+        vias = [(v["net"], tuple(v["at"])) for v in plan.get("vias", [])]
+
+    def dseg(p, a, b):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = dx * dx + dy * dy
+        u = 0.0 if L == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L))
+        return math.dist(p, (a[0] + u * dx, a[1] + u * dy))
+    out = []
+    for r in rules:
+        for net, at in vias:
+            if short(net) in r["except"] or r["class"] in B.netclasses(net):
+                continue
+            near = [(dseg(at, a, b), n) for n, a, b in segs.get(r["class"], []) if n != net]
+            if near:
+                d, n = min(near)
+                if d < r["min"] - 1e-6:
+                    out.append((r, net, at, n, d))
+    return out
+
+
 def rule_gates(B, plan):
     """The rules KiCad's DRC cannot express, from the guide. Returns failures."""
     G = B.gates
@@ -510,6 +554,10 @@ def rule_gates(B, plan):
                 bad.append(f"width: {net} track {w} mm, class {cls} wants {want} mm "
                            f"({G['class_width']['source']}; declare it in \"necks\" with a reason "
                            f"if deliberate)")
+
+    for r, net, at, n, d in via_clear_sites(B, plan):
+        bad.append(f"via-clear: {short(net)} via at ({at[0]:.3f}, {at[1]:.3f}) is {d:.3f} mm from "
+                   f"{short(n)} ({r['class']}), under {r['min']} mm ({r['source']})")
 
     # vias per net for the capped classes: the board's own plus the plan's
     if cvias:
@@ -1235,6 +1283,12 @@ def cmd_audit(a):
     par = next((ln for ln in lines if ln.startswith("schematic parity:")), "")
     gate("drc", rc == 0 and viol.strip() == "violations: none" and unc.strip() == "unconnected: 0",
          f"{viol}; {unc}; {par}" if rc != 4 else lines[-1])
+    if G.get("via_clear"):
+        vc = via_clear_sites(B)
+        gate("via clear", not vc, f"{len(vc)} via(s) under the minimum" + (
+            ": " + ", ".join(f"{short(net)} ({at[0]:.2f}, {at[1]:.2f}) {d:.3f} mm from {short(n)}"
+                             for _r, net, at, n, d in vc[:6]) if vc else "")
+             + " (" + "; ".join(r["source"] for r in G["via_clear"]) + ")")
     checked, viol_a = angle_gate(B.b, B.pn)
     if "angles" in G:
         gate("angles", not viol_a, f"{checked} joints, {len(viol_a)} not at 0/45 ({G['angles']['source']})")
