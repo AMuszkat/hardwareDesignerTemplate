@@ -904,9 +904,12 @@ converged, its own `route.py check`. It prints one table -- variant, converged, 
 check, new DRC, rule failures, vias, track length -- and `<race>/race.json` holds it as data.
 
 - **Nothing is written to the real board.** Plans, partials and logs stay in `<race>/<variant>/`
-  (`plan.json`, `partial.json`, `netgroup.log`, `check.log`, `spec.json`); the board copies are deleted
-  unless `--keep`. Under the table are the three commands that take the winner over: `cp` its plan into
-  the board, `route.py check` it THERE (the gate of record is the real board's), `apply`.
+  (`plan.json` with its `plan.origin.json`, `partial.json`, `netgroup.log`, `check.log`, `spec.json`);
+  the board copies are deleted unless `--keep`. Under the table are the commands that take the winner
+  over: `cp` its plan AND its origin record into the board (without the record `route.py` cannot tell
+  that the plan is this spec's and this board's, and says so), `route.py check` it THERE (the gate of
+  record is the real board's), `apply`. A variant that did not converge says why in its row: `BLOCKED`
+  (netgroup exit 4, an end shut in), `STUCK` (exit 3, the same cells recycled), the timeout, or its last line.
 - **The winner's order is fixed, and printed:** converged; the check ran to a verdict; fewest new DRC;
   fewest rule failures; fewest vias; shortest track length; command-line order. It is the best of what
   ran, not a pass -- the line says `CHECK PASS` or `NOT a pass`, and the exit code is 0 only for a

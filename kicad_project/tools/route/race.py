@@ -290,6 +290,10 @@ def run_variant(v, board, race_dir, a, env):
             r["converged"], r["state"] = True, "converged"
             shutil.copyfile(plan, vdir / "plan.json")
             r["plan"] = str(vdir / "plan.json")
+            rec = plan.with_suffix(".origin.json")       # origin.py: the spec and board the plan is true of
+            if rec.exists():                             # (the copy's content is the real board's)
+                shutil.copyfile(rec, vdir / "plan.origin.json")
+                r["origin"] = str(vdir / "plan.origin.json")
             r["length_mm"], r["vias"], r["plan_sha"] = measure_plan(plan)
         else:
             if rc is None:
@@ -298,6 +302,11 @@ def run_variant(v, board, race_dir, a, env):
                 r["state"] = f"killed by signal {-rc}"
             elif "STOPPED at the timeout" in log:
                 r["state"] = "stopped at the timeout"
+            elif rc == 4:                                # netgroup: an end shut in, nothing negotiated
+                r["state"] = "BLOCKED: " + next((ln.split(":", 1)[1].strip()[:70] for ln in log.splitlines()
+                                                 if ln.startswith("BLOCKED at this leg:")), "an end is shut in")
+            elif rc == 3:                                # netgroup --stall: the same cells, no way round
+                r["state"] = "STUCK: the same cells recycled (netgroup.log names the nets and the cells)"
             elif "NO SOLUTION" in log:
                 r["state"] = "no solution"
             else:
@@ -483,6 +492,9 @@ def main(argv=None):
     opts = " ".join(shlex.quote(o) for o in win["options"])
     print("To take it to the real board (nothing has been written there):")
     print(f"   cp {shlex.quote(win['plan'])} {shlex.quote(str(board / plan_rel))}")
+    if win.get("origin"):                                # without it route.py cannot test the plan's spec and board
+        print(f"   cp {shlex.quote(win['origin'])} "
+              f"{shlex.quote(str((board / plan_rel).with_suffix('.origin.json')))}")
     print(f"   tools/kpy tools/route/route.py check --board {b} {plan_rel}")
     print(f"   tools/kpy tools/route/route.py apply --board {b} {plan_rel}      # KiCad closed")
     print(f"   (or route it there again, the same plan: tools/kpy tools/route/netgroup.py --board {b} "

@@ -20,8 +20,8 @@ What must hold:
   3. the race takes less wall-clock than the serial runs (needs 4 cores;
      reported, not judged, on a smaller machine).  Both times are printed;
   4. the real board folder is untouched: every file's sha before = after;
-  5. ONE table, a WINNER line, the three commands that take the winner to
-     the real board, exit 0; the broken variant is a `NO` row with its reason.
+  5. ONE table, a WINNER line, the commands that take the winner (its plan
+     and the plan's origin record) to the real board, exit 0; the broken variant is a `NO` row with its reason.
 
 SKIP (exit 0) without pcbnew or kicad-cli.  The last line is PASS / FAIL /
 SKIP.
@@ -144,7 +144,8 @@ def main():
             fails.append("no `WINNER: <variant> -- CHECK PASS` line")
         if stdout.count("variant ") != 1 or stdout.count("\nWINNER:") != 1:
             fails.append("not exactly one table and one WINNER line on stdout")
-        for need in (f"cp {tmp / 'race' / R['winner'] / 'plan.json'}", "route.py check --board", "route.py apply --board"):
+        for need in (f"cp {tmp / 'race' / R['winner'] / 'plan.json'}", f"cp {tmp / 'race' / R['winner'] / 'plan.origin.json'}",
+                     "route.py check --board", "route.py apply --board"):
             if need not in stdout:
                 fails.append(f"the commands to apply the winner lack `{need}`")
         if before != after:
