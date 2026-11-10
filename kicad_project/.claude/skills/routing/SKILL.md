@@ -45,6 +45,13 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 - Fill `ROUTING_PLAN.md` §1 (layer roles, class table) from the same lines,
   and §3 (the groups, criticality first: the most sensitive nets
   get first pick of the copper, then fanout, then bulk, then pours).
+- **Every plane-net pad's via goes in before the signal groups that would wall
+  it in**, as a group of its own: run `tools/route/stitch.py --only-pads --plan
+  <the signal spec's fixed copper>` on the board as it is, apply, then route the
+  signals round it. The pours and the ring stitching (`stitch.py --pitch`) come
+  after. board2 routed its 20 signals first, and eight GND pads had no via site
+  left. Two had none even against the power group's rail and a pair, so part of
+  that rail had to move to B.Cu. Then the signals were re-routed.
 - **Count the order before you count the lanes.** For each pair of
   connectors a bundle joins, list its nets by the x (or y) where they leave
   the source and where they must arrive, and count the inversions. In a
