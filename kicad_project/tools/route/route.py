@@ -16,7 +16,8 @@
   check   write the plan into a SCRATCH COPY of the board and judge it with
           KiCad's own DRC (schematic parity on).  Any violation not already in
           the baseline fails the plan.  Then every rule of the board's
-          general_routing_guide.md that DRC cannot express.  Read-only.
+          general_routing_guide.md that DRC cannot express, and every pour's
+          island count (a pour the plan splits fails).  Read-only.
   apply   check, then write to the real board (KiCad closed, backup first),
           read back, and record every UUID in <board>/routing/<group>.applied.json
           so the group can be ripped out again.
@@ -894,6 +895,26 @@ def cmd_status(a):
     return 0
 
 
+def pour_islands(Bx, board):
+    """{"NET on LAYER": islands} from pour.py's report, in-process (it refills Bx's zones in
+    memory and never saves)."""
+    if not [z for z in Bx.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]:
+        return {}
+    import argparse as _ap
+    import contextlib
+    import io
+    import pour as POUR
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        POUR.report(Bx, _ap.Namespace(board=board, tries=[], over=[], field=None, step=0.05))
+    out = {}
+    for ln in buf.getvalue().splitlines():
+        m = re.match(r"\s*(.+ on \S+): (\d+) island\(s\)", ln)
+        if m:
+            out[m.group(1)] = int(m.group(2))
+    return out
+
+
 def cmd_check(a, quiet=False):
     B = RBoard(a.board)
     plan = json.loads(Path(a.plan).read_text())
@@ -927,6 +948,13 @@ def cmd_check(a, quiet=False):
         bad += ["short: " + m for m in S.save(scratch)]
         copper_notes, cbad = copper_gates(B, S)
         bad += cbad
+        # a pour this plan splits: DRC passes a pour in pieces, and the audit found it only
+        # after apply (board2 R5: vias' antipads cut J1's +5V pins off on a 6 mm2 island)
+        i0, i1 = pour_islands(B, a.board), pour_islands(S, a.board)
+        for k_, n_ in sorted(i1.items()):
+            if n_ > i0.get(k_, 1):
+                bad.append(f"pour: {k_} falls into {n_} island(s) with this plan ({i0.get(k_, 1)} before) "
+                           f"-- every island must be tied (pour.py)")
         rep = drc_report(scratch, cache=False)
         base = drc_done(base_run)
         angle_note = "angles: the guide has no 'joints' row, not checked"

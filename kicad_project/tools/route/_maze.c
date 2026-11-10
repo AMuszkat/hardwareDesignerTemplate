@@ -125,7 +125,7 @@ static int map_grow(Map *m) {
 #define K_D(k) ((int8_t)((k) % 16))
 #define INF 1e18
 
-const char *maze_core_version(void) { return "maze-core 1"; }
+const char *maze_core_version(void) { return "maze-core 2"; }
 
 /* Returns the path length written to out_* (states from the source to the goal),
  * 0 when there is no path (or the expansion limit was hit), -1 out of memory,
@@ -140,7 +140,7 @@ long maze_astar(
     const uint8_t *ok_layer, const double *lc, const double *tcost,
     int diagonal, int soft, int sexact, int fexact,
     double pres, double via_cost, double hk,
-    const int32_t *hmap, const uint8_t *goal, int lig, int goal_dirs,
+    const int32_t *hmap, const uint8_t *goal, int ligm, int goal_dirs,
     const int32_t *srcs, const int8_t *src_layers, int nsrc, int start_dir,
     const float **bias, long limit,
     int32_t *out_c, int8_t *out_l, int8_t *out_d, long out_cap)
@@ -170,7 +170,7 @@ long maze_astar(
         int li = top.li, dr = top.dr;
         Slot *e = map_find(&m, KEY(c, li, dr));
         if (d > (e ? e->dist : INF)) continue;
-        if (li == lig && goal[c] && (!goal_dirs || (goal_dirs >> dr & 1) || dr == 0)) {
+        if ((ligm >> li & 1) && goal[c] && (!goal_dirs || (goal_dirs >> dr & 1) || dr == 0)) {
             goalkey = KEY(c, li, dr);
             break;
         }
@@ -222,7 +222,7 @@ long maze_astar(
             if (cost < (x ? x->dist : INF)) {
                 if (!x && !(x = map_put(&m, key))) { ret = -1; goto done; }
                 x->dist = cost; x->par = KEY(c, li, dr);
-                Node y = {cost + (double)hmap[nc] * hk + (li == lig ? 0.0 : via_cost), cost, nc, (int8_t)li, (int8_t)nd};
+                Node y = {cost + (double)hmap[nc] * hk + ((ligm >> li & 1) ? 0.0 : via_cost), cost, nc, (int8_t)li, (int8_t)nd};
                 if (heap_push(&h, y)) { ret = -1; goto done; }
             }
         }
@@ -253,7 +253,7 @@ long maze_astar(
             if (cost < (x ? x->dist : INF)) {
                 if (!x && !(x = map_put(&m, key))) { ret = -1; goto done; }
                 x->dist = cost; x->par = KEY(c, li, dr);
-                Node y = {cost + (double)hmap[c] * hk + (nli == lig ? 0.0 : via_cost), cost, c, (int8_t)nli, 0};
+                Node y = {cost + (double)hmap[c] * hk + ((ligm >> nli & 1) ? 0.0 : via_cost), cost, c, (int8_t)nli, 0};
                 if (heap_push(&h, y)) { ret = -1; goto done; }
             }
         }

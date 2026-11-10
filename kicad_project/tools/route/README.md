@@ -19,7 +19,7 @@ The workflow is the `routing` skill.
     tools/kpy tools/route/decap.py    --board board1 --group R2 --refs C9,C10 --plan routing/R2_decap.json
     tools/kpy tools/route/fanout.py plan   --board board1 --ref U1 --via 0.4,0.2 --clearance C --width W ...
     tools/kpy tools/route/fanout.py layers --board board1 --ref U1 --vias placement/vias_U1.json --layers L.json
-    tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER']
+    tools/kpy tools/route/pour.py     --board board1 [--try NET:LAYER=zone.json] [--over 'GLOB:LAYER'] [--section MM --from .. --to ..]
     tools/kpy tools/route/prelayout.py --board board1 [--spec routing/prelayout.json]   # before the first group
     tools/kpy tools/route/view.py     --board board1 X0 Y0 X1 Y1 OUT [--plan plan.json] [--vias model.json] [--contested netgroup.log]
 
@@ -45,6 +45,11 @@ miss runs concurrently with the scratch copy's DRC. stderr says which
 (`drc: ... from the cache`); stdout is what it was. `HW_DRC_CACHE=0` turns it
 off; the folder is safe to delete. `audit` runs `place.py drc`'s summary and
 `pour.py`'s report in-process, on the board it already loaded.
+
+**`check` counts every pour's islands** on the scratch copy against the board:
+a plan that splits a pour fails (`RULE pour: ... falls into N island(s)`). DRC
+passes a pour in pieces, and before this only `audit` saw it -- after `apply`
+(board2 R5: a CHECK PASS plan cut the +5V strip; ripped and re-routed).
 
 ⚠ **One thing KiCad's DRC cannot see, and the gate checks itself: a short that
 KiCad renames away.** When a board is saved, `pcbnew` gives a track or via
@@ -318,12 +323,27 @@ its docstring. What the spec has to be told:
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.
+- **A through via (or a THT pin) is a goal on every layer: say so.** A leg
+  with one `"goal_layer"` that arrives on another lays its own via a cell short
+  of the prelaid one to change layer -- DRC `hole_to_hole` at 0.0-0.15 mm and a
+  via-link site per leg (board2 R5: five of twenty). `"goal_layer": ["In2.Cu",
+  "B.Cu", "F.Cu"]` arrives on any; the source side takes a list the same way
+  (`"layer"`). Proof: no new `hole_to_hole` and no new vialink site in `check`.
 - **The edge band runs round every Edge.Cuts hole too**, not only the outer
   outline (board2's R5: before it, the LED and GPIO nets went straight across
   a 48 x 25 mm cut-out, legal to the grid). Prove it with `route.py check`:
   no `RULE edge` line on a route that passes a cut-out.
 - **A plane is blocked on its layer** except an apron round each net's own
   escape end there; priced instead, a net rides through its neighbours' aprons.
+- **A narrow pour is cut by vias, not only by tracks: `"vias": false`.** The
+  plane block stops tracks on its layer; a via of another net there is only an
+  antipad, harmless in a solid inner plane -- but a row of four across a 4 mm
+  top-side rail strip cut it in two, J1's 5 V pins on a 6 mm2 island of their
+  own, and DRC passed it (board2 R5). `"plane": {..., "vias": false}` keeps
+  every new via out of the pour, its `open` strips included (a hop crosses on
+  the plane's layer and changes layer outside), the aprons and prelaid vias
+  excepted. `route.py check` now fails a plan that adds an island to any pour;
+  `pour.py --section` measures what is left across it.
 - **`reach()` separates contested from walled in.** When negotiation stalls it
   floods each net's reachable cells; a net that reaches a few dozen against tens
   of thousands for the others is a placement or fanout defect to report, not a
@@ -532,6 +552,14 @@ and the vias the fill does **not** reach; the same-net SMD pads standing over
 it; with `--over NETGLOB:LAYER`, the length of those tracks lying **under** the
 fill (split by `--field`'s courtyard when named). `--try NET:LAYER=zone.json`
 swaps an outline in memory and measures; nothing is written.
+`--section MM --from REF[.PIN],... --to REF[.PIN],...` cuts the fill across its
+long axis every 0.05 mm between the sources and the loads and sums the copper on
+each cut (the fill and the net's lands): PASS when the narrowest is >= MM, and
+where it is. It is the "every cross-section of the pour on the load path keeps
+N mm" a handoff gives once signal hops cross a rail pour (board2 D67(b): 1.0 mm;
+1.71 before R5, 1.20 after). A shrink-the-fill test (erode by MM / 2, ask if
+the pins still share a piece) asks a different question -- the narrowest
+channel, not the copper across -- and failed a pour the handoff's rule passes.
 
 **Measure the fill, do not assume it.** `GetFilledPolysList(...).OutlineCount()`
 is the island count and `.Contains(pt)` says whether a via is really in the

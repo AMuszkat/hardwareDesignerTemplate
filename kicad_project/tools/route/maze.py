@@ -67,6 +67,9 @@ import par  # noqa: E402  (tools/par.py: fork, results in job order)
 # -- the compiled core (tools/route/_maze.c, built by tools/setup.sh into tools/.native/) ------
 # The same search, bit for bit (the agentic test compares both); HW_MAZE_CORE=python forces the
 # Python one.  CORE says which is active: every router run prints it.
+_CORE_ABI = "maze-core 2"     # _maze.c's maze_core_version(); bump both when the arguments change
+
+
 def _load_core():
     import ctypes
     import os
@@ -80,7 +83,10 @@ def _load_core():
                 lib = ctypes.CDLL(str(f))
                 lib.maze_astar.restype = ctypes.c_long
                 lib.maze_core_version.restype = ctypes.c_char_p
-                return lib, f"compiled ({lib.maze_core_version().decode()}, {f.name})"
+                ver = lib.maze_core_version().decode()
+                if ver != _CORE_ABI:          # an old build takes other arguments: never call it
+                    return None, f"python ({f.name} is {ver}, this maze.py needs {_CORE_ABI}: re-run tools/setup.sh)"
+                return lib, f"compiled ({ver}, {f.name})"
             except OSError as e:
                 return None, f"python (could not load {f.name}: {e})"
     return None, "python (no compiled core: kicad_project/tools/setup.sh builds it with a C compiler)"
@@ -350,7 +356,7 @@ class Grid:
     def route(self, net, src, src_layer, goals, goal_layer, allowed,
               via_cost=2.0, turn=0.4, limit=900000, pres=None, hmap=None,
               layer_cost=None, via_mask=None, bias=None, start_dir=0, goal_dirs=None, box=None):
-        """goals: a cell, an (x, y) or a set of cells, all on goal_layer.
+        """goals: a cell, an (x, y) or a set of cells, all on goal_layer (one layer, or a list: any of them).
         pres=None: other nets' routed copper is an obstacle.  pres=p: it costs
         p per net overlapped, plus the cell's history (negotiation).
         start_dir: the heading the net ARRIVES at src with (its connector's last
@@ -387,7 +393,9 @@ class Grid:
         lc = [(layer_cost or {}).get(k, 1.0) * step for k in L]
         # a through-hole source pad starts on every layer it has: src_layer may be a list
         li0s = [L.index(k) for k in ([src_layer] if isinstance(src_layer, str) else src_layer)]
-        lig = L.index(goal_layer)
+        # a through-hole goal (a via, a THT pin) is reached on any layer it has: goal_layer may be a list
+        ligs = {L.index(k) for k in ([goal_layer] if isinstance(goal_layer, str) else goal_layer)}
+        ligm = sum(1 << k for k in ligs)
         sc = self.cell(*src)
         soft = pres is not None
         fexact = self.fix_exact
@@ -398,7 +406,7 @@ class Grid:
         hk = step if not self.diagonal else step * 0.7071     # L1 / sqrt(2) <= octile
         if _CORE is not None and not any(xd) and (via_mask is None or isinstance(via_mask, (bytearray, bytes))):
             got = self._route_native(L, st, sn, fx, dy, hs, cr, mfix, mdyn, mcore, vst, vfx, vdy, vhs,
-                                     vmfix, vmdyn, via_mask, ok_layer, lc, sc, li0s, start_dir, lig, goals,
+                                     vmfix, vmdyn, via_mask, ok_layer, lc, sc, li0s, start_dir, ligm, goals,
                                      goal_dirs, hmap, hk, soft, pres, via_cost, bias, limit, box,
                                      (0.0, self.turn45, 1e9, 1e9, 1e9) if self.only45 else
                                      (0.0, self.turn45, turn, self.turn135, 1e9))
@@ -420,7 +428,7 @@ class Grid:
             _f, d, c, li, dr = heapq.heappop(heap)
             if d > dist.get((c, li, dr), INF):
                 continue
-            if li == lig and c in goals and (not goal_dirs or dr in goal_dirs or dr == 0):
+            if li in ligs and c in goals and (not goal_dirs or dr in goal_dirs or dr == 0):
                 goal = (c, li, dr)
                 break
             n_exp += 1
@@ -491,7 +499,7 @@ class Grid:
                 if cost < dist.get(key, INF):
                     dist[key] = cost
                     par[key] = (c, li, dr)
-                    heapq.heappush(heap, (cost + hmap[nc] * hk + (0.0 if li == lig else via_cost),
+                    heapq.heappush(heap, (cost + hmap[nc] * hk + (0.0 if li in ligs else via_cost),
                                           cost, nc, li, nd))
             # a layer change, where a through via is legal (and wanted: via_mask)
             if vst[c] or (via_mask is not None and not via_mask[c]):
@@ -524,7 +532,7 @@ class Grid:
                 if cost < dist.get(key, INF):
                     dist[key] = cost
                     par[key] = (c, li, dr)
-                    heapq.heappush(heap, (cost + hmap[c] * hk + (0.0 if nli == lig else via_cost),
+                    heapq.heappush(heap, (cost + hmap[c] * hk + (0.0 if nli in ligs else via_cost),
                                           cost, c, nli, 0))
         if goal is None:
             return None
@@ -546,7 +554,7 @@ class Grid:
         return runs, vias
 
     def _route_native(self, L, st, sn, fx, dy, hs, cr, mfix, mdyn, mcore, vst, vfx, vdy, vhs, vmfix, vmdyn,
-                      via_mask, ok_layer, lc, sc, li0s, start_dir, lig, goals, goal_dirs, hmap, hk, soft,
+                      via_mask, ok_layer, lc, sc, li0s, start_dir, ligm, goals, goal_dirs, hmap, hk, soft,
                       pres, via_cost, bias, limit, box, tcost):
         """maze_astar in _maze.c; NotImplemented when an input is of a kind it does not take."""
         import ctypes as C
@@ -607,7 +615,7 @@ class Grid:
             C.c_int(1 if self.diagonal else 0), C.c_int(1 if soft else 0),
             C.c_int(1 if self.static_exact else 0), C.c_int(1 if self.fix_exact else 0),
             C.c_double(pres if soft else 0.0), C.c_double(via_cost), C.c_double(hk),
-            C.cast((C.c_int32 * n).from_buffer(hm), C.POINTER(C.c_int32)), u8(gc[1]), C.c_int(lig), C.c_int(gd),
+            C.cast((C.c_int32 * n).from_buffer(hm), C.POINTER(C.c_int32)), u8(gc[1]), C.c_int(ligm), C.c_int(gd),
             srcs, sls, C.c_int(len(li0s)), C.c_int(start_dir),
             (F32 * nl)(*[f32(a) for a in (bias if isinstance(bias, list) else [bias] * nl)]) if bias is not None else None,
             C.c_long(int(limit)), oc, ol, od, C.c_long(cap))

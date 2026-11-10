@@ -33,6 +33,7 @@ radii.
 """
 
 import argparse
+import collections
 import fnmatch
 import json
 import math
@@ -52,6 +53,11 @@ def main():
                     help="NETGLOB:LAYER -- report how much of these tracks lies under each fill")
     ap.add_argument("--field", default=None, help="footprint whose courtyard splits the --over report")
     ap.add_argument("--step", type=float, default=0.05, help="sampling step along tracks, mm")
+    ap.add_argument("--section", type=float, default=0,
+                    help="mm: the floor for every cross-section of the pour on the load path --from -> --to: "
+                         "copper summed along each cut across the pour's long axis")
+    ap.add_argument("--from", dest="sfrom", default="", help="REF.PIN,... (or REF: all its pins on the net): the sources")
+    ap.add_argument("--to", dest="sto", default="", help="REF.PIN,...: the loads")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
     return report(P.Board(a.board), a)
@@ -176,6 +182,9 @@ def report(B, a):
         print(f"   {len(smd_over)} {net} SMD pad(s) stand over the fill"
               + (": " + " ".join(sorted(smd_over)) if smd_over and len(smd_over) <= 60 else ""))
 
+        if getattr(a, "section", 0):
+            section_report(pn, b, z, lid, net, isl, a, short)
+
         for spec in a.over:
             glob, olay = spec.split(":")
             inside = outsidef = 0.0
@@ -209,6 +218,60 @@ def report(B, a):
             for w in sorted(worst, reverse=True)[:6]:
                 print(f"        {w[0]:.2f} mm  {w[1]}  {w[2]} - {w[3]}")
 
+
+def section_report(pn, b, z, lid, net, isl, a, short):
+    """Every cross-section of the pour on the load path >= a.section mm: cut the fill across
+    its long axis every 0.05 mm between the sources (--from) and the loads (--to) and sum the
+    copper on each cut -- the fill's islands and the net's own lands on this layer.  A via's
+    antipad, another net's hop or a pin row each take their width out of the cut (board2
+    D67(b): signal hops across the +5V strip between two connectors, 1.0 mm floor).  Prints
+    the narrowest cut and where it is."""
+    def pins(spec):
+        out = []
+        for tok in [t for t in spec.split(",") if t]:
+            ref, _, num = tok.partition(".")
+            f = b.FindFootprintByReference(ref)
+            if f is None:
+                sys.exit(f"--section: no footprint {ref}")
+            out += [p for p in f.Pads() if short(p.GetNetname()) == net and (not num or p.GetNumber() == num)]
+        return out
+    src, dst = pins(a.sfrom), pins(a.sto)
+    if not src or not dst:
+        print(f"   section: --from / --to name no {net} pin -- skipped")
+        return None
+    fill = pn.SHAPE_POLY_SET()
+    for s_ in isl:
+        fill.Append(s_)
+    for p in src + dst:                                  # the lands themselves carry the current
+        if p.IsOnLayer(lid):
+            p.TransformShapeToPolygon(fill, lid, 0, pn.FromMM(0.005), pn.ERROR_INSIDE)
+    fill.Simplify()
+    bb = fill.BBox()
+    horiz = bb.GetWidth() >= bb.GetHeight()          # cut across the long axis
+    c = (lambda p: p.GetPosition().x) if horiz else (lambda p: p.GetPosition().y)
+    sa, da = [pn.ToMM(c(p)) for p in src], [pn.ToMM(c(p)) for p in dst]
+    lo, hi = (max(da), min(sa)) if max(da) < min(sa) else (max(sa), min(da))
+    if lo >= hi:
+        lo, hi = min(sa + da), max(sa + da)
+    t0, t1 = (pn.ToMM(bb.GetY()), pn.ToMM(bb.GetBottom())) if horiz else (pn.ToMM(bb.GetX()), pn.ToMM(bb.GetRight()))
+    worst = None
+    k, step = 0, 0.05
+    while lo + k * step <= hi + 1e-9:
+        u = lo + k * step
+        k += 1
+        tot, run, t = 0.0, 0.0, t0
+        while t <= t1 + 1e-9:                          # 10 um samples along the cut
+            v = pn.VECTOR2I(pn.FromMM(u), pn.FromMM(t)) if horiz else pn.VECTOR2I(pn.FromMM(t), pn.FromMM(u))
+            if fill.Contains(v):
+                tot += 0.01
+            t += 0.01
+        if worst is None or tot < worst[0]:
+            worst = (tot, u)
+    ok = worst[0] >= a.section - 1e-6
+    ax = "x" if horiz else "y"
+    print(f"   section >= {a.section:g} mm on the load path ({ax} {lo:.2f} .. {hi:.2f}): "
+          f"{'PASS' if ok else 'FAIL'} -- narrowest {worst[0]:.2f} mm of copper at {ax} = {worst[1]:.2f}")
+    return ok
 
 if __name__ == "__main__":
     main()

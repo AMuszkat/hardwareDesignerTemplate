@@ -64,7 +64,10 @@ OPTIONS
     to the nets ending there, a differential pair's corridor no other net may
     split while a soft courtyard price keeps necks short;
   a leg's "goal_layer" (default F.Cu) is the layer it must arrive on -- a
-    through-hole pin walled in on F.Cu is reached on B.Cu;
+    through-hole pin walled in on F.Cu is reached on B.Cu; a list ("goal_layer":
+    ["In2.Cu", "B.Cu"]) arrives on any of them -- a prelaid through via is a goal
+    on every layer, and naming one layer made the router lay its own via a cell
+    short of it to change to that layer (hole to hole 0.0-0.15 mm);
   a leg's "to_xy": [x, y] ends it on a point, and "to_path": [[x, y], ...]
     anywhere along that polyline of the net's own prelaid copper; its
     "goal_dirs": [headings 1..8, clockwise from east] lists the headings it may
@@ -92,7 +95,12 @@ OPTIONS
     leaves;
   "plane": {..., "open": [[x0, y0, x1, y1], ...], "open_cost": 3} lets any
     net cross the plane inside those rectangles at a price per cell -- every
-    such crossing is a slot, so `pour.py` judges the result;
+    such crossing is a slot, so `pour.py` judges the result; "vias": false
+    keeps every new via out of it too ("open" included, the aprons not) -- a
+    via in a pour is only an antipad, harmless in a solid inner plane, but a
+    row of them across a 4 mm top-side rail strip cut it in two (board2 R5:
+    J1's +5V pins left on a 6 mm2 island, `pour.py`'s find, not DRC's; vias
+    in "open" sat by the pins the nets left and failed the via-link rule);
   "layer_cost": {"B.Cu": 1.5} prices a layer per step.
 
 A net that starts on a pad rather than on escape copper (the far side of a
@@ -586,6 +594,16 @@ def main():
                 elif not any(math.dist((x, y), q) <= r for q, r in aprons.values()):
                     cells.add(c)
         G.block([pl["layer"]], cells)
+        nv = 0
+        if pl.get("vias") is False:
+            # a narrow pour (a top-side rail strip) is cut by a row of antipads as surely as by a
+            # track: no new via anywhere in it, its "open" rectangles included (a hop crosses on the
+            # plane's layer and changes layer outside); the aprons and the prelaid vias stay usable
+            keep = set(plane) - set(cells) - set(ocells)
+            for x_, y_, *_r in (v_ for n_ in nets for v_ in fixed[n_]["vias"]):
+                keep |= G.disc(x_, y_, 0.151)
+            G.block(["via"], set(plane) - keep)
+            nv = len(set(plane) - keep)
         li = LAYERS.index(pl["layer"])
         for n, (q, r) in aprons.items():             # an apron is its own net's, nobody else's
             arr = array("f", bytes(4 * G.nx * G.ny))
@@ -602,7 +620,8 @@ def main():
         for n in nets:
             for c in ocells:
                 plane_bias[n][c] = ocost
-        print(f"{pl['net']} plane on {pl['layer']}: {len(cells)} cells blocked, {len(ocells)} open at "
+        print(f"{pl['net']} plane on {pl['layer']}: {len(cells)} cells blocked"
+              + (f" (vias too: {nv})" if nv else "") + f", {len(ocells)} open at "
               f"{ocost}/cell, aprons for " + ", ".join(aprons))
 
     for n in nets:
@@ -888,7 +907,7 @@ def main():
                         per[li_plane][c] += plane_bias[n][c]
             jobs.append(dict(net=full[n] if False else n, src=s, src_layer=lay, goals=leg_goals(leg),
                              bias=per, goal_layer=leg_layer(leg),
-                             allowed=set(S["nets"][n].get("layers", LAYERS)) | set([lay] if isinstance(lay, str) else lay) | {leg_layer(leg)},
+                             allowed=set(S["nets"][n].get("layers", LAYERS)) | set([lay] if isinstance(lay, str) else lay) | set(aslist(leg_layer(leg))),
                              start_dir=hd, goal_dirs=leg.get("goal_dirs")))
         if not jobs:
             continue
@@ -1132,6 +1151,11 @@ def main():
 REACH_CAP = 20000
 
 
+def aslist(layer):
+    """A layer, or a list of layers (a through-hole source or goal), as a list."""
+    return [layer] if isinstance(layer, str) else list(layer)
+
+
 def reach(G, job, LAYERS, cap=REACH_CAP):
     """Flood fill from a job's source ignoring the other routed nets and the turn
     rule: separates 'contested' from 'walled in'.  (cells, goal cells hit, capped):
@@ -1143,8 +1167,8 @@ def reach(G, job, LAYERS, cap=REACH_CAP):
     sl = job["src_layer"]
     starts = [(G.cell(*job["src"]), li[k]) for k in ([sl] if isinstance(sl, str) else sl)]
     seen, dq, nx, ny = set(starts), collections.deque(starts), G.nx, G.ny
-    gl = li[job.get("goal_layer", "F.Cu")]
-    goals = {(c, gl) for c in job["goals"]}
+    gls = aslist(job.get("goal_layer", "F.Cu"))
+    goals = {(c, li[k]) for c in job["goals"] for k in gls}
     hit = len(goals & seen)
 
     def free(c, key):
