@@ -196,6 +196,19 @@ docstring; the layers default to every copper layer that is not a guide
 *routed* (priced, not forbidden, while negotiating). What made it converge is in
 its docstring. What the spec has to be told:
 
+- **A differential pair's merge at a 0.5 mm BGA edge is drawn, not negotiated.**
+  The grid carries ONE track width, puts the group's clearance between a pair's
+  own two lines (no pair gap), and lays no new via inside a `field` -- where the
+  courtyard's thinner rule is what lets a merge via stand. Board 1's 14 pairs
+  straddling U1's rows A / B (P down its in-pad via, N on top, one via to merge
+  each): every pessimistic bound stalled at the courtyard edge, all 28 nets and
+  each class alone, even at 0.15 to everything. Drawn by a script at the real
+  widths (`board1_module/build/pair_merge.py`: lanes as mitred offsets of one
+  spine, `vialink_exceptions` for the merge vias) and gated by `check` with the
+  fanout model laid beside (`esc_gate.py`), it closed in a dozen 6-second checks.
+  Netgroup still settles the order: count the inversions between the two ends
+  first (the routing skill), and fix it with `to_xy` lane legs when a crossing
+  needs a layer swap -- negotiation does not find one.
 - **Draw the three-way meetings, route the rest.** A net that must reach an IC,
   a connector pin AND a pull-up does not converge in negotiation when dozens of
   others press on the same corner; lay the pin-to-pull link and route one leg to
