@@ -204,6 +204,10 @@ the widening, which grows a stroke toward its pads. Edited stock footprints diff
 KiCad's copy and DRC reports `lib_footprint_mismatch`. `silk` records them in
 `placement.json` `silk_edited` (refs and why), and `drc` sets exactly those aside and says
 how many.
+A stroke is sampled only against the pads whose box comes within reach of its own: a
+296-ball BGA's outline was measured against every ball at every 5 um (8 of `drc`'s 10.5 s
+on a 300-part board; now 0.1 s, the same strokes and gaps). What is left of `drc` is
+`kicad-cli` itself, and the report cache skips that when the board has not changed.
 
 ## `labels`
 

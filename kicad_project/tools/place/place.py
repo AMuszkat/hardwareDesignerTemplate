@@ -1351,16 +1351,25 @@ def near_silk(B):
     out = []
     for r, f in B.fps.items():
         own = str(f.GetFPID().GetLibNickname()) == stem
+        pads = {}                                        # copper layer -> [(polygon, its box in mm)], built once
+
+        def pad_polys(cu):
+            if cu not in pads:
+                pads[cu] = []
+                for p in f.Pads():
+                    if p.IsOnLayer(cu):
+                        s_ = pn.SHAPE_POLY_SET()
+                        p.TransformShapeToPolygon(s_, cu, 0, pn.FromMM(0.002), pn.ERROR_OUTSIDE)
+                        bb = s_.BBox()
+                        pads[cu].append((s_, (pn.ToMM(bb.GetLeft()), pn.ToMM(bb.GetTop()),
+                                              pn.ToMM(bb.GetRight()), pn.ToMM(bb.GetBottom()))))
+            return pads[cu]
         for g in f.GraphicalItems():
             if g.GetLayer() not in (pn.F_SilkS, pn.B_SilkS) or g.GetClass() != "PCB_SHAPE":
                 continue
             cu = pn.F_Cu if g.GetLayer() == pn.F_SilkS else pn.B_Cu
-            polys = []
-            for p in f.Pads():
-                if p.IsOnLayer(cu):
-                    s_ = pn.SHAPE_POLY_SET()
-                    p.TransformShapeToPolygon(s_, cu, 0, pn.FromMM(0.002), pn.ERROR_OUTSIDE)
-                    polys.append(s_)
+            boxed = pad_polys(cu)
+            polys = [s_ for s_, _ in boxed]
             if not polys:
                 continue
             w = pn.ToMM(g.GetWidth())
@@ -1374,6 +1383,17 @@ def near_silk(B):
                 continue
             a_, b_ = g.GetStart(), g.GetEnd()
             L = pn.ToMM(int(((b_.x - a_.x) ** 2 + (b_.y - a_.y) ** 2) ** 0.5))
+            # Only a pad whose box comes within reach of the stroke's own box can fail a sample or
+            # set the gap of a failing stroke: every other pad is at least `need` off all of it (a
+            # pad lies inside its box, the stroke inside its own; 0.001 mm covers the rounding).
+            # A BGA's outline was sampled against all its balls: 8 M distance calls of 8.4 M.
+            x0, x1 = sorted((pn.ToMM(a_.x), pn.ToMM(b_.x)))
+            y0, y1 = sorted((pn.ToMM(a_.y), pn.ToMM(b_.y)))
+            reach = need + w / 2 + 1e-3
+            polys = [s_ for s_, (l_, t_, r_, b2) in boxed
+                     if math.hypot(max(l_ - x1, x0 - r_, 0.0), max(t_ - y1, y0 - b2, 0.0)) < reach]
+            if not polys:
+                continue
             n = max(2, int(L / 0.005))
             ok = []
             dmin = 1e9
