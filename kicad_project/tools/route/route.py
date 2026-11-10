@@ -428,6 +428,17 @@ def open_count(rep):
     return len(rep.get("unconnected_items", []))
 
 
+def open_conn(b):
+    """The board's unrouted connections by KiCad's own connectivity (pcbnew).  DRC's report lists
+    unconnected items only up to a cap (499 on board 1, 1264 open), so a count from it stops moving
+    on a big board: 22 nets closed end to end read '0 closed'."""
+    import pcbnew
+    if isinstance(b, (str, Path)):
+        b = pcbnew.LoadBoard(str(b))
+    b.BuildConnectivity()
+    return b.GetConnectivity().GetUnconnectedCount(False)
+
+
 # ---------------------------------------------------------------------------
 # rule gates
 # ---------------------------------------------------------------------------
@@ -944,8 +955,9 @@ def cmd_status(a):
 
 
 def pour_islands(Bx, board):
-    """{"NET on LAYER": islands} from pour.py's report, in-process (it refills Bx's zones in
-    memory and never saves)."""
+    """{"NET on LAYER": untied islands} from pour.py's report, in-process (it refills Bx's zones
+    in memory and never saves): the islands beside the largest that hold no via or through-hole
+    pin of the net -- a GND pour that tracks split is fine once every piece is stitched."""
     if not [z for z in Bx.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]:
         return {}
     import argparse as _ap
@@ -955,11 +967,15 @@ def pour_islands(Bx, board):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         POUR.report(Bx, _ap.Namespace(board=board, tries=[], over=[], field=None, step=0.05))
-    out = {}
+    out, key = {}, None
     for ln in buf.getvalue().splitlines():
         m = re.match(r"\s*(.+ on \S+): (\d+) island\(s\)", ln)
         if m:
-            out[m.group(1)] = int(m.group(2))
+            key = m.group(1)
+            out[key] = 0
+        m = re.match(r"\s*untied: (\d+) island", ln)
+        if m and key:
+            out[key] = int(m.group(1))
     return out
 
 
@@ -994,15 +1010,16 @@ def cmd_check(a, quiet=False):
                     S.b.RemoveNative(item)
         made = S.write_plan(plan)
         bad += ["short: " + m for m in S.save(scratch)]
+        ocs = (open_conn(str(Path(B.pcb).resolve())), open_conn(S.b))
         copper_notes, cbad = copper_gates(B, S)
         bad += cbad
         # a pour this plan splits: DRC passes a pour in pieces, and the audit found it only
         # after apply (board2 R5: vias' antipads cut J1's +5V pins off on a 6 mm2 island)
         i0, i1 = pour_islands(B, a.board), pour_islands(S, a.board)
         for k_, n_ in sorted(i1.items()):
-            if n_ > i0.get(k_, 1):
-                bad.append(f"pour: {k_} falls into {n_} island(s) with this plan ({i0.get(k_, 1)} before) "
-                           f"-- every island must be tied (pour.py)")
+            if n_ > i0.get(k_, 0):
+                bad.append(f"pour: {k_} has {n_} untied island(s) with this plan ({i0.get(k_, 0)} before): "
+                           f"a piece beside the largest holding no via or through-hole pin of its net (pour.py)")
         rep = drc_report(scratch, cache=False)
         base = drc_done(base_run)
         angle_note = "angles: the guide has no 'joints' row, not checked"
@@ -1041,8 +1058,8 @@ def cmd_check(a, quiet=False):
               f"{len(made['polys'])} polygons" + (f"; removes {rm['rips']} segments, {rm['ripvias']} vias, "
                                                   f"{rm['polyrips']} polygons" if any(rm.values()) else "")
               + ("; thermals re-typed" if plan.get("thermals") else ""))
-        print(f"open connections {open_count(base)} -> {open_count(rep)} "
-              f"({open_count(base) - open_count(rep)} closed)")
+        oc0, oc1 = ocs
+        print(f"open connections {oc0} -> {oc1} ({oc0 - oc1} closed; KiCad's connectivity)")
         for n in plan.get("necks", []):
             print(f"   neck {n['net']} at {n['width']} mm: {n['why']}")
         for e in plan.get("edge_ok", []):
@@ -1089,7 +1106,7 @@ def cmd_apply(a):
     man = manifest_path(a.board, group)
     if man.exists() and not a.force:
         die(f"{group} is already applied ({man}); rip it first, or --force", 3)
-    before = open_count(drc_report(B.pcb))
+    before = open_conn(B.pcb)
     backup = B.pcb.with_suffix(f".kicad_pcb.{group}-bak")
     if man.exists():
         # --force REPLACES the group: laying the plan on top of its own copper
@@ -1128,13 +1145,13 @@ def cmd_apply(a):
     # below can fail for reasons that have nothing to do with the copper.
     man.write_text(json.dumps(rec, indent=1) + "\n")
     after_rep = drc_report(B.pcb)
-    rec["open_after"] = open_count(after_rep)
+    rec["open_after"] = open_conn(B.pcb)
     man.write_text(json.dumps(rec, indent=1) + "\n")
     print(f"applied {group}: {len(uuids['tracks'])} segments, {len(uuids['vias'])} vias, "
           f"{len(uuids['zones'])} zones, {len(uuids['polys'])} polygons (read back and matched)"
           + (f"; removed {removed['rips']} segments, {removed['ripvias']} vias, {removed['polyrips']} polygons"
              if any(removed.values()) else ""))
-    print(f"open connections {before} -> {open_count(after_rep)}")
+    print(f"open connections {before} -> {rec['open_after']} (KiCad's connectivity)")
     print(f"manifest {man.relative_to(a.board)}; backup {backup.name}")
     return 0
 
@@ -1356,9 +1373,11 @@ def cmd_audit(a):
         # one summary line per pour ("VBUS on F.Cu: 1 island(s), ..."); the per-island
         # detail lines ("island [0]: 1 via(s) ...") are not pours (board2 R3: a one-island
         # pour read as "2 pours, 1 in more than one island")
-        isl = [ln.strip() for ln in r.stdout.splitlines() if "island(s)" in ln]
-        many = [ln for ln in isl if not re.search(r"\b1 island", ln)]
-        gate("pours", not many, f"{len(isl)} pour(s)" + (f"; {len(many)} in more than one island -- every island must be tied (pour.py)" if many else ", each one island"))
+        isl = [ln.strip() for ln in r.stdout.splitlines() if re.match(r"\s*\S.* on \S+: \d+ island\(s\)", ln)]
+        unt = [ln.strip() for ln in r.stdout.splitlines() if re.match(r"\s*untied: [1-9]", ln)]
+        gate("pours", not unt, f"{len(isl)} pour(s)" + (f"; {len(unt)} with untied islands -- every island must "
+                                                        f"hold a via or a through-hole pin of its net (pour.py)"
+                                                        if unt else ", every island tied"))
     bad = [n for n, ok, _ in rows if not ok]
     print("AUDIT " + ("PASS" if not bad else f"FAIL ({', '.join(bad)})"))
     return 1 if bad else 0

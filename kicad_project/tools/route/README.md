@@ -51,6 +51,14 @@ a plan that splits a pour fails (`RULE pour: ... falls into N island(s)`). DRC
 passes a pour in pieces, and before this only `audit` saw it -- after `apply`
 (board2 R5: a CHECK PASS plan cut the +5V strip; ripped and re-routed).
 
+⚠ **The open count is KiCad's connectivity, not the DRC report.** `kicad-cli
+pcb drc` lists unconnected items only up to a cap (499 on board 1 with 1264
+open), so a count read from it stops moving on a big board: 22 nets routed end
+to end once read "0 closed". `check` and `apply` count with pcbnew
+(`BuildConnectivity`, `GetUnconnectedCount`). A gate plan that lays a fanout
+model's vias unconnected (board 1's `esc_gate.py`) raises the count by those
+vias: compare a plain copy when the number matters.
+
 ⚠ **One thing KiCad's DRC cannot see, and the gate checks itself: a short that
 KiCad renames away.** When a board is saved, `pcbnew` gives a track or via
 that touches a pad of *another* net — with no pad of its own net in the same
