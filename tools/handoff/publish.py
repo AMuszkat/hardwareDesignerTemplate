@@ -27,6 +27,11 @@ prints one line per board first -- `boardN: fresh (rev R)` or
 A publish is atomic: the whole folder is built beside the old one and swapped
 in, so a crash never leaves half a handoff.
 
+One gate stops a publish before anything is written (in the README): a NEW
+or CHANGED custom DRC rule on a board that already has a PCB needs its proof
+from `tools/review/rulecheck.py` (the proof is `rulechecks/boardN.json`; the
+MANIFEST records each rule's state and the result hash).
+
 The engine is board-blind. Everything board-specific lives in
 `boards/boardN.py` (data), `studies/components_boardN.py` (values),
 `answers/boardN.md` (answers) and the fab profile the board names in
@@ -92,6 +97,56 @@ def _hb(b):
     return hashlib.sha256(b).hexdigest()[:16]
 
 
+RULECHECKS = "tools/handoff/rulechecks"     # one proof per board, written by tools/review/rulecheck.py
+RULECHECK_CMD = "python3 tools/review/rulecheck.py --board {bid}"
+
+
+def split_rules(text):
+    """Every `(rule "<name>" ...)` s-expression in one rule text, as
+    [(name, text)]. One FAB rule row may hold several rules; the gate, the
+    proof and KiCad all judge them one at a time. The scan is the one
+    board_setup.py uses on the page (a rule ends where its own paren closes),
+    so a rule is cut here exactly as the board will cut it."""
+    out, i, text = [], 0, text or ""
+    while True:
+        i = text.find("(rule", i)
+        if i < 0:
+            return out
+        depth, j = 0, i
+        while j < len(text):
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        sx = text[i:j + 1].rstrip()
+        m = re.match(r'\(rule\s+"([^"]+)"', sx)
+        if m:
+            out.append((m.group(1), sx))
+        i = j + 1
+
+
+def rule_shas(rules):
+    """{rule name: hash of its exact text} for fab_tables()'s rule rows. The
+    hash is what 'proven for exactly this rule text' means: one character
+    moved in a condition and the proof no longer covers it."""
+    return {name: _hb(sx.encode()) for row in rules for name, sx in split_rules(row[1])}
+
+
+def page_rules(text):
+    """{rule name: hash} of the rules a published 14_fab.md states -- the
+    fenced blocks of its Custom DRC rules section, which is all board_setup.py
+    reads. This is how a handoff published before the gate existed says which
+    rules the board already has."""
+    m = re.search(r"\n## Custom DRC rules[^\n]*\n((?:.|\n)*?)(?=\n## |\Z)", text)
+    if not m:
+        return {}
+    return {name: _hb(sx.encode()) for block in re.findall(r"```\n((?:.|\n)*?)```", m.group(1))
+            for name, sx in split_rules(block)}
+
+
 def _h(rel):
     """Hash a source, normalising regenerated headers (a fresh '# Date:'
     line on every tool run would otherwise cry stale when nothing moved)."""
@@ -152,6 +207,7 @@ class Board:
         if not getattr(self.B, "TITLE", None):
             die(f"{bid}.py: TITLE is required")
         self._validate()
+        self.proof_rel = f"{RULECHECKS}/{bid}.json"
         self.answers_rel = self.get("ANSWERS") or f"tools/handoff/answers/{bid}.md"
         self.reviews_rel = self.get("REVIEWS") or f"tools/handoff/reviews/{bid}.md"
         self.pinout = self.get("PINOUT")
@@ -205,6 +261,20 @@ class Board:
         F = self.get("FAB")
         if F:
             rows("FAB netclasses", F.get("netclasses", []), (6,))
+            rows("FAB rules", F.get("rules", []), (3,))
+            for i, e in enumerate(F.get("escape", [])):
+                ok = isinstance(e, dict) and isinstance(e.get("ref"), str) and (
+                    (isinstance(e.get("waive"), str) and e["waive"].strip()) or
+                    (isinstance(e.get("layer"), str) and isinstance(e.get("args", []), (list, tuple))
+                     and all(isinstance(x, str) for x in e.get("args", []))))
+                if not ok:
+                    die(f"{self.id}: FAB escape[{i}] must be {{'ref', 'layer', 'args': [strings]}} "
+                        f"(escape_bound.py's arguments) or {{'ref', 'waive': '<why no bound applies>'}}, "
+                        f"got {e!r:.100}")
+            un = F.get("unproven", {})
+            if not isinstance(un, dict) or not all(isinstance(k, str) and isinstance(v, str) and v.strip()
+                                                    for k, v in un.items()):
+                die(f"{self.id}: FAB unproven must be {{'<rule name>': '<why it cannot be proven yet>'}}")
 
     # -- sources ---------------------------------------------------------
     def sources(self):
@@ -214,6 +284,8 @@ class Board:
              f"tools/handoff/boards/{self.id}.py", self.answers_rel, self.reviews_rel]
         if self.fab:
             s.append(self.fab_rel)
+            if os.path.exists(os.path.join(ROOT, self.proof_rel)):
+                s.append(self.proof_rel)
         s += [self.get(a) for a in ("PINOUT", "DIAGRAM", "FLOORPLAN") if self.get(a)]
         s += list(self.get("SOURCES", []))
         return list(dict.fromkeys(s))
@@ -485,6 +557,140 @@ class Board:
                 "(format at its top); the verdict and the findings appear "
                 "here.\n")
 
+    # -- the rule gate ------------------------------------------------------
+    def pcb_path(self):
+        """The board's PCB once it holds at least one footprint, else None.
+        An empty project file is not a board a rule can be proven on."""
+        if not os.path.isdir(self.out):
+            return None
+        pcbs = sorted(f for f in os.listdir(self.out)
+                      if f.endswith(".kicad_pcb") and not f.startswith(("_autosave-", "~")))
+        if self.board + ".kicad_pcb" in pcbs:
+            pcbs = [self.board + ".kicad_pcb"]
+        if len(pcbs) != 1:
+            return None
+        p = os.path.join(self.out, pcbs[0])
+        with open(p, errors="replace") as f:
+            return p if '(footprint "' in f.read() else None
+
+    def proof(self):
+        """rulecheck.py's last result for this board, {} when there is none
+        -- or when its `hash` is not the hash of its content: the file is
+        generated, and one that was typed or edited proves nothing."""
+        try:
+            with open(os.path.join(ROOT, self.proof_rel)) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(d, dict):
+            return {}
+        body = {k: v for k, v in d.items() if k != "hash"}
+        return d if d.get("hash") == _hb(json.dumps(body, sort_keys=True).encode()) else {}
+
+    def rule_states(self, rules=None):
+        """(record, blocking, notes): each custom DRC rule's state, and what
+        that means for a publish.
+
+        WHY: eight of one board's must-fix review findings were a published
+        rule that was wrong or could not be built -- a wildcard that matched
+        no net, a rule that outranked the area classes. KiCad's DRC on the
+        real board is the only proof and costs seconds, so a rule that is NEW
+        or CHANGED against the handoff on disk, on a board that has a PCB,
+        does not publish without it. The proof is rulechecks/boardN.json,
+        written only by tools/review/rulecheck.py, keyed by the rule's exact
+        text.
+
+        A rule's state: `proven` (the proof holds this text and it matched),
+        `fails: <why>` (the proof holds it and it did not), `waived: <why>`
+        (FAB["unproven"] names it), `unproven` (no proof for this text:
+        published before a PCB existed, or before this gate did). Blocking =
+        new or changed, a PCB exists, and neither proven nor waived. An
+        unchanged rule never blocks -- the handoffs of live projects keep
+        publishing -- but it is a lint note until somebody runs the proof."""
+        if not self.fab:
+            return None, [], []
+        if rules is None:
+            rules = self.fab_tables()[4]
+        now = rule_shas(rules)
+        if not now:
+            return None, [], []
+        pcb = self.pcb_path()
+        proof = self.proof()
+        proved = proof.get("rules", {}) if isinstance(proof.get("rules"), dict) else {}
+        try:
+            with open(os.path.join(self.handoff, "MANIFEST.json")) as f:
+                prev = (json.load(f).get("rulecheck") or {}).get("rules", {})
+        except (OSError, ValueError):
+            prev = {}
+        page = os.path.join(self.handoff, "14_fab.md")
+        had = page_rules(open(page).read()) if os.path.exists(page) else {}
+        waived = self.B.FAB.get("unproven", {})
+        cmd = RULECHECK_CMD.format(bid=self.id)
+        rec, block, notes, unproven = {}, [], [], []
+        for name, sha in now.items():
+            pr = proved.get(name) or {}
+            if pr.get("sha") == sha:
+                state = "proven" if pr.get("ok") else f"fails: {pr.get('why') or 'see rulecheck'}"
+            elif (prev.get(name) or {}).get("sha") == sha and prev[name].get("state") == "proven":
+                state = "proven"            # proven at an earlier publish; the text has not moved
+            else:
+                state = "unproven"
+            if state != "proven" and name in waived:
+                state = f"waived: {waived[name]}"
+            rec[name] = {"sha": sha, "state": state}
+            if state == "proven" or not pcb:
+                continue
+            changed = had.get(name) != sha
+            if state.startswith("waived"):
+                notes.append(f"custom DRC rule '{name}' is published unproven -- {waived[name]} "
+                             f"(FAB unproven); prove it and drop the waiver: {cmd}")
+            elif state.startswith("fails"):
+                (block if changed else notes).append(
+                    f"custom DRC rule '{name}' {state} -- fix that, then: {cmd}")
+            elif changed:
+                block.append(f"custom DRC rule '{name}' is {'new' if name not in had else 'changed'} "
+                             f"and {os.path.basename(pcb)} exists: prove it on the board before it is "
+                             f"published -- run: {cmd}")
+            else:
+                unproven.append(name)
+        if unproven:
+            notes.append(f"{len(unproven)} custom DRC rule(s) were never proven on the PCB "
+                         f"({', '.join(unproven[:4])}{', ..' if len(unproven) > 4 else ''}) -- run: {cmd}")
+        for name in waived:
+            if name not in now:
+                notes.append(f"FAB unproven names '{name}', which is not a custom DRC rule: drop it")
+            elif rec[name]["state"] == "proven":
+                notes.append(f"FAB unproven names '{name}', which is proven: drop the waiver")
+        return ({"result": proof.get("hash"), "pcb": proof.get("pcb"), "rules": rec}, block, notes)
+
+    def escape_lines(self):
+        """The Escape bounds block of 14_fab.md: one line per FAB["escape"]
+        row, the number taken from the proof (rulecheck.py runs
+        tools/route/escape_bound.py with exactly these arguments), never
+        typed. A row the proof does not hold reads 'not computed yet', which
+        is also what makes the page STALE after the proof is run."""
+        rows = self.B.FAB.get("escape", [])
+        if not rows:
+            return []
+        done = {}
+        for e in self.proof().get("escape", []) or []:
+            done[(e.get("ref"), e.get("layer"), tuple(e.get("args") or ()))] = e
+        L = ["**Escape bounds** — the most nets each ball field can bring out on one layer "
+             "under the rules above: a planar cut bound no router beats "
+             "(`tools/route/escape_bound.py`, run on this board by the concept session before this "
+             "page was published). Plan a fanout inside it; a rule or a via model that moves owes "
+             "a new bound, which is a question.", ""]
+        for e in rows:
+            if e.get("waive"):
+                L.append(f"- `{e['ref']}`: no bound — {e['waive']}")
+                continue
+            args = " ".join(e.get("args", []))
+            d = done.get((e["ref"], e["layer"], tuple(e.get("args", []))))
+            got = (f"**{d['bound']} of {d['of']}** — {d['verdict']}" if d and d.get("bound") is not None
+                   else f"not computed yet (`{RULECHECK_CMD.format(bid=self.id)}`)")
+            L.append(f"- `{e['ref']}` on `{e['layer']}`: {got}" + (f" (`{args}`)" if args else ""))
+        return L + [""]
+
     # -- 14 ----------------------------------------------------------------
     def fab_tables(self):
         """The rule set as data: profile defaults, then the board's choices."""
@@ -630,6 +836,7 @@ class Board:
                   "fab's own floor and never below it.", ""]
             for title, rule, why in rules:
                 L += [f"**{title}** — {why}", "", "```", rule, "```", ""]
+            L += self.escape_lines()
         if F.get("why"):
             L += ["", "## Why these numbers", ""]
             L += [f"{i + 1}. {t}" for i, t in enumerate(F["why"])]
@@ -918,6 +1125,8 @@ class Board:
         if nl["prose_only"]:
             prob.append(f"netlist.json: {len(nl['prose_only'])} of {len(nl['parts'])} parts have their "
                         f"connections only in prose (PINS gives them as data)")
+        # the rule gate's notes: what did not block this publish and is still owed
+        prob += self.rule_states()[2]
         if not os.path.exists(os.path.join(self.out, "QUESTIONS.md")):
             prob.append(f"kicad_project/{self.board}/QUESTIONS.md is missing -- the board "
                         "session has no channel back (tools/handoff/new_board.py creates it)")
@@ -1164,11 +1373,21 @@ class Board:
 
     def publish(self):
         files, copies, ds = self.render()
+        # The rule gate, before anything is written: one line per rule, and
+        # the line names what to run.
+        rulecheck, blocked, _ = self.rule_states()
+        if blocked:
+            die("; ".join(blocked))
         pages = self.page_hashes(files, copies, ds)
         log, moved = self.changelog(pages)
         m = re.search(r"^## rev (\d+)", log, re.M)
-        manifest = json.dumps({"board": self.board, "rev": int(m.group(1)) if m else None,
-                               "pages": pages, "sources": self.manifest()}, indent=2) + "\n"
+        man = {"board": self.board, "rev": int(m.group(1)) if m else None,
+               "pages": pages, "sources": self.manifest()}
+        if rulecheck:
+            # each rule's text hash and state, and the hash of the rulecheck
+            # result that proved them: `--check` reads the same states back
+            man["rulecheck"] = rulecheck
+        manifest = json.dumps(man, indent=2) + "\n"
         # Build the whole folder beside the old one, then swap: a failure
         # anywhere above or below leaves the published handoff untouched.
         os.makedirs(self.out, exist_ok=True)

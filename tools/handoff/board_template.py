@@ -234,7 +234,24 @@ DATASHEETS_EXTRA = []
 #     ],
 #     # Custom DRC rules: (title, rule text, why). Same (rule "fab: <name>")
 #     # as a derived rule replaces it -- that is how an exception is stated.
+#     # Once the board has a PCB, a NEW or CHANGED rule (a derived one too)
+#     # does not publish until `python3 tools/review/rulecheck.py --board
+#     # boardN` has proven that exact text on the board.
 #     "rules": [],
+#     # The escape bound a rule about a BGA's ball field carries: one row per
+#     # BGA and escape layer, `args` being the rest of
+#     # kicad_project/tools/route/escape_bound.py's command line (paths
+#     # relative to the board folder; --board and --ref are added).
+#     # rulecheck.py runs it, a bound PROVEN SHORT fails the BGA's rules, and
+#     # 14_fab.md states the number. {"ref": "U5", "waive": "<why>"} for a
+#     # BGA no bound applies to (nothing escapes inside its courtyard).
+#     "escape": [
+#         {"ref": "U1", "layer": "In1.Cu", "args": ["--spec", "routing/fanout_U1.json",
+#                                                   "--width", "0.09", "--clearance", "0.09"]},
+#     ],
+#     # A rule that cannot be proven on the board yet, published anyway:
+#     # {rule name: why}. It is a lint note at every publish until dropped.
+#     "unproven": {},
 #     "why": [],                         # numbered arithmetic behind the numbers
 #     "sources": [],                     # (source, where, what it gave)
 #     "order_notes": None,               # None = generated from the order rows

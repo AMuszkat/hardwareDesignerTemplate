@@ -174,13 +174,62 @@ poppler-utils (`pdftoppm`, `pdftotext`, `pdfinfo`); without them the row says
 
     python3 tools/review/rulecheck.py --board board1 [--rule pair]
 
-Writes every custom rule the publisher would put in the board's `14_fab.md`
-**now** (the derived area rules, the fab profile's and the board's own) into a
-`.kicad_dru` beside a copy of the board's PCB in `out/rulecheck/<board>/`,
-keeps the board's own non-generated rules, runs `kicad-cli pcb drc`, and
-prints the violations grouped by rule. Run it after editing a board's
-`FAB["rules"]` and before publishing: a rule that reads well can still miss
-its nets (KiCad pairs only names ending P / N or + / -; a net name carries its
-sheet path, so match `'*NAME'`) or, placed after the area rules, outrank them
-(a board-wide pair rule once held a BGA's own balls to 0.15 mm). Never writes
-the board.
+**The publisher asks for it**: once a board has a PCB, `publish.py` refuses a
+custom DRC rule that is new or changed until this has run on exactly that rule
+text (`tools/handoff/README.md`, *Two things stop a publish*). It writes every
+custom rule the publisher would put in the board's `14_fab.md` **now** (the
+derived area rules, the fab profile's and the board's own) into a `.kicad_dru`
+beside a copy of the board's PCB in `out/rulecheck/<board>/`, keeps the
+board's own non-generated rules, gives the copy the page's net classes, runs
+`kicad-cli pcb drc`, and judges each rule:
+
+- **KiCad can read it.** One rule with an unknown property, an unknown
+  function or a syntax error makes KiCad drop the whole `.kicad_dru`,
+  silently — every rule then reads "0 violations". A canary rule that must
+  fire says whether the file loaded; when nothing fired, each rule is run
+  alone and the one that kills the file is named.
+- **Every name it tests is on the board**: a net (`A.NetName == '*CK_T'`), a
+  net class, a footprint's courtyard, a rule area, a pair. Each is a probe —
+  an assertion rule that fires once per item its condition matches — and a
+  name that matches nothing FAILS the rule. A rule that reads well can still
+  miss its nets: KiCad pairs only names ending P / N or + / -, and a net name
+  carries its sheet path, so match `'*NAME'`.
+- **A rule about a BGA's escape carries the bound.** A clearance or a width
+  scoped to a BGA's courtyard decides what can leave its ball field. The
+  board module's `FAB["escape"]` gives
+  `kicad_project/tools/route/escape_bound.py`'s arguments per BGA and layer
+  (or a `waive` with the reason); it is run here, and no row, or a bound that
+  is PROVEN SHORT, FAILS the BGA's rules. `14_fab.md` states the bounds.
+
+It then lists the violations of the real rules, grouped by rule (`--rule`
+filters the list, never the judging): on a routed board they are the other
+half — a rule placed after the area rules can outrank them (a board-wide pair
+rule once held a BGA's own balls to 0.15 mm).
+
+The result goes to `tools/handoff/rulechecks/<board>.json` — generated, never
+typed, committed with the publish — and the last line is `RULECHECK PASS` or
+`RULECHECK FAIL`. Exit 0 every rule proven (or waived in `FAB["unproven"]`,
+printed `WAIVED`), 1 a rule is not, 2 nothing could be checked (no PCB with a
+footprint yet, no kicad-cli). Never writes the board. About 3 s per DRC run
+on a 1.7 MB board; a clean run is one to three.
+
+Facts about KiCad's DRC that the probes rest on (10.0.7), each of which read
+as a wrong verdict before it was known:
+
+- **KiCad reports at most 199 violations of one type in a run**, and every
+  probe is an `assertion_failure`. On a real board the tracks and pads
+  visited first use the limit up and a probe further down reads 0 without
+  having been asked (the first run on a routed 17-rule board read as "no rule
+  loaded"). So a run that hit the limit settles only the probes that fired;
+  the ones at zero run again, without the others, until a run stays under it.
+  A count from a run that hit the limit is a lower bound, printed with a `+`.
+  `--all-track-errors` lifts the limit for clearance and unconnected items
+  only.
+- An assertion is about ONE item: a `B.` term is never true in it (the probe
+  asks the name of `A`), and `A.isCoupledDiffPair()` is always false —
+  `A.inDiffPair('*')` is the same question of one item.
+- A net test is probed on pads only (every net has one): the count stays
+  small on a routed board.
+- A rule on one item (no `B.`) also has its WHOLE condition probed; zero is a
+  WARNING, not a failure — a rule about tracks is right on a board with none
+  yet, wrong if its names can never be true of one item together.
