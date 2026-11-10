@@ -746,6 +746,12 @@ def cmd_labels(a):
         r.SetTextThickness(pn.FromMM(T))
     P = B.placed()
     hide = set(B.cfg.get("labels", {}).get("hide", []))
+    # labels.own_nearest: references (fnmatch patterns, e.g. "TP*") whose label may NEVER sit nearer
+    # another part's pad than its own -- a test point's label read off by a probe (board1 RV8.4);
+    # every other label only pays for it (a hard rule there hides labels a dense board needs)
+    import fnmatch
+    strict_pats = B.cfg.get("labels", {}).get("own_nearest", [])
+    strict = lambda ref: any(fnmatch.fnmatch(ref, pat) for pat in strict_pats)
     o = B.outline
     inner = (o[0] + B.silk_clr, o[1] + B.silk_clr, o[2] - B.silk_clr, o[3] - B.silk_clr)
     g_pad = B.mask_exp + B.silk_clr
@@ -788,6 +794,8 @@ def cmd_labels(a):
             return B.box(ref.GetBoundingBox())
 
         cands = {}
+        import collections
+        why_ = collections.defaultdict(dict)
         for r in todo:
             ref = P[r].Reference()
             c = cyd[r]
@@ -824,13 +832,26 @@ def cmd_labels(a):
                         bx = (sx - tw / 2, sy - th / 2, sx + tw / 2, sy + th / 2)
                         if bx[0] < inner[0] or bx[1] < inner[1] or bx[2] > inner[2] or bx[3] > inner[3] \
                                 or B.box_edge_dist(bx) < B.silk_clr:
+                            why_[r]["edge"] = why_[r].get("edge", 0) + 1
                             continue
-                        if any(rgap(bx, ob) < 0 for ob in near_obst) or any(rgap(bx, cc) < 0 for cc in near_cyd):
+                        if any(rgap(bx, ob) < 0 for ob in near_obst):
+                            why_[r]["obst"] = why_[r].get("obst", 0) + 1
                             continue
-                        out.append((math.dist((sx, sy), (cx, cy)) + (0.4 if ang else 0.0) + foreign(sx, sy),
+                        if any(rgap(bx, cc) < 0 for cc in near_cyd):
+                            why_[r]["courtyard"] = why_[r].get("courtyard", 0) + 1
+                            continue
+                        # a label nearer a FOREIGN pad than its own is never placed: a probe set
+                        # by it lands on the wrong part (board1 RV8.4: a row of test points at
+                        # 2.13 mm took five labels by the clash count alone, the penalty outbid)
+                        fo = foreign(sx, sy)
+                        if fo > 0 and strict(r):
+                            continue
+                        out.append((math.dist((sx, sy), (cx, cy)) + (0.4 if ang else 0.0) + fo,
                                     ang, sx, sy, bx))
             out.sort(key=lambda t: t[0])
             cands[r] = out
+            if os.environ.get("HW_LABEL_DEBUG") and strict(r):
+                print("  label", r, len(out), "candidates; courtyard", [round(v, 2) for v in c], dict(why_[r]))
         taken = []
         while todo:
             feas = {r: [k for k in cands[r] if not any(clash(k[4], t) for t in taken)] for r in todo}
@@ -839,7 +860,8 @@ def cmd_labels(a):
                 todo.remove(r)
             if not todo:
                 break
-            r = min(todo, key=lambda r: (len(feas[r]), feas[r][0][0]))
+            # the own-nearest labels first: their spots are few, and a free label takes one for nothing
+            r = min(todo, key=lambda r: (not strict(r), len(feas[r]), feas[r][0][0]))
             others = {q: feas[q][:TOP] for q in todo if q != r}
             best = min(feas[r][:TOP], key=lambda k: (
                 sum(1 for q in others for m in others[q] if clash(k[4], m[4]))
@@ -976,7 +998,9 @@ def cmd_auto(a):
         for cost, rot, x, y in best:
             cyr, padsr, silkr = geo[rot]
             cb = shift(cyr, x, y)
-            if r not in overhang and r not in fixed and (cb[0] < o[0] or cb[1] < o[1] or cb[2] > o[2] or cb[3] > o[3]):
+            # check's own measure (the outline itself, not its bounding box), 1e-4 inside: a courtyard
+            # flush with the edge passed here and failed check (board1 P50: TP100 at x 54.0, edge 55.0)
+            if r not in overhang and r not in fixed and B.box_edge_dist(cb) < 1e-4:
                 continue
             # 1e-4 over the minimum: `check` measures the courtyard's own rectangles, this the
             # shifted box -- a spot exactly at the gap rounds either way, and auto's output must pass check

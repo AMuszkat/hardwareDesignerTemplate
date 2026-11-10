@@ -50,6 +50,7 @@ board):
 | `hole_to_edge` | minimum hole-to-edge distance, from `14_fab.md` (Board Setup has no field for it). Starts as `null`: `check` refuses until `place.py seed` copies it from `handoff/fab.json` |
 | `net_report_limit` | how many nets `check` lists in its span report |
 | `labels.hide` | references whose designator never goes on silk |
+| `labels.own_nearest` | fnmatch patterns (`["TP*"]`) whose label may never sit nearer another part's pad than its own, and which are placed first -- a test point's label is what a probe is set by (board1 RV8.4). Every other label only pays for it: a hard rule there hides labels a dense board needs |
 | `shared_pad` | `[{refs: [A, B], net, source}]`: two stock parts drawn as one selector, their `net` pads on one point and the parts at 90° (a 3-pad selector made of two 0402s). That pair skips the courtyard test -- their courtyards overlap by design -- and `check` proves the merge instead: the `net` pads coincide, one side, 90° apart. Everything else (foreign-net pads, holes, silk) is still tested. KiCad's own DRC reports the overlap: exclude it there with the handoff's comment |
 
 A keep-out may carry `"side": "F" | "B" | "both"` (default `F`) and an
@@ -198,7 +199,12 @@ source with `fp.py tidy --silk-drop <i>` and `refresh.py --layers SilkS`.
    labels already placed. So labels move after routing, as the last step.
 3. It places the **most constrained** label first, at the spot that leaves the
    others the most room. Pure greedy walls labels in.
-4. A label with no legal spot is **hidden on silk** and listed. Stock and
+4. A label with no legal spot is **hidden on silk** and listed. `HW_LABEL_DEBUG=1`
+   prints, for each `own_nearest` part, its candidate count and why the rest
+   were refused (edge / obstacle / courtyard). A row of test points at about 2 mm
+   pitch takes labels alternating above and below only where both sides are
+   free; under a pad grid (above it nearer the grid's pads) it holds one label
+   width per test point. Stock and
    derived footprints carry `${REFERENCE}` on F.Fab, so the assembly drawing
    still has it.
 
