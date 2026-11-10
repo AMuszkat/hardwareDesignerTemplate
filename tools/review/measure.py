@@ -74,6 +74,25 @@ def edge_segments(b):
         if d.GetShape() == pn.SHAPE_T_SEGMENT:
             out.append(((mm(d.GetStart().x), mm(d.GetStart().y)), (mm(d.GetEnd().x), mm(d.GetEnd().y))))
             continue
+        if d.GetShape() in (pn.SHAPE_T_ARC, pn.SHAPE_T_CIRCLE):
+            # the CENTRELINE, as a segment is taken: TransformShapeToPolygon outlines the
+            # drawn stroke, which put every arc's distance half a line width short (a
+            # 0.4505 mm fill-to-edge read 0.40 at a 0.1 mm Edge.Cuts line; board2 RV22)
+            c = d.GetCenter()
+            cx, cy, r = mm(c.x), mm(c.y), mm(d.GetRadius())
+            if d.GetShape() == pn.SHAPE_T_CIRCLE:
+                a0, sweep = 0.0, 2 * math.pi
+            else:
+                st, en, md = d.GetStart(), d.GetEnd(), d.GetArcMid()
+                ang = lambda p_: math.atan2(mm(p_.y) - cy, mm(p_.x) - cx)
+                a0, a1, am = ang(st), ang(en), ang(md)
+                sweep = (a1 - a0) % (2 * math.pi)
+                if (am - a0) % (2 * math.pi) > sweep:      # the arc runs the other way round
+                    sweep -= 2 * math.pi
+            n = max(8, int(abs(sweep) * r / 0.05) + 1)    # chord sag < 0.0003 mm at r 1 mm
+            q = [(cx + r * math.cos(a0 + sweep * k / n), cy + r * math.sin(a0 + sweep * k / n)) for k in range(n + 1)]
+            out += list(zip(q, q[1:]))
+            continue
         s = pn.SHAPE_POLY_SET()
         d.TransformShapeToPolygon(s, pn.Edge_Cuts, 0, pn.FromMM(0.005), pn.ERROR_INSIDE)
         for i in range(s.OutlineCount()):
