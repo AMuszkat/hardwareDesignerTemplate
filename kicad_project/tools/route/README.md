@@ -212,6 +212,13 @@ its docstring. What the spec has to be told:
   Netgroup still settles the order: count the inversions between the two ends
   first (the routing skill), and fix it with `to_xy` lane legs when a crossing
   needs a layer swap -- negotiation does not find one.
+- **A series part on a pair's lane (an AC cap) is measured by its pad span ACROSS the lane.**
+  An 0402 turned to sit on a vertical lane presents its pads' LENGTH sideways: 0.46 mm across,
+  not the 0.25-0.30 of a straight line, so its centre needs half that plus the clearance plus
+  the neighbour's half width from a foreign line (board 1: 0.523 at 0.2032 to a 0.18 line) and
+  0.47 from its own partner. Space the verticals from the caps' span first, then draw the lines;
+  board 1's PCIe channel was spaced for the lines, the caps failed DRC, and U400 moved 1.5 mm to
+  make room (Q32). A cap's courtyard thinner rule applies only when BOTH items are inside it.
 - **Draw the three-way meetings, route the rest.** A net that must reach an IC,
   a connector pin AND a pull-up does not converge in negotiation when dozens of
   others press on the same corner; lay the pin-to-pull link and route one leg to
