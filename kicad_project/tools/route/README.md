@@ -228,6 +228,11 @@ its docstring. What the spec has to be told:
   joint and extends the diagonal before it costs no flat. Two lines' bumps often want the SAME gap
   (DSI_CLK_N's and DSI_D2_N's): one of them bumps the other way, toward a partner still on the
   other layer. Then it asked for a skew budget for the rest (D76) rather than re-laying reviewed copper.
+- **A bundle that jogs sideways at 45 degrees jogs staggered.** Lines d apart that all start a 45-degree
+  jog at the same x come 0.71 d apart on the diagonal, which breaks the pair gap and the class clearance.
+  Start each line's jog 0.414 d (d(sqrt2 - 1)) beyond its neighbour's, on the side the jog runs toward, so
+  the diagonals stay d apart. Board 1's PCIe lanes moved 0.1 mm north this way (RV12.2), and DRC failed
+  the unstaggered try 8 times.
 - **Draw the three-way meetings, route the rest.** A net that must reach an IC,
   a connector pin AND a pull-up does not converge in negotiation when dozens of
   others press on the same corner; lay the pin-to-pull link and route one leg to
