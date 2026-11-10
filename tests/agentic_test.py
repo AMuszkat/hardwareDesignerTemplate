@@ -705,7 +705,9 @@ def stage_pcb(copy, board, quick):
         rc, out = run([kpy, str(tools / "route" / "route.py"), "check", "--board", str(board), "routing/R1_plan.json"], kp)
         nums[f"check{k}_s"] = round(time.time() - t1, 2)
         nums[f"check{k}_kicad_cli"] = len(re.findall(r"^drc: .*: kicad-cli run,", out, re.M))
-        outs.append([ln for ln in out.splitlines() if not ln.startswith("drc:") and "property.h" not in ln])
+        # wx prints "HH:MM:SS: Debug: ..." lines of its own when pcbnew loads: a clock, not a result
+        outs.append([ln for ln in out.splitlines() if not ln.startswith("drc:") and "property.h" not in ln
+                     and not re.match(r"\d\d:\d\d:\d\d: Debug: ", ln)])
         # the scaffold guide's shape / via-link rows fail raw router output (the board session's
         # next step); the stage judges that check RAN to its verdict, and the same verdict twice
         verdict = next((ln for ln in out.splitlines() if ln.startswith("CHECK ")), None)
