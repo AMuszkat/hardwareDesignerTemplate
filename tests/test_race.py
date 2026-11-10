@@ -151,6 +151,19 @@ def main():
         if before != after:
             changed = sorted(set(before.items()) ^ set(after.items()))
             fails.append(f"the real board folder changed: {sorted({c[0] for c in changed})[:5]}")
+        # the printed commands, on a copy: the winner's plan arrives WITH its origin record and checks as fresh
+        taken = tmp / "taken" / "fixture"
+        shutil.copytree(board, taken)
+        wdir = tmp / "race" / R["winner"]
+        if (wdir / "plan.origin.json").exists():
+            shutil.copyfile(wdir / "plan.json", taken / plan_rel)
+            shutil.copyfile(wdir / "plan.origin.json", (taken / plan_rel).with_suffix(".origin.json"))
+            rc, out, _, _ = run([KPY, TOOLS / "route" / "route.py", "check", "--board", taken, plan_rel])
+            if rc != 0 or "no origin record" in out or "STALE" in out.upper():
+                fails.append(f"the winner taken to the board with its origin record does not check as a fresh plan "
+                             f"(exit {rc}): " + out.strip()[-200:])
+        else:
+            fails.append("the winner has no plan.origin.json beside its plan.json")
         if any((tmp / "race" / r["variant"] / "fixture").exists() for r in rows):
             fails.append("a variant's board copy was left behind without --keep")
         cores = os.cpu_count() or 1
