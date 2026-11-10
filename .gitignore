@@ -3,6 +3,7 @@
 kicad_project/.claude/settings.local.json
 kicad_project/relay.json
 kicad_project/local.json
+kicad_project/local.sessions.json
 .venv/
 kicad_project/tools/.venv/
 tools/parts/.venv-ml/

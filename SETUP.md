@@ -94,6 +94,7 @@ Never commit the file, paste a key into a chat, or echo one into a report.
 ```bash
 bin/concept                 # repo root, named <Project>_Concept
 bin/board board1            # kicad_project/, named <Project>_Kicad_board1, owns board1_<slug>/
+bin/board board1 --resume   # an earlier session of that board (extra arguments go to `claude`)
 ```
 
 Always use the launchers. They set the session name (the relay's address),
@@ -102,6 +103,14 @@ the hooks which board folder a board session may write. A hook prints each
 session's name and the relay state into its context at start. **Exactly one
 concept session**: a second one at the root is a scratch session and must not
 publish.
+
+**Resume a board session through `bin/board boardN --resume`**, never with a
+bare `claude --resume` in `kicad_project/`. A session that was once started by
+the launcher keeps its board when it is resumed without it (the session-start
+hook records a claim per session id in `kicad_project/local.sessions.json`); a
+session that never was, in a project with more than one board, is **refused**
+every Edit and Write in a board folder and told the line to run. The wall
+never asks: a permission prompt on an unattended session is hours lost.
 
 ## 6. What is local to the project, and what lives on the machine
 
@@ -115,6 +124,7 @@ publish.
 | MCP servers `konnect` (both), `freerouting` (board) | `.mcp.json`, `kicad_project/.mcp.json` | yes | template; approve them on first start |
 | deny rules and the CLAUDE.md exclusion (absolute paths) | `.claude/settings.local.json`, `kicad_project/.claude/settings.local.json` | no | `./setup.sh render-settings` (run by `init`/`install`) |
 | relay switch, pcbnew interpreter | `kicad_project/relay.json`, `kicad_project/local.json` | no | `init`, `bin/relay` |
+| which board each session owns (survives a resume outside `bin/board`) | `kicad_project/local.sessions.json` | no | the session-start hook |
 | venvs | `.venv/`, `kicad_project/tools/.venv/` | no | `./setup.sh install` |
 | freerouting jar and its data | `~/.local/share/freerouting/` | — | `./setup.sh install` |
 | Blender (optional) and AMD's HIP runtime | `~/.local/share/hwdesign/blender/` (`HWDESIGN_BLENDER_HOME`) | — | `./setup.sh install-blender [--amd-gpu]` |

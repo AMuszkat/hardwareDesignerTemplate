@@ -6,15 +6,28 @@ Which board folder a tool works on -- ONE rule for every tool in tools/.
 
 `--board` may be the board id (`board1`), the folder name (`board1_main`), or a
 path. Left out, the answer is, in order: the board folder the current directory
-is in; the board this session owns (`HW_BOARD`, exported by `bin/board`); the
-only board there is. Anything else is an error -- never a guess, because a
-guess writes into another board's files.
+is in; the board this session owns (`owner()` below); the only board there is.
+Anything else is an error -- never a guess, because a guess writes into another
+board's files.
+
+    board, how = boardsel.owner(session_id)           # ("board1", "env"|"claim"|"only") or ("", "")
+
+WHICH BOARD A SESSION OWNS is answered in one place, for the tools, the
+Edit/Write wall (tools/session/wall.py) and the session-start brief
+(tools/session/relay.py): `HW_BOARD` (exported by `bin/board`); else this
+session's CLAIM in kicad_project/local.sessions.json ({session id: board},
+written at every session start that has `HW_BOARD`, so a session resumed
+outside `bin/board` keeps its board); else the only board there is. A hook
+knows its session id (every hook input carries it); a tool run through Bash
+does not, so the brief also exports `HW_BOARD` into a resumed session's shell.
 
 A session started with `bin/board boardN` may not touch another board: these
 tools run through Bash, which the Edit/Write wall does not see, so the wall is
 repeated here. A directory that is not a board folder of this project (a
 scratch copy) is always allowed.
 """
+import datetime
+import json
 import os
 import re
 import sys
@@ -22,6 +35,8 @@ from pathlib import Path
 
 KP = Path(__file__).resolve().parent.parent           # kicad_project/
 BOARD_RE = re.compile(r"(board\d+)_\w+")
+CLAIMS = KP / "local.sessions.json"                    # per machine, gitignored
+CLAIM_DAYS = 30                                       # a claim older than this is dropped at the next write
 
 
 def die(msg):
@@ -39,6 +54,51 @@ def boards():
     return out
 
 
+def claims():
+    """{session id: {"board": "board1", "at": iso time}}; {} when the file is absent or unreadable
+    (a torn or hand-broken file must never stop a session: the wall then blocks, which is safe)."""
+    try:
+        data = json.loads(CLAIMS.read_text())
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict) and v.get("board")} if isinstance(data, dict) else {}
+
+
+def claim(session_id, board):
+    """Record that `session_id` is `board`'s session. Atomic replace; old claims dropped."""
+    if not session_id or not re.fullmatch(r"board\d+", board or ""):
+        return
+    now = datetime.datetime.now()
+    keep = {}
+    for sid, c in claims().items():
+        try:
+            age = (now - datetime.datetime.fromisoformat(c.get("at", ""))).days
+        except ValueError:
+            age = CLAIM_DAYS + 1
+        if age <= CLAIM_DAYS:
+            keep[sid] = c
+    keep[session_id] = {"board": board, "at": now.isoformat(timespec="seconds")}
+    tmp = CLAIMS.with_name(CLAIMS.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(keep, indent=1) + "\n")
+    os.replace(tmp, CLAIMS)
+
+
+def owner(session_id=None):
+    """(board id, how) for the board this session owns: `HW_BOARD` -> "env"; this session's
+    claim -> "claim"; the only board folder -> "only"; else ("", "")."""
+    mine = os.environ.get("HW_BOARD", "")
+    if mine:
+        return mine, "env"
+    have = boards()
+    if session_id:
+        c = claims().get(session_id)
+        if c and c["board"] in have:
+            return c["board"], "claim"
+    if len(have) == 1:
+        return next(iter(have)), "only"
+    return "", ""
+
+
 def _owner(path):
     """The board id whose folder holds `path`, or None outside every board."""
     try:
@@ -51,7 +111,7 @@ def _owner(path):
 
 def resolve(arg=None):
     have = boards()
-    mine = os.environ.get("HW_BOARD", "")
+    mine = owner()[0]
     if arg in (None, ""):
         here = _owner(Path.cwd())
         if here:
@@ -80,8 +140,8 @@ def resolve(arg=None):
                 path = have[top]
             elif path == KP or KP in path.parents:
                 die(f"{arg!r} is not a board folder (have: {', '.join(have) or 'none'})")
-    owner = _owner(path)
-    if mine and owner and owner != mine:
+    holder = _owner(path)
+    if mine and holder and holder != mine:
         die(f"{path.name}/ belongs to another board session; this session is {mine}. "
             "A fact you need from that board is a QUESTIONS.md entry.")
     return path

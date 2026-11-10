@@ -60,6 +60,7 @@ def concept_only():
 # defines the session itself (hooks, skills, MCP servers, the interpreter).
 BOARD_READ_ONLY = ["kicad_project/*/handoff/**", "kicad_project/project.json",
                    "kicad_project/relay.json", "kicad_project/local.json",
+                   "kicad_project/local.sessions.json",
                    "kicad_project/RELAY_PROTOCOL.md", "kicad_project/CLAUDE.md",
                    "kicad_project/.mcp.json", "kicad_project/.claude/**",
                    "kicad_project/tools/session/**", "kicad_project/tools/boardsel.py"]

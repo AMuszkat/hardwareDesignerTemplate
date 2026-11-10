@@ -19,6 +19,11 @@ Files in kicad_project/, the one directory BOTH sessions may read:
                 machine (gitignored; missing = off).  Written only by this
                 script, and only at the user's request.
   local.json    this machine's pcbnew interpreter (tools/kpy).  Gitignored.
+  local.sessions.json  which board each session id owns (tools/boardsel.py
+                `claim`).  Gitignored.  `brief board` writes it whenever
+                HW_BOARD is set, so a session resumed OUTSIDE bin/board keeps
+                its board: the wall reads the claim, and the brief exports
+                HW_BOARD into that session's shell for the tools.
 
 The relay is OFF by default.  Off, the sessions never message each other: a
 stuck board session writes QUESTIONS.md and tells the user, and the user
@@ -120,15 +125,60 @@ def status():
     print(f"mode:     {p.get('permission_mode', 'default')}  (both sessions must share it)")
 
 
+def _hook_event():
+    """The SessionStart event Claude Code writes on the hook's stdin ({"session_id", "source", ...}),
+    or {} -- run by hand, from a terminal, or with a stdin nobody writes to (waits 1 s at most)."""
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return {}
+        import select
+        fd, buf = sys.stdin.fileno(), b""
+        wait = 1.0
+        while select.select([fd], [], [], wait)[0]:
+            chunk = os.read(fd, 1 << 16)
+            if not chunk:
+                break
+            buf += chunk
+            wait = 0.2
+        ev = json.loads(buf.decode() or "{}")
+        return ev if isinstance(ev, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _board_of_session(event):
+    """(board, how) for a board session at start, and the claim kept current.  With HW_BOARD the
+    claim is (re)written; without it the claim -- or the only board -- answers, and HW_BOARD is
+    exported into the session's shell (CLAUDE_ENV_FILE: Claude Code sources it before every Bash
+    command), because the tools run there and a hook's session id never reaches them."""
+    sys.path.insert(0, str(KP / "tools"))
+    import boardsel
+    sid = event.get("session_id") or ""
+    board, how = boardsel.owner(sid)
+    if how == "env":
+        try:
+            boardsel.claim(sid, board)
+        except OSError:
+            pass
+    elif board and os.environ.get("CLAUDE_ENV_FILE"):
+        try:
+            with open(os.environ["CLAUDE_ENV_FILE"], "a") as f:
+                f.write(f"export HW_BOARD={board}\n")
+        except OSError:
+            pass
+    return board, how
+
+
 def brief(side):
     """Printed by the SessionStart hook; lands in the session's context."""
+    event = _hook_event()
     p = _load(PROJECT)
     if not p:
         print("[relay] This project is not initialised (kicad_project/project.json missing). "
               "The relay is unavailable; never message other sessions.")
         return
     on = enabled()
-    board = os.environ.get("HW_BOARD", "")
+    board, how = _board_of_session(event) if side == "board" else ("", "")
     if side == "concept":
         me = p["concept_session"]
     elif board:
@@ -136,12 +186,18 @@ def brief(side):
     else:
         me = (p["board_session_prefix"] + "boardN -- this session was not started with "
               "bin/board, so it does not know its board: ask the user which one, and "
-              "suggest restarting with bin/board <boardN>")
+              "suggest restarting with bin/board <boardN> --resume")
     lines = [f"[relay] Project {p['project']}. This session's name should be {me}."]
     if side == "board" and board:
         folders = [f for b, f in boards() if b == board]
         lines.append(f"[relay] You are the board session for {board}: your folder is "
-                     f"kicad_project/{folders[0] if folders else board + '_?'}/ and no other.")
+                     f"kicad_project/{folders[0] if folders else board + '_?'}/ and no other."
+                     + {"claim": " (Resumed outside bin/board; the board is taken from this "
+                                 "session's claim in kicad_project/local.sessions.json.)",
+                        "only": " (Not started with bin/board; it is the only board there is.)"}.get(how, ""))
+    elif side == "board":
+        lines.append("[relay] Edit and Write in a board folder are REFUSED until you are restarted "
+                     "with bin/board boardN --resume: tell the user that line before anything else.")
     lines.append(f"[relay] The relay is {'ON' if on else 'OFF'} (kicad_project/relay.json; "
                  f"the user flips it with bin/relay on|off).")
     if side == "board":

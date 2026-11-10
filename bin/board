@@ -3,6 +3,13 @@
 #
 #     bin/board board1              # new session, told which board it owns
 #     bin/board board1 --continue   # extra arguments go to `claude`
+#     bin/board board1 --resume     # pick an earlier session of this board
+#
+# ALWAYS resume a board session through this script, never with a bare
+# `claude --resume` in kicad_project/: only here is HW_BOARD set. (A session
+# that was once started here keeps its board anyway -- the session-start hook
+# records a claim per session id -- but one that never was is refused every
+# Edit and Write in a board folder when there is more than one board.)
 #
 # It runs in kicad_project/ (so the board contract and its walls apply), named
 # <Project>_Kicad_boardN, in the project's shared permission mode -- the relay
