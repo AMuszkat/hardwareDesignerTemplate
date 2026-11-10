@@ -695,6 +695,79 @@ listed (`MISSED`), never forced. Its output is an ordinary plan for `route.py ch
   and its pocket removes the pour there; the pin reaches the net on the other layers. Each hole changes
   the fill beside it, so gate again until DRC is quiet (board2: J5 S1, J_MAIN1 21 / 23 / 27 / 29).
 
+## Background runs: `tools/bgwait.py` — started and waited on by pid, with a time limit
+
+A run that takes minutes is started in the background and waited on with `tools/bgwait.py` (board-free,
+plain `python3`; its module docstring is the manual). It is not a routing tool -- any long command of
+either session goes through it -- but the router is where the waiting happens:
+
+    python3 tools/bgwait.py run --name R2_a -- tools/kpy tools/route/netgroup.py --board board1 routing/R2_a.json --timeout 900
+    python3 tools/bgwait.py wait R2_a R2_b --timeout 100     # 0 all ended with exit 0 | 1 one failed | 124 still running
+    python3 tools/bgwait.py status                           # every job of this session, without waiting
+    python3 tools/bgwait.py kill R2_b                        # its whole process group
+
+- **`run` makes the job a (pid, start time) pair with a recorded exit code.** The command runs detached in
+  its own session, stdout and stderr in `<jobs>/NAME.log` (or `--log`), Python unbuffered; a wrapper
+  records the exit code in `<jobs>/NAME.json`, so `wait` reports it long after the process is gone. The
+  job folder is git-ignored and per session: `kicad_project/bgwait.tmp/<boardN>/` for a board session,
+  `out/bgwait/` for the concept session, the system temp folder when neither can be written.
+- **`wait` always has a limit and always comes back with evidence.** `--timeout` defaults to 100 s (inside
+  the Bash tool's default 120 s; the cap is 3600 s -- give the Bash call a longer timeout too). It returns
+  the moment ALL jobs ended, or at the limit with exit 124, and each time prints per job: state, exit code,
+  elapsed time, CPU seconds, CPU in the last interval (`0.0 s CPU in the last 60 s: idle or hung`) and the
+  log's last lines with the log's age. Read them before waiting again: a job at 0 CPU will not end by
+  itself. A bare PID (a process started some other way) is waited on too; only its exit code is unknown.
+- **A wait by NAME is refused, by a hook.** `while pgrep -f "netgroup.py ... R2_emmc_"; do sleep 20; done`
+  matched its own shell and sat 4 h 52 min at 0 CPU on three runs that had ended within 3 minutes. The
+  PreToolUse hook `tools/session/bashguard.py` blocks a `while` / `until` loop that polls `pgrep` with a
+  pattern, `ps | grep` or `pidof` and sleeps -- the bracket form `pgrep -f '[n]etgroup.py'` included: it
+  still ends on a name any other process can hold, and still has no limit. A one-shot `pgrep`, and a loop
+  on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is rendered into both
+  `settings.local.json` files by `./setup.sh render-settings`; `./setup.sh check` says when it is missing.
+- **Several specs of one group at once are a race, not three background runs:** `race.py`, below.
+
+## `race.py` — spec variants raced as processes, one table, one winner
+
+When a group does not converge, or converges badly, the next tries -- the other layer first, a wider
+window, another seed, `--repair` -- do not depend on each other. `race.py` runs them at once:
+
+    tools/kpy tools/route/race.py --board board1 routing/R3_a.json routing/R3_b.json "routing/R3_a.json --seed 2"
+    tools/kpy tools/route/race.py --board board1 --timeout 900 a.json b.json c.json -- --repair
+
+A variant is ONE argument: a spec, optionally followed inside the same quotes by netgroup options for that
+variant alone; options after a bare `--` go to every variant. Each variant gets its own process group, its
+own copy of the board folder under `<race>/<variant>/` (the system temp folder, or `--out DIR` outside
+`kicad_project/`), `netgroup.py --timeout S` (default 600 s; killed at 1.5 x S + 60 s) and, when it
+converged, its own `route.py check`. It prints one table -- variant, converged, iterations, route seconds,
+check, new DRC, rule failures, vias, track length -- and `<race>/race.json` holds it as data.
+
+- **Nothing is written to the real board.** Plans, partials and logs stay in `<race>/<variant>/`
+  (`plan.json`, `partial.json`, `netgroup.log`, `check.log`, `spec.json`); the board copies are deleted
+  unless `--keep`. Under the table are the three commands that take the winner over: `cp` its plan into
+  the board, `route.py check` it THERE (the gate of record is the real board's), `apply`.
+- **The winner's order is fixed, and printed:** converged; the check ran to a verdict; fewest new DRC;
+  fewest rule failures; fewest vias; shortest track length; command-line order. It is the best of what
+  ran, not a pass -- the line says `CHECK PASS` or `NOT a pass`, and the exit code is 0 only for a
+  converged winner that passed (1: none did; 2: usage).
+- **A raced plan is the plan the same command writes on the real board**, byte for byte: the copy and the
+  neighbours change nothing (`tests/test_race.py` holds three variants to the same sha as three runs one
+  after another). So the last printed line -- route it there again -- is an equal way to take a winner.
+- **How many at a time:** `--jobs`, else `HW_JOBS`, else one per variant up to the cores less one. Each
+  child gets `HW_JOBS` = cores / jobs, so a variant with `--seeds` or `--jacobi` does not oversubscribe.
+  The checks are what load the machine (two `kicad-cli` each, many threads): on the fixture three variants
+  took 6.4 s raced against 12.1 s one after another (a 24-core machine busy with other work), and eight
+  at a time took 18 s for 123 s of route + check summed. A copy keeps `routing/.drc_cache/`, so a board that has been checked once does not
+  pay its baseline again in every variant.
+- **Race variants that differ in the SPEC before variants that differ in the seed.** When every variant
+  stops at the same contested cells, the group lacks capacity there and no seed will find it (`prelayout.py`,
+  the partial's `contested` and `reach`); when they stop in different places, the order is the problem
+  and a seed or `--repair` is a fair try.
+- **A long race goes through `bgwait.py`** (`run --name R3_race -- tools/kpy tools/route/race.py ...`,
+  then `wait R3_race --timeout ...`). `bgwait.py kill` -- or any SIGTERM to `race.py` -- ends every
+  variant's processes with it.
+- A spec whose `"plan"` is an absolute path, or leaves the board folder, is refused: a variant writes only
+  into its own copy.
+
 ## `corners.py` — the angle rule for a polyline
 
 `fix45(pts, width, cut)` rewrites the joints of a polyline whose segments run at
