@@ -92,8 +92,9 @@ LAYOUT = [
 # forms the board's tools/route/guide.py reads -- rule names: joints, copper to
 # edge, via to pad gap, 45-degree via link, copper shape, class width, thermals,
 # plane layer, no vias, class layers, keep-out, via field, bga field, ground
-# beside, frozen, thermal pad (kicad_project/tools/route/README.md has the
-# forms). Validated by guide.py's own parser at publish, published as
+# beside, frozen, thermal pad, and the five checks -- cap reach, layers apart,
+# stitch via, neck length, distance (kicad_project/tools/route/README.md has
+# the forms). Validated by guide.py's own parser at publish, published as
 # handoff/rules.json and as a table in 10_layout.md; the board's guide table is
 # generated from it (`guide.py sync`), so nobody types it twice.
 #                                                [rules.json, 10_layout.md]
@@ -106,6 +107,8 @@ WORKMANSHIP = [
     # ("class width", "on", "14_fab Net classes"),
     # ("thermals", "outer: all pads; inner: THT only", "10_layout #4"),
     # ("plane layer", "In1.Cu: GND", "14_fab Physical Stackup"),
+    # ("cap reach", "U1: 1.27 mm (C12, C13)", "10_layout #5"),   a check: `route.py audit` measures it
+    # ("stitch via", "Pairs: GND within 1.27 mm", "10_layout #6"),
 ]
 
 # The floorplan's reservations as DATA (the SVG stays for the eye): each zone a

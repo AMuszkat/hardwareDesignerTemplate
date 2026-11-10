@@ -491,13 +491,18 @@ def exports(run, out, root_sch):
 
 def pcb(run, b, out):
     kpy = [KPY]
-    run.gate("drc", kpy + [TOOLS / "place" / "place.py", "drc", "--board", b])
+    drc = run.gate("drc", kpy + [TOOLS / "place" / "place.py", "drc", "--board", b])
     run.gate("board-setup", kpy + [TOOLS / "board_setup" / "board_setup.py", "check", "--board", b])
     run.gate("footprints", [VPY, TOOLS / "fp" / "fp.py", "check", "--board", b])
     run.gate("route-status", kpy + [TOOLS / "route" / "route.py", "status", "--board", b],
              ok=lambda c, t: c in (0, 1), note="unrouted nets per group (information)")
     run.gate("route-edge", kpy + [TOOLS / "route" / "route.py", "edge", "--board", b])
     run.gate("guide-block", ["python3", TOOLS / "route" / "guide.py", "check", "--board", b])
+    # every rule of the guide, and every check a review finding carries (handoff/findings.json):
+    # what a reviewer measured once is measured here, before one is spawned.  After `drc`: the
+    # audit's first gate reads that run's report from the cache
+    run.gate("audit", kpy + [TOOLS / "route" / "route.py", "audit", "--board", b], after=drc)
+    run.gate("findings", kpy + [TOOLS / "route" / "route.py", "audit", "--findings", "--board", b])
     run.gate("pcb-render", kpy + [TOOLS / "route" / "route.py", "render", "--board", b,
                                   "--out", out / "pcb"], note="pcb/top.png, bottom.png, inner.png")
     run.gate("measure", kpy + [Path(__file__).resolve().parent / "measure.py", b, out / "measurements.json"])

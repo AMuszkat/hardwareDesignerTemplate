@@ -29,7 +29,7 @@ and `08_pin_accounting` (only with a `PINOUT`), `04_deliberate`, `05_open`,
 `06_block_diagram.svg` and `11_floorplan.svg` (when the board names them),
 `07_answers`, `09_connectors`, `10_layout`, `12_boot` (with `BOOT`),
 `13_datasheets` + `datasheets/`, `14_fab` (with `FAB`), `15_reviews`, `netlist.json`, `rules.json` (with
-`WORKMANSHIP`), `CHANGELOG`, `MANIFEST.json`.
+`WORKMANSHIP`), `findings.json` (with a `Check` line in the reviews file), `CHANGELOG`, `MANIFEST.json`.
 
 `publish.py --board boardN --selftest` is the handoff's own measurement
 before a board session pays for it: the `handoff-reader` agent
@@ -39,6 +39,15 @@ directory outside the repository — no CLAUDE.md, no other project file in
 reach — plans the schematic, placement and routing from it, and lists every
 missing or contradicted fact as QUESTIONS.md entries in
 `out/selftest/boardN-revR.md`. Exit 1 on any question. It spends tokens.
+
+`findings.json` is the review findings as checks: every line
+`Check RV4.5: <rule> | <setting>` of `reviews/boardN.md` (the `review-board`
+skill writes one under a verdict for each must-fix finding a number
+decides), as `{id, rule, setting, source}`. The rules are the routing
+guide's check rules (`kicad_project/tools/route/checks.py`); the board's
+parser validates each at publish. `route.py audit --findings` runs them on
+the board and the review snapshot runs them as its `findings` gate — the
+closed ones too, so a line is never deleted when its finding closes.
 
 `rules.json` is the routing workmanship as data: `WORKMANSHIP`'s (rule,
 setting, source) rows in the forms the board's `tools/route/guide.py` reads,

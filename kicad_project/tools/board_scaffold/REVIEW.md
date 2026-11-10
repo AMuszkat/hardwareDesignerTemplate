@@ -21,10 +21,21 @@ claimed in `ROUTING_PLAN.md` §5).
     ## RV<n> — schematic | pcb: <what changed, one line>
     **Status:** requested | CHANGES (rev R) | PASS (rev R)
     **Scope:** the sheets / the group / the parts the change touched; "all" for everything.
-    **Gates:** each gate you ran and its last line (check, parity, parity --handoff, ERC; place.py drc, board_setup check, route gates; for placement, every `PRELAYOUT` line of `tools/route/prelayout.py`).
+    **Gates:** each gate you ran and its last line (check, parity, parity --handoff, ERC; place.py drc, board_setup check, route gates; for placement, every `PRELAYOUT` line of `tools/route/prelayout.py`). Every pcb request: the `AUDIT` line of `route.py audit` and the `FINDINGS` line of `route.py audit --findings`.
+    **Meanwhile:** the group you start while this is reviewed — or `nothing independent — <why>`.
     **Waivers:** every waiver this change added, with its reason — or "none".
     **Replies:** after the verdict, one line per finding: `RV<n>.<k> fixed` | `RV<n>.<k> disputed — <reason>`.
 
+- **`FINDINGS FAIL` is not a request.** `route.py audit --findings` runs the
+  check every earlier finding carries (`handoff/findings.json`), the closed
+  ones too: one that fails is open on the board again. Fix it first — the
+  review snapshot runs the same line, and a reviewer's hour is not the way to
+  hear it.
+- **Meanwhile is not optional.** Ring, then start it: a review takes its
+  time whether you wait or not. Independent means it shares no corridor with
+  the change, uses none of its copper and moves no part it touched
+  (`ROUTING_PLAN.md` §5). When nothing is, say why — and plan instead: specs,
+  `prelayout.py`, plans routed and checked on a scratch copy, nothing applied.
 - Numbers never repeat. The fixes for RV<n> are a new request whose Scope
   says "fixes for RV<n>" (and anything else that changed).
 - **PASS:** set `PASS (rev R)` and delete everything under the heading but

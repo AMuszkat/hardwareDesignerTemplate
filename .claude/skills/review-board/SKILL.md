@@ -51,7 +51,12 @@ older state.
 
 It copies the board into `out/reviews/<board>/<id>-<kind>/`, runs the board
 session's own gates on the copy and writes `SUMMARY.md`. Exit 1 is not a
-stop — the failures are the review's first findings. Exit 2 (no KiCad
+stop — the failures are the review's first findings. **A fix re-review is
+judged from the snapshot when it can be**: the `findings` gate passes (every
+finding's check holds), `CHANGES.md` shows nothing outside the findings'
+objects, and no open finding lacks a check — then verify those lines
+yourself and write the verdict, no agent. Anything else (a finding without
+a check, a change beyond the fixes) gets the reviewer. Exit 2 (no KiCad
 project, no PCB, no `kicad-cli`) is told to the board / the user as is.
 
 ## 3. Review
@@ -93,6 +98,23 @@ Append to `tools/handoff/reviews/boardN.md`:
 
     | id | severity | where | finding | evidence | fix |
     |---|---|---|---|---|---|
+
+**A must-fix finding a number decides carries its check**, one line under
+the table for each:
+
+    Check RVn.k: cap reach | U1: 1.27 mm (C65)
+    Check RVn.k: distance | C12.1 to U1.A5 <= 1.27 mm
+
+The rules are the routing guide's check rules (`kicad_project/tools/route/
+checks.py`: `cap reach`, `layers apart`, `stitch via`, `neck length`,
+`distance`); the publisher validates the line with the board's own parser
+and writes them all to `handoff/findings.json`. The board runs them with
+`route.py audit --findings` before it asks again, and the next snapshot runs
+them as its `findings` gate — closed findings included, so the one that
+comes back fails in seconds. Never delete a Check line when its finding
+closes. A rule that belongs to the whole design and not to one finding goes
+into the board's `WORKMANSHIP` rows instead (the same forms), so every
+`route.py audit` runs it.
 
 Only `drawing` findings and the `handoff` ones you fixed (marked "fixed in
 rev R — nothing to do") go in the table, each with evidence the board can

@@ -85,6 +85,7 @@ boardsel = P.boardsel
 sys.path.insert(0, str(ROOT / "tools" / "route"))
 sys.path.insert(0, str(ROOT / "tools" / "copper"))
 import guide                                                # noqa: E402
+import checks as CK                                         # noqa: E402  (tools/route: the findings' rules, measured)
 import origin                                               # noqa: E402  (tools/route: a plan's origin record)
 import drccache                                             # noqa: E402  (tools/place)
 
@@ -1328,8 +1329,39 @@ def cmd_rules(a):
     return 0
 
 
+def cmd_findings(a):
+    """`audit --findings`: every check a review finding carries (handoff/findings.json), on the
+    board as it is.  Closed findings are run too -- that is the point: the one that comes back
+    fails here, in seconds, and not in the next review."""
+    rows = guide.findings_rows(P.board_dir_arg(a.board))
+    if rows is None:
+        print(f"FINDINGS PASS: no {guide.FINDINGS_JSON} -- no review finding carries a check yet")
+        return 0
+    guide.validate_findings([(fid, rule, val) for fid, rule, val, _src in rows])
+    B = RBoard(a.board)
+    geo, classes_of, full_width = CK.for_board(B)
+    bad = []
+    for fid, rule, val, src in rows:
+        G = {}
+        CK.parse(rule, val, {"source": src or fid}, G)
+        (_name, _key, _rule, sites), = CK.run(G, geo, classes_of, full_width)
+        print(f"  {fid:9s} {'PASS' if not sites else 'FAIL'}  {rule} | {val}" + (f"  ({src})" if src else ""))
+        for s_ in sites[:6]:
+            print(f"  {'':9s}       {s_}")
+        if len(sites) > 6:
+            print(f"  {'':9s}       ... {len(sites) - 6} more")
+        if sites:
+            bad.append(fid)
+    print(f"FINDINGS PASS: {len(rows)} finding check(s) hold" if not bad else
+          f"FINDINGS FAIL: {len(bad)} of {len(rows)} finding(s) are open on this board again ({', '.join(bad)}) -- "
+          "fix them before the review is asked for")
+    return 1 if bad else 0
+
+
 def cmd_audit(a):
     """Every rule of the guide on the board as it is: one line per gate."""
+    if a.findings:
+        return cmd_findings(a)
     B = RBoard(a.board)
     G = B.gates
     rows = []
@@ -1408,6 +1440,12 @@ def cmd_audit(a):
         bare = sum(v[2] for v in t.values()); one = sum(v[1] for v in t.values()); two = sum(v[0] for v in t.values())
         gate("ground beside", bare < 0.05, f"{rule['class']} mm with {rule['net']} on 2/1/0 sides: {two:.1f} / {one:.1f} / {bare:.1f} "
              f"({rule['source']})")
+    if any(G.get(k) for k in CK.KEYS.values()):
+        # the rules a review found broken once (checks.py): measured here, every audit
+        for name, key, rule, sites in CK.run(G, *CK.for_board(B)):
+            gate(name, not sites, f"{CK.label(key, rule)}: " + (f"{len(sites)} site(s): " + "; ".join(sites[:4])
+                                                                 + (" ..." if len(sites) > 4 else "") if sites else "holds")
+                 + f" ({rule['source']})")
     pours = [z for z in B.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]
     if pours:
         # pour.py's report, in-process on the board already loaded: no second interpreter, pcbnew
@@ -1444,6 +1482,8 @@ def main():
     ap.add_argument("--accept-stale", default="", metavar="WHAT",
                     help="check/apply: take a plan its origin record says is stale -- spec, board, plan, "
                          "retired (comma separated) or all; each is named in the refusal")
+    ap.add_argument("--findings", action="store_true",
+                    help="audit: run only the checks the review findings carry (handoff/findings.json)")
     ap.add_argument("--out", help="render: output directory (default <board>/routing/renders)")
     ap.add_argument("--dpi-scale", type=float, default=6.0, help="render: PyMuPDF matrix scale")
     a = ap.parse_args()

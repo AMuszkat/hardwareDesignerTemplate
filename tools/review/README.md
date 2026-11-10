@@ -109,7 +109,10 @@ case in the test), not a note.
    run them — schematic: ERC, `sch.py check`, `sch.py parity` (when a plan
    exists), `sch.py parity --handoff`; PCB: those plus `place.py drc` (DRC
    with schematic parity), `board_setup.py check`, `fp.py check`,
-   `route.py status` / `edge`. Each gate's whole output is `gates/<name>.txt`.
+   `route.py status` / `edge`, `route.py audit` (every rule of the routing
+   guide) and `route.py audit --findings` (the check each earlier finding
+   carries, `handoff/findings.json`: a FAIL is a finding open again). Each
+   gate's whole output is `gates/<name>.txt`.
 3. **Exports what a reviewer reads, as files it reads without a shell**:
    `netlist.xml`, `bom.csv` (Value, Footprint, MPN, DNP, excluded, quantity;
    a missing column fails the row), `schematic.pdf`; `parts.csv` (every

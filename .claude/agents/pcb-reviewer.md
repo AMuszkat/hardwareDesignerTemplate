@@ -142,6 +142,16 @@ unique.
 1. **Gates** (`SUMMARY.md`): every FAIL is a finding with its lines. DRC
    violations and schematic-parity problems are listed by type and count;
    *unconnected* is a finding only for the groups the scope says are routed.
+   The `findings` row runs the check each earlier finding carries
+   (`handoff/findings.json`): a FAIL there is that finding open again —
+   report it under its old id, `must`, with the gate's line as evidence. The
+   `audit` row is every rule of the routing guide; its `drc` and `pours`
+   parts follow the scope like the DRC row, the others are findings as they
+   stand. **A `must` finding a number decides ends with its check**, in the
+   fix column, in one of the forms `kicad_project/tools/route/checks.py`
+   documents (`cap reach | U1: 1.27 mm (C65)`, `distance | C12.1 to U1.A5 <=
+   1.27 mm`, `layers apart`, `stitch via`, `neck length`) — the concept
+   session publishes it and every later snapshot runs it.
    A Board Setup difference from `14_fab.md` is always `must`. A group
    `ROUTING_PLAN.md` §5 says was built while an earlier change was under
    review: check its *independent of* claim (no shared corridor, none of

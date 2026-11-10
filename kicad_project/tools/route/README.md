@@ -106,6 +106,11 @@ listing the names the tools know.
 | `ground beside` | `Fast: GND within 0.6 mm` | reported by `audit` and `check`: mm of the class's track with ground on 2 / 1 / 0 sides, before → after |
 | `frozen` | `class X, net Y` | copper `viafix.py --push` never moves |
 | `thermal pad` | `U5.5: solid` | one pad's own connection to the pour |
+| `cap reach` | `U1: 1.27 mm (C12, C13)` | `audit`: a pad of a listed part farther than that (centre to centre) from every same-net pad of U1 and every same-net via — the decoupling cap that drifted off its pin. The parts are named, so one that leaves a courtyard does not leave the rule |
+| `layers apart` | `In4.Cu / In5.Cu: 0 mm` | `audit`: two nets, one on each layer, whose tracks lie over each other for more than that per net pair. A square crossing is free |
+| `stitch via` | `Pairs: GND within 1.27 mm` | `audit`: a via of a net in the class with no via of the named net within the distance |
+| `neck length` | `4 mm` or `Fast: 4 mm` | `audit`: a connected run of track narrower than the net's width (its class's, or the narrowest its custom rules give on that layer) longer than that |
+| `distance` | `C12.1 to U1.A5 <= 1.27 mm` | `audit`: two named objects, `REF.PAD` or `REF` (its nearest pad), centre to centre; `<=` or `>=` |
 
 A plan declares its exceptions, each with a reason printed every run and
 reviewed with the group:
@@ -127,6 +132,24 @@ and if they ever disagree, something moved.
 `place.py drc`, joints, edge, shape, via links, ground beside, pour islands —
 and ends `AUDIT PASS` or `AUDIT FAIL (...)`. It is the line a group report
 quotes, before and after.
+
+**The last five rows are checks (`checks.py`): what a review measured once,
+measured by a tool from then on.** They are plain geometry on the board's
+pads, vias and tracks, and they have a second home. A review finding a
+number decides carries one — `Check RV4.5: cap reach | U1: 1.27 mm (C65)`
+under its verdict — and the handoff publishes them all as
+`handoff/findings.json`:
+
+    tools/kpy tools/route/route.py audit --findings --board board1
+
+runs every one on the board as it is, one `PASS|FAIL` line per finding id
+with the sites, and ends `FINDINGS PASS` or `FINDINGS FAIL (...)` (exit 1).
+Closed findings are run too, which is the point: the one that comes back
+fails here in a second, not in the next review. Both lines — `AUDIT` and
+`FINDINGS` — go in every pcb review request, and the review snapshot runs
+both itself. A check does not replace DRC (copper under the minimum) or
+`fanout.py layers`' `pad_gap` (padded vias of an inner-layer pair): neither
+is repeated here.
 
 ## The plan file
 

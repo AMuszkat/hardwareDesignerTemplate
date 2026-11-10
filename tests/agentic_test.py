@@ -885,6 +885,7 @@ SCRIPT_STAGES = [
     ("pcb-large", "test_pcb_large.py", True),
     ("rev-geom", "test_review_geom.py", False),
     ("rev-diff", "test_review_changes.py", False),
+    ("findings", "test_findings.py", False),
     ("rule-gate", "test_rule_gate.py", False),
     ("topic", "test_answer_topic.py", False),
     ("sessions", "test_sessions.py", False),

@@ -49,6 +49,11 @@ Other rows the tools know (add the ones the handoff gives; one per line):
 | ground beside   | Fast: GND within 0.6 mm                       | 10_layout.md #_            |   class: ground net, distance from the track's edge
 | frozen          | class Reference, net ref_taps                 | 10_layout.md #_            |   copper the via fixer never pushes
 | thermal pad     | U5.5: solid                                   | 10_layout.md #_            |   a pad's own connection: solid / none
+| cap reach       | U1: 1.27 mm (C12, C13)                        | 10_layout.md #_            |   a listed part's pad to U1's same-net pad or via, centre to centre
+| layers apart    | In4.Cu / In5.Cu: 0 mm                         | 10_layout.md #_            |   two nets' tracks over each other on the two layers, per pair
+| stitch via      | Pairs: GND within 1.27 mm                     | 10_layout.md #_            |   class: a via of the named net beside each of its vias
+| neck length     | Fast: 4 mm                                    | 10_layout.md #_            |   the longest run narrower than the net's width
+| distance        | C12.1 to U1.A5 <= 1.27 mm                     | 10_layout.md #_            |   two named pads (or parts), centre to centre
 ```
 
 ## Joints and corners

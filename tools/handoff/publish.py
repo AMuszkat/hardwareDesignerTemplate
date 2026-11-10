@@ -151,6 +151,8 @@ def page_rules(text):
 
 _TOPIC = re.compile(r"^\s*\**topic\**\s*:\**\s*(\S.*?)\s*$", re.I)
 _ESCALATED = re.compile(r"^\s*\**escalated\**\s*:\**\s*(\S.*?)\s*$", re.I)
+# a finding's check, under a verdict in the reviews file:  Check RV4.5: cap reach | U1: 1.27 mm (C65)
+FINDING_CHECK = re.compile(r"^\s*(?:[-*]\s*)?\**Check\s+((?:RV|[A-Z])\d+(?:\.\d+)*)\**\s*:\**\s*([A-Za-z][A-Za-z ]*?)\s*\|\s*(\S.*?)\s*$")
 
 
 def answer_topics(text):
@@ -399,7 +401,10 @@ class Board:
                   "your `QUESTIONS.md`. Read, act, then curate your file.")
         third = ("**`15_reviews.md`** — the reviewers' verdicts and findings "
                  "on the changes you asked to have reviewed in `../REVIEW.md`. "
-                 "Fix or dispute each open finding before anything new.")
+                 "Fix or dispute each open finding before anything new."
+                 + (" The findings a number decides are checks in `findings.json`: "
+                    "`tools/route/route.py audit --findings` runs them all, and its "
+                    "last line goes in every PCB review request." if self.findings() else ""))
         then = (["**`08_pin_accounting.md`** — every pin, classified and "
                  "reconciled to a total. Anything it marks OPEN or UNKNOWN "
                  "is a hole the concept session owes you: leave it "
@@ -593,6 +598,49 @@ class Board:
                 "done and its own gates pass, request one in `../REVIEW.md` "
                 "(format at its top); the verdict and the findings appear "
                 "here.\n")
+
+    def findings(self):
+        """The checks the review findings carry, as data: every line
+
+            Check RV4.5: cap reach | U1: 1.27 mm (C65)
+
+        of the reviews file (the `review-board` skill writes one under a
+        verdict for each must-fix finding a number decides) -> [{id, rule,
+        setting, source}], validated by the board's own parser so a form the
+        tools cannot read stops the publish. They are never removed when the
+        finding closes: `route.py audit --findings` and the review snapshot
+        run them all, and the one that comes back fails before a reviewer
+        is asked."""
+        p = os.path.join(ROOT, self.reviews_rel)
+        if not os.path.exists(p):
+            return []
+        rows, head, fenced = [], "", False
+        for ln in open(p).read().splitlines():
+            if ln.lstrip().startswith("```"):
+                fenced = not fenced
+                continue
+            if fenced:
+                continue
+            if ln.startswith("## "):
+                head = ln[3:].strip()
+            m = FINDING_CHECK.match(ln)
+            if m:
+                rows.append({"id": m.group(1), "rule": m.group(2).strip().lower(), "setting": m.group(3).strip(),
+                             "source": "review " + (head.split(" — ")[0] if head else m.group(1))})
+            elif re.match(r"\s*(?:[-*]\s*)?Check\b", ln) and "|" in ln:
+                die(f"{self.reviews_rel}: a finding's check reads `Check RV4.5: <rule> | <setting>`, got: {ln.strip()[:120]}")
+        if rows:
+            sys.path.insert(0, os.path.join(ROOT, "kicad_project", "tools", "route"))
+            import guide
+            try:
+                guide.validate_findings([(r["id"], r["rule"], r["setting"]) for r in rows])
+            except SystemExit as e:
+                die(f"{self.reviews_rel}: {e}")
+            seen = {}
+            for r in rows:
+                if seen.setdefault((r["id"], r["rule"], r["setting"]), r) is not r:
+                    die(f"{self.reviews_rel}: the check of {r['id']} is written twice: {r['rule']} | {r['setting']}")
+        return rows
 
     def answers_gate(self):
         """(blocking, notes) for the answers file.
@@ -1432,6 +1480,9 @@ class Board:
         if self.get("WORKMANSHIP"):
             files["rules.json"] = json.dumps([{"rule": r, "setting": v, "source": s_}
                                               for r, v, s_ in self.get("WORKMANSHIP")], indent=1) + "\n"
+        found = self.findings()
+        if found:
+            files["findings.json"] = json.dumps(found, indent=1) + "\n"
         if self.get("BOOT"):
             files["12_boot.md"] = self.text_md("BOOT", "Boot sequence", "")
         fab = self.fab_md()
