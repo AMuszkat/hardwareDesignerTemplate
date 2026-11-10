@@ -51,7 +51,8 @@ the silk text minimums `place.py labels` needs.
 
 Every footprint is board-only, so the schematic-parity test has nothing to
 compare against the empty schematic and passes: DRC judges copper only.
-Deterministic: the same arguments write the same board.
+Deterministic: the same arguments write the same board (KiCad's id generator
+is seeded; a KiCad without `KIID.SeedGenerator` writes a new order each time).
 """
 import argparse
 import json
@@ -626,6 +627,12 @@ def main():
     ap.add_argument("--nets", type=int, default=8)
     ap.add_argument("--kind", choices=["router", "prelayout", "vias", "sparse", "large"], default="router")
     a = ap.parse_args()
+    # KiCad gives every new item a random id and writes a board's footprints in id order, and the
+    # tools walk them in that order: without a seed two fixtures from the same arguments differ,
+    # and so do the label search's and the DRC's results on them.
+    import pcbnew
+    if hasattr(pcbnew.KIID, "SeedGenerator"):
+        pcbnew.KIID.SeedGenerator(20261110)
     if a.kind == "prelayout":
         print(make_prelayout(a.out))
     elif a.kind == "large":
