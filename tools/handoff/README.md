@@ -19,7 +19,8 @@ in conversation rather than in copper.
 | `board_template.py` | every attribute a board module may set, documented, with the handoff file it feeds |
 | `new_board.py` | creates a board on both sides of the wall and publishes rev 1 |
 | `fabs/<profile>.py` | what a fab can build, each value with its source page. `example_standard.py` is an illustrative example (no fab's real numbers), `_blank.py` the shape to fill |
-| `answers/boardN.md` | concept's answers to that board's `QUESTIONS.md` — the only place they are written |
+| `answers/boardN.md` | concept's answers to that board's `QUESTIONS.md` — the only place they are written. Each answer names its `Topic:` (below) |
+| `rulechecks/boardN.json` | the proof that the board's custom DRC rules work on its PCB. **Generated** by `tools/review/rulecheck.py`, never typed (a file whose `hash` does not cover its content counts as no proof); committed with the publish it allowed |
 | `reviews/boardN.md` | the verdicts and findings of the reviews that board asked for in its `REVIEW.md` (the `review-board` skill, `tools/review/`) — the only place they are written |
 | `studies/components_boardN.py` | the value bus: `(refdes, function, value, status, note)`, status `set` / `proposed` / `tbd` |
 
@@ -67,6 +68,53 @@ anything, copies `kicad_project/tools/board_scaffold/` into the new board
 folder (the one time concept writes there outside `handoff/`), and publishes.
 Then fill the value bus and the board module and republish. The board session
 creates its KiCad project itself, through Konnect.
+
+## Two things stop a publish
+
+Both are checked before anything is written, and each prints one line that
+says what to run or to add. `tests/test_rule_gate.py` and
+`tests/test_answer_topic.py` drive them on a fixture board.
+
+**A custom DRC rule is proven on the board first.** Once a board has a PCB
+with a footprint on it, a rule in `14_fab.md` that is NEW or CHANGED against
+the handoff on disk (a derived area rule too) does not publish until
+
+    python3 tools/review/rulecheck.py --board boardN
+
+has run on exactly that rule text (`tools/review/README.md` says what it
+proves: KiCad can read the rule, every net / class / courtyard it names is on
+the board, and a rule about a BGA's escape carries the bound from
+`kicad_project/tools/route/escape_bound.py` — the board's `FAB["escape"]`
+rows). The proof is `rulechecks/boardN.json`; the MANIFEST's `rulecheck`
+block records its result hash and each rule's text hash and state (`proven`,
+`fails: …`, `waived: …`, `unproven`), which is what `--check` reads back. A
+rule that was already published and has not moved never blocks: it is a LINT
+line (`N custom DRC rule(s) were never proven on the PCB`) until the proof is
+run, so a handoff published before this check existed keeps publishing. A rule
+the board cannot prove yet (its nets are not drawn) goes in `FAB["unproven"]`
+with the reason, and is a LINT line at every publish. Eight of one board's
+must-fix review findings were a published rule that was wrong on the board;
+the proof costs seconds.
+
+**A third answer on one topic goes to the user first.** The format of
+`answers/boardN.md` gained two lines. Under its `## Qn …` heading every answer
+names the problem it belongs to — the same words when the same problem comes
+back (case and spacing do not matter; either line may be bold):
+
+    ## Q31 — U1 escape: the inner row still does not fit
+    Topic: U1 escape
+    Escalated: 2026-11-10, the user chose six layers (D12)
+
+Two answers on a topic publish (the second with a LINT line). The third, and
+every one after it, does not publish without its own `Escalated:` line: the
+contract (`kicad_project/RELAY_PROTOCOL.md` section 5) sends a question that
+comes back after two answers to the user, and nothing enforced it — a board
+once got seven answers in five hours on one escape. A NEW answer with no
+`Topic:` line does not publish either. **Answers published before this
+format existed need no edit**: an answer already in the published
+`07_answers.md` without a topic is one LINT line (`N published answer(s) name
+no topic`), never a failure — but the count cannot see it, so give an old
+answer its topic when its problem comes back.
 
 ## Publishing discipline
 
