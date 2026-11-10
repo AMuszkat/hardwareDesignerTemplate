@@ -219,6 +219,15 @@ its docstring. What the spec has to be told:
   0.47 from its own partner. Space the verticals from the caps' span first, then draw the lines;
   board 1's PCIe channel was spaced for the lines, the caps failed DRC, and U400 moved 1.5 mm to
   make room (Q32). A cap's courtyard thinner rule applies only when BOTH items are inside it.
+- **A pair's P / N tune: survey the room before drawing a bump.** At 45 degrees only, a bump of
+  height h gains 2h(sqrt2 - 1) = 0.83h over 2h + top of line, and its top is the diagonal of a
+  right-angle turn, so it is at least one track width long (`check`'s angle rule). Each via transit
+  counts as the board's thickness, so a P line with two vias more than its N needs about 2.4 mm of
+  bumps, and a corridor at the class spacing rarely has it. Board 1 measured each line's outer-side
+  room per 0.05 mm (`board1_module/build/pair_tune_room.py --profile NET`). A rise that starts at a
+  joint and extends the diagonal before it costs no flat. Two lines' bumps often want the SAME gap
+  (DSI_CLK_N's and DSI_D2_N's): one of them bumps the other way, toward a partner still on the
+  other layer. Then it asked for a skew budget for the rest (D76) rather than re-laying reviewed copper.
 - **Draw the three-way meetings, route the rest.** A net that must reach an IC,
   a connector pin AND a pull-up does not converge in negotiation when dozens of
   others press on the same corner; lay the pin-to-pull link and route one leg to
