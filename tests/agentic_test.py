@@ -51,6 +51,14 @@ repository (nothing here is written; the copy is deleted unless --keep):
              via fixed under --push and none by the 45-degree last resort
   lint       tools/lint_docs.py on the scratch copy after the publish
 
+and, each a test of its own under tests/ (runnable alone: `python3
+tests/test_<name>.py`; its last line is the stage's verdict and numbers):
+
+  wall       tests/test_wall.py -- the board wall never ASKS: own folder,
+             another board and handoff/ with HW_BOARD set, with only this
+             session's claim, with neither; the session brief writes the
+             claim and exports HW_BOARD on a resume (W1)
+
 A stage is PASS, FAIL or SKIP (a dependency this machine lacks, named). The
 report goes to out/agentic/report.{md,json}; out/ is disposable.
 """
@@ -835,6 +843,27 @@ def stage_lint(copy):
     stage("lint", "PASS" if rc == 0 else "FAIL", time.time() - t0, tail(out, 1))
 
 
+# == the stand-alone tests ===================================================
+
+def stage_script(name, script, timeout=1800):
+    """A tests/test_<x>.py as a stage: it works on its own scratch copies, exits 0/1, and its
+    last stdout line is `PASS: ...`, `FAIL: ...` or `SKIP: ...` (a dependency this machine lacks)."""
+    t0 = time.time()
+    try:
+        rc, out = run([sys.executable, ROOT / "tests" / script], ROOT, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return stage(name, "FAIL", time.time() - t0, f"tests/{script}: no result in {timeout} s")
+    lines = [ln for ln in out.strip().splitlines() if ln.strip()]
+    last = lines[-1] if lines else ""
+    m = re.match(r"(PASS|FAIL|SKIP):\s*(.*)", last)
+    if not m or (rc != 0 and m.group(1) != "FAIL") or (rc == 0 and m.group(1) == "FAIL"):
+        return stage(name, "FAIL", time.time() - t0, f"tests/{script} exit {rc}: {tail(out)}")
+    stage(name, m.group(1), time.time() - t0, m.group(2)[:600])
+
+
+SCRIPT_STAGES = [("wall", "test_wall.py")]
+
+
 # == main ====================================================================
 
 IGNORE = shutil.ignore_patterns(".git", ".venv", "out", "__pycache__", "*.pyc", ".claude", "tests")
@@ -880,6 +909,8 @@ def main():
             stage_pcb(copy, board, a.quick)
         else:
             stage("pcb", "SKIP", 0.0, "needs a board, kicad-cli and pcbnew")
+        for name_, script_ in SCRIPT_STAGES:
+            stage_script(name_, script_)
         stage_lint(copy)
     finally:
         if a.keep:
