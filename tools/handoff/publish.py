@@ -27,10 +27,12 @@ prints one line per board first -- `boardN: fresh (rev R)` or
 A publish is atomic: the whole folder is built beside the old one and swapped
 in, so a crash never leaves half a handoff.
 
-One gate stops a publish before anything is written (in the README): a NEW
-or CHANGED custom DRC rule on a board that already has a PCB needs its proof
-from `tools/review/rulecheck.py` (the proof is `rulechecks/boardN.json`; the
-MANIFEST records each rule's state and the result hash).
+Two gates stop a publish before anything is written (both in the README):
+a NEW or CHANGED custom DRC rule on a board that already has a PCB needs its
+proof from `tools/review/rulecheck.py` (the proof is `rulechecks/boardN.json`;
+the MANIFEST records each rule's state and the result hash), and an answer in
+`answers/boardN.md` names its `Topic:` -- a third answer on one topic needs
+an `Escalated:` line.
 
 The engine is board-blind. Everything board-specific lives in
 `boards/boardN.py` (data), `studies/components_boardN.py` (values),
@@ -145,6 +147,41 @@ def page_rules(text):
         return {}
     return {name: _hb(sx.encode()) for block in re.findall(r"```\n((?:.|\n)*?)```", m.group(1))
             for name, sx in split_rules(block)}
+
+
+_TOPIC = re.compile(r"^\s*\**topic\**\s*:\**\s*(\S.*?)\s*$", re.I)
+_ESCALATED = re.compile(r"^\s*\**escalated\**\s*:\**\s*(\S.*?)\s*$", re.I)
+
+
+def answer_topics(text):
+    """The answers of an answers file, in file order, as
+    [{"heading", "topic" (normalised, or None), "escalated" (bool)}].
+
+    An answer is a `## Q<n> ...` heading and everything down to the next `## `
+    heading. Its topic is its `Topic: <name>` line, its escalation its
+    `Escalated: <when, and what the user decided>` line (either may be bold).
+    Topics compare lower-case with runs of spaces collapsed, so 'U1 DRAM
+    escape' and 'u1  dram escape' are one topic. Lines inside a fenced block
+    are never read as a heading or a field."""
+    out, cur, fenced = [], None, False
+    for ln in text.splitlines():
+        if ln.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if ln.startswith("## "):
+            cur = None
+            if re.match(r"## Q\d", ln):
+                cur = {"heading": ln[3:].strip(), "topic": None, "escalated": False}
+                out.append(cur)
+        elif cur is not None:
+            m = _TOPIC.match(ln)
+            if m and cur["topic"] is None:
+                cur["topic"] = " ".join(m.group(1).strip("*`. ").lower().split()) or None
+            elif _ESCALATED.match(ln):
+                cur["escalated"] = True
+    return out
 
 
 def _h(rel):
@@ -556,6 +593,56 @@ class Board:
                 "done and its own gates pass, request one in `../REVIEW.md` "
                 "(format at its top); the verdict and the findings appear "
                 "here.\n")
+
+    def answers_gate(self):
+        """(blocking, notes) for the answers file.
+
+        The contract (RELAY_PROTOCOL.md section 5) sends a question that comes
+        back after two answers to the user. Nothing enforced it, and a board
+        got seven answers in five hours on one escape, each a narrow allowance
+        that failed. So an answer names its `Topic:`, and a topic may hold two
+        answers without an `Escalated:` line -- the third, and every one after
+        it, needs one (counted, not ordered: answers on a topic minus the
+        escalated ones is at most two, so a file kept newest-first reads the
+        same). An answer that is ALREADY in the published 07_answers.md
+        without a topic is the old format and only a note: a live project
+        keeps publishing. A NEW answer without a topic blocks -- otherwise
+        leaving the line out would be the way round the check."""
+        p = os.path.join(ROOT, self.answers_rel)
+        if not os.path.exists(p):
+            return [], []
+        ans = answer_topics(open(p).read())
+        old = os.path.join(self.handoff, "07_answers.md")
+        had = {a["heading"] for a in answer_topics(open(old).read())} if os.path.exists(old) else set()
+        topics, bare_old, block, notes = {}, [], [], []
+        for a in ans:
+            if a["topic"]:
+                topics.setdefault(a["topic"], []).append(a)
+            elif a["heading"] in had:
+                bare_old.append(a)
+            else:
+                known = ", ".join(f"'{t}'" for t in sorted(topics)) or "none yet"
+                block.append(f"{self.answers_rel}: '## {a['heading'][:60]}' names no topic -- add a line "
+                             f"'Topic: <the problem it belongs to>' under the heading, reusing an existing "
+                             f"topic when the question is the same problem coming back (topics so far: {known})")
+        for t, rows in topics.items():
+            open_ = [a for a in rows if not a["escalated"]]
+            q = ", ".join(a["heading"].split(" ")[0].rstrip(",:") for a in rows)
+            if len(open_) > 2:
+                block.append(f"{self.answers_rel}: topic '{t}' has {len(rows)} answers ({q}) and "
+                             f"{len(rows) - len(open_)} 'Escalated:' line(s) -- a question that comes back "
+                             f"after two answers goes to the user (RELAY_PROTOCOL.md section 5): escalate, "
+                             f"then add 'Escalated: <date, what the user decided>' under the new answer")
+            elif len(open_) == 2:
+                esc = len(rows) - 2
+                notes.append(f"answers: topic '{t}' has {len(rows)} answers ({q}"
+                             + (f"; {esc} escalated" if esc else "") + "); the next one on it is "
+                             "escalated to the user first and carries an 'Escalated:' line")
+        if bare_old:
+            notes.append(f"answers: {len(bare_old)} published answer(s) name no topic (old format, "
+                         f"{bare_old[0]['heading'].split(' ')[0].rstrip(',:')}..): the third-answer check "
+                         f"cannot see them; a new answer needs a 'Topic:' line")
+        return block, notes
 
     # -- the rule gate ------------------------------------------------------
     def pcb_path(self):
@@ -1125,8 +1212,8 @@ class Board:
         if nl["prose_only"]:
             prob.append(f"netlist.json: {len(nl['prose_only'])} of {len(nl['parts'])} parts have their "
                         f"connections only in prose (PINS gives them as data)")
-        # the rule gate's notes: what did not block this publish and is still owed
-        prob += self.rule_states()[2]
+        # the two gates' notes: what did not block this publish and is still owed
+        prob += self.rule_states()[2] + self.answers_gate()[1]
         if not os.path.exists(os.path.join(self.out, "QUESTIONS.md")):
             prob.append(f"kicad_project/{self.board}/QUESTIONS.md is missing -- the board "
                         "session has no channel back (tools/handoff/new_board.py creates it)")
@@ -1373,9 +1460,10 @@ class Board:
 
     def publish(self):
         files, copies, ds = self.render()
-        # The rule gate, before anything is written: one line per rule, and
-        # the line names what to run.
+        # The two gates, before anything is written: one line each, and the
+        # line names what to run or to add.
         rulecheck, blocked, _ = self.rule_states()
+        blocked = blocked + self.answers_gate()[0]
         if blocked:
             die("; ".join(blocked))
         pages = self.page_hashes(files, copies, ds)
