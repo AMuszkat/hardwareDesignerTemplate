@@ -92,7 +92,45 @@ def _load_core():
     return None, "python (no compiled core: kicad_project/tools/setup.sh builds it with a C compiler)"
 
 
+def _core_note(lib):
+    """The ONE line a run owes its reader on stderr when the search is not the compiled one it
+    could be (ROADMAP R9), or None.  Two cases:
+
+      * the Python search is running and nobody asked for it (HW_MAZE_CORE=python is asking: the
+        harness does, to compare the two cores) -- no library, one built for another ABI, one
+        that does not load.  The same routes, about ten times slower: a 20 s group takes
+        minutes, and a run that says so only in its first stdout line was read past for weeks;
+      * the compiled core is running but route/_maze.c is NEWER than the library (a pull that
+        changed the search, no rebuild): the two cores may no longer agree, which is the one
+        thing the harness's both-core comparison exists to rule out.  By modification time: a
+        false line after a checkout that rewrote _maze.c costs one rebuild, a missed one a
+        silently different route.
+
+    CORE (stdout, every router run) keeps the reason; this line is the instruction."""
+    import os
+    if os.environ.get("HW_MAZE_CORE", "").lower() == "python":
+        return None
+    if lib is None:
+        return "router core: python (about 10x slower) - run kicad_project/tools/setup.sh"
+    here = Path(__file__).resolve().parent
+    src = here / "_maze.c"
+    for name in ("libmaze.so", "libmaze.dylib"):
+        f = here.parent / ".native" / name
+        if f.exists():
+            try:
+                if src.exists() and src.stat().st_mtime > f.stat().st_mtime:
+                    return (f"router core: compiled, but route/_maze.c is newer than .native/{name} "
+                            "(a stale build) - run kicad_project/tools/setup.sh")
+            except OSError:
+                pass
+            break
+    return None
+
+
 _CORE, CORE = _load_core()
+CORE_NOTE = _core_note(_CORE)
+if CORE_NOTE:
+    print(CORE_NOTE, file=sys.stderr)
 
 CLR = 0.15        # between the nets this router lays (Default class)
 PADCLR = 0.20     # to foreign pads and copper (the strictest class on the board)
@@ -145,6 +183,13 @@ class Grid:
         # clr_at(x, y, kind): the clearance between ROUTED nets at a point ("track" / "via"),
         # for a group whose fields have their own area rule (netgroup sets it); None: CLR
         self.clr_at = None
+        # why[key][cell] = index into labels: WHAT a static cell is (see mark()).  None until the
+        # first mark(): a grid nobody labels pays nothing for it.
+        self.why = None
+        self.labels = []
+        self._tag = None
+        self.stuck = None        # negotiate()'s report when it stopped on a held conflict
+        self.walled = None
 
     # -- geometry -> cells ---------------------------------------------------
     def cell(self, x, y):
@@ -202,12 +247,30 @@ class Grid:
         return out
 
     # -- obstacles -----------------------------------------------------------
+    def mark(self, label):
+        """Name what the static obstacles stamped from here on ARE ("via of GND at (23.4, 17.4)
+        [spec reserve_vias]"), until the next mark(); mark(None) stops labelling.  The obstacle
+        map itself is one bit per cell: when a net turns out to be closed in, "blocked" is all
+        it can say, and the session is left to find the via beside the start point by hand
+        (board1's R2 on B.Cu).  blocked_end() reads these labels back for the cells of the wall.
+        The last label stamped on a cell wins; search and results do not depend on any of it."""
+        if self.why is None:
+            self.why = {k: {} for k in self.keys}
+        if label is None:
+            self._tag = None
+            return
+        self.labels.append(label)
+        self._tag = len(self.labels) - 1
+
     def block(self, keys, cells):
         for k in keys:
             g, h = self.static[k], self.snon[k]
             for c in cells:
                 g[c] = 1
                 h[c] = 1
+        if self._tag is not None:
+            for k in keys:
+                self.why[k].update(dict.fromkeys(cells, self._tag))
 
     def block_disc(self, keys, x, y, r):
         """A round obstacle of halo radius r (a via, a round pad).  With static_exact its cells
@@ -222,6 +285,9 @@ class Grid:
             st = self.static[k]
             for c in cells:
                 st[c] = 1
+        if self._tag is not None:
+            for k in keys:
+                self.why[k].update(dict.fromkeys(cells, self._tag))
 
     def unblock(self, keys, cells):
         for k in keys:
@@ -229,6 +295,11 @@ class Grid:
             for c in cells:
                 g[c] = 0
                 h[c] = 0
+        if self.why is not None:
+            for k in keys:
+                w = self.why[k]
+                for c in cells:
+                    w.pop(c, None)
 
     def static_pad(self, L, T, R, B, layers):
         self.block(layers, self.rect(L, T, R, B, PADCLR + W / 2))
@@ -293,6 +364,16 @@ class Grid:
         return self.own.setdefault(net, {"fixed": {k: set() for k in self.keys},
                                          "routed": {k: set() for k in self.keys},
                                          "core": {k: set() for k in self.layers}})
+
+    def _own_ro(self, net):
+        """_own() for a reader: a net nothing was registered for gets empty sets and the grid is
+        left as it was (the diagnoses run before and between searches and must not move them)."""
+        o = self.own.get(net)
+        if o is None:
+            e = frozenset()
+            o = {"fixed": {k: e for k in self.keys}, "routed": {k: e for k in self.keys},
+                 "core": {k: e for k in self.layers}}
+        return o
 
     def register(self, net, kind, tracks=(), vias=()):
         """tracks: (layer, a, b, width); vias: (x, y, radius, centre_sep)."""
@@ -736,6 +817,333 @@ class Grid:
                         seen.add((c, l2)); dq.append((c, l2))
         return seen
 
+    # -- why a net has no route: floods, never searches ------------------------------------
+    def flood(self, net, starts, layers, via_mask=None, hard=False, soft_nets=(), stop=None,
+              stop_any=False, cap=0):
+        """Every (cell, layer index) `net` could stand on from `starts` [(cell, layer name)],
+        changing layer only onto `layers`.  The turn rule, the 45-degree corner rule, cross_square
+        masks, corridors and the A* expansion limit are all IGNORED, so the set is a superset of
+        what route() can reach: "the flood does not get there" is a proof that no route does,
+        whatever the prices -- which is the only kind of statement a run may stop on.
+
+        hard=False: static obstacles and the other nets' FIXED copper block (what negotiation
+        can never move).  hard=True: the other nets' ROUTED copper blocks too, as it lies now
+        (route(pres=None)'s rule), except the nets in soft_nets.
+        stop: a set of (cell, layer name); the flood returns at the first one it reaches.  With
+        stop_any a stop state counts even when its cell is not free (a source cell is where the
+        net stands, free or not; a goal cell must be free to be stepped on).
+        cap: give up after this many states (0: none).
+
+        Returns (seen, hit, closed): hit is the stop state reached as (cell, layer name) or None;
+        closed is False when the cap cut the flood short (then `seen` is only a lower bound)."""
+        import collections
+        L = self.layers
+        li = {k: i for i, k in enumerate(L)}
+        own = self._own_ro(net)
+        okl = [k in layers for k in L]
+        st, fx, dy = [self.static[k] for k in L], [self.fix[k] for k in L], [self.dyn[k] for k in L]
+        mf, md = [own["fixed"][k] for k in L], [own["routed"][k] for k in L]
+        vst, vfx, vdy = self.static["via"], self.fix["via"], self.dyn["via"]
+        vmf, vmd = own["fixed"]["via"], own["routed"]["via"]
+        soft = [self.own[n]["routed"] for n in soft_nets if n in self.own and n != net]
+        nx, ny = self.nx, self.ny
+        stops = {(c, li[k]) for c, k in stop} if stop else set()
+
+        def free(c, l):
+            if st[l][c]:
+                return False
+            f = fx[l][c]
+            if f and not (f == 1 and c in mf[l]):
+                return False
+            if hard:
+                o = dy[l][c]
+                if o and c in md[l]:
+                    o -= 1
+                if o and soft:
+                    o -= sum(1 for r in soft if c in r[L[l]])
+                if o > 0:
+                    return False
+            return True
+
+        def via_free(c):
+            if vst[c] or (via_mask is not None and not via_mask[c]):
+                return False
+            f = vfx[c]
+            if f and not (f == 1 and c in vmf):
+                return False
+            if hard:
+                o = vdy[c]
+                if o and c in vmd:
+                    o -= 1
+                if o and soft:
+                    o -= sum(1 for r in soft if c in r["via"])
+                if o > 0:
+                    return False
+            return True
+
+        moves = ((1, 0), (-1, 0), (0, 1), (0, -1))
+        if self.diagonal:
+            moves += ((1, 1), (1, -1), (-1, 1), (-1, -1))
+        first = [(c, li[k]) for c, k in starts]
+        seen, dq = set(first), collections.deque(first)
+        for s_ in first:
+            if s_ in stops:
+                return seen, (s_[0], L[s_[1]]), True
+        while dq:
+            if cap and len(seen) > cap:
+                return seen, None, False
+            c, l = dq.popleft()
+            i, j = c % nx, c // nx
+            for di, dj in moves:
+                ni, nj = i + di, j + dj
+                if 0 <= ni < nx and 0 <= nj < ny:
+                    nc = nj * nx + ni
+                    s_ = (nc, l)
+                    if s_ in seen:
+                        continue
+                    if stop_any and s_ in stops:
+                        seen.add(s_)
+                        return seen, (nc, L[l]), True
+                    if free(nc, l):
+                        seen.add(s_)
+                        if s_ in stops:
+                            return seen, (nc, L[l]), True
+                        dq.append(s_)
+            if via_free(c):
+                for l2 in range(len(L)):
+                    s_ = (c, l2)
+                    if l2 == l or not okl[l2] or s_ in seen:
+                        continue
+                    if free(c, l2):
+                        seen.add(s_)
+                        if s_ in stops:
+                            return seen, (c, L[l2]), True
+                        dq.append(s_)
+        return seen, None, True
+
+    @staticmethod
+    def _aslist(layer):
+        return [layer] if isinstance(layer, str) else list(layer)
+
+    def _job_ends(self, jb):
+        """A job's source states and goal states as [(cell, layer name)], and its goal cells."""
+        goals = jb["goals"]
+        if isinstance(goals, tuple):
+            goals = {self.cell(*goals)}
+        elif isinstance(goals, int):
+            goals = {goals}
+        src = jb["src"]
+        sc = self.cell(*src) if isinstance(src, tuple) else src
+        ss = [(sc, k) for k in self._aslist(jb["src_layer"])]
+        gs = [(c, k) for c in goals for k in self._aslist(jb["goal_layer"])]
+        return ss, gs, goals
+
+    def way_round(self, jb, soft_nets=()):
+        """True when jb's net could be laid right now with every other net's copper where it
+        lies (the nets in soft_nets excepted): a flood, so True is only "not proven shut"."""
+        ss, gs, _g = self._job_ends(jb)
+        _seen, hit, _closed = self.flood(jb["net"], ss, jb["allowed"], via_mask=jb.get("via_mask"),
+                                         hard=True, soft_nets=soft_nets, stop=set(gs))
+        return hit is not None
+
+    def blocked_end(self, jb, cap=0):
+        """Is one END of this job shut in by what negotiation cannot move -- static obstacles,
+        other nets' fixed copper, the window's edge?  None when it is not (or when `cap` states
+        were not enough to tell); else a report naming the end and the wall.
+
+        This is the case a bare "no solution" hides best (board1's R2 on B.Cu: one net reached
+        419 cells round its source and none of its goal, because of a via reserved beside its
+        start; negotiation said "walled in" in under a second and the session found the via by
+        hand).  It is not congestion: no price, no seed and no number of iterations opens it.
+
+        Two floods (flood(): no turn rule, the other ROUTED nets ignored), each stopped at `cap`
+        states: from the source towards the goal, and from the goal's free cells back.  A flood
+        that ENDS without meeting the other end has found a closed region; the smaller closed
+        region is the blocked end.  cap=0 floods without limit (the run has already failed:
+        the answer is worth a second); a small cap (a few thousand states) is the cheap test
+        before negotiating -- a region that small and closed is a start point, not a room.
+
+        The report: dict(net, end "source"|"goal", at (x, y), layers, cells, by_layer,
+        goals, other (states the other end's flood holds), other_closed, edge [sides of the
+        window the region touches], wall [nearest first: dict(kind "obstacle"|"net"|"unnamed",
+        label, net, layer, cells, dist, at)], via [the same, for what forbids a layer change
+        inside the region], no_via (cells of the region with no legal via)).  `label` is what
+        mark() said the obstacle was."""
+        net = jb["net"]
+        ss, gs, goals = self._job_ends(jb)
+        lays = set(jb["allowed"]) | {k for _c, k in ss} | {k for _c, k in gs}
+        vm = jb.get("via_mask")
+        fwd, hit, fclosed = self.flood(net, ss, lays, via_mask=vm, stop=set(gs), cap=cap)
+        if hit is not None:
+            return None
+        li = {k: i for i, k in enumerate(self.layers)}
+        own = self._own_ro(net)
+
+        def free(c, k):
+            if self.static[k][c]:
+                return False
+            f = self.fix[k][c]
+            return not (f and not (f == 1 and c in own["fixed"][k]))
+        gfree = [(c, k) for c, k in gs if free(c, k)]
+        bwd, bhit, bclosed = (self.flood(net, gfree, lays, via_mask=vm, stop=set(ss), stop_any=True, cap=cap)
+                              if gfree else (set(), None, True))
+        if bhit is not None:
+            bclosed = False                   # the two floods disagree (a via rule): the source side decides
+        if fclosed and (not bclosed or (gfree and len(fwd) <= len(bwd))):
+            end, region, other, oclosed, at_cells = "source", fwd, len(bwd), bclosed, [c for c, _k in ss]
+        elif bclosed:
+            end, region, other, oclosed, at_cells = "goal", bwd, len(fwd), fclosed, sorted(goals)
+        else:
+            return None                       # neither flood ended inside the cap: not a small closed region
+        nx, ny = self.nx, self.ny
+        pts = [self.xy(c) for c in at_cells]
+        if len(pts) > 64:
+            pts = pts[::len(pts) // 64 + 1]
+
+        def dist(c):
+            x, y = self.xy(c)
+            return min(math.hypot(x - px, y - py) for px, py in pts)
+        wall, viaw, edge, no_via = {}, {}, set(), 0
+
+        def note(table, kind, label, n2, key, c):
+            rec = table.setdefault((kind, label, n2), dict(kind=kind, label=label, net=n2, layer=key, cells=set(),
+                                                           dist=1e9, at=None))
+            if c not in rec["cells"]:
+                rec["cells"].add(c)
+                d = dist(c)
+                if d < rec["dist"]:
+                    rec["dist"], rec["at"], rec["layer"] = d, self.xy(c), key
+
+        def why(table, c, key):
+            """What makes cell c on grid `key` unusable for this net."""
+            if self.static[key][c]:
+                t = self.why[key].get(c) if self.why is not None else None
+                note(table, "obstacle" if t is not None else "unnamed",
+                     self.labels[t] if t is not None else "a static obstacle (no label)", None, key, c)
+                return
+            for n2, o2 in self.own.items():
+                if n2 != net and c in o2["fixed"][key]:
+                    note(table, "net", f"{n2}'s own copper", n2, key, c)
+        moves = ((1, 0), (-1, 0), (0, 1), (0, -1)) + (((1, 1), (1, -1), (-1, 1), (-1, -1)) if self.diagonal else ())
+        states = region if region else {(c, li[k]) for c, k in gs}       # no free goal cell: the goal cells ARE the wall
+        by_layer = {}
+        for c, l in states:
+            key = self.layers[l]
+            by_layer[key] = by_layer.get(key, 0) + 1
+            if not region:
+                why(wall, c, key)
+                continue
+            i, j = c % nx, c // nx
+            for di, dj in moves:
+                ni, nj = i + di, j + dj
+                if not (0 <= ni < nx and 0 <= nj < ny):
+                    edge.add("west" if ni < 0 else "east" if ni >= nx else "north" if nj < 0 else "south")
+                    continue
+                nc = nj * nx + ni
+                if (nc, l) not in region and not free(nc, key):
+                    why(wall, nc, key)
+            others = [k for k in self.layers if k in lays and k != key]
+            if others and not any((c, li[k]) in region for k in others):
+                no_via += 1
+                if not free(c, "via"):
+                    why(viaw, c, "via")
+                elif vm is not None and not vm[c]:
+                    note(viaw, "unnamed", "the job's via mask", None, "via", c)
+                else:
+                    for k in others:
+                        if not free(c, k):
+                            why(viaw, c, k)
+
+        def rows(table):
+            out = sorted(table.values(), key=lambda r: (r["dist"], r["label"]))
+            for r in out:
+                r["cells"] = len(r["cells"])
+            return out
+        return dict(net=net, end=end, at=pts[0] if end == "source" else self.xy(min(goals)),
+                    layers=sorted(by_layer, key=self.layers.index), cells=len(region), by_layer=by_layer,
+                    goals=len(gs), free_goals=len(gfree), other=other, other_closed=oclosed,
+                    edge=sorted(edge), wall=rows(wall), via=rows(viaw), no_via=no_via)
+
+    @staticmethod
+    def blocked_lines(d, top=6):
+        """blocked_end()'s report as the block a run prints (netgroup.py, the tests)."""
+        end, other = d["end"], ("goal" if d["end"] == "source" else "source")
+        where = ", ".join(f"{d['by_layer'][k]} on {k}" for k in d["layers"]) or "none"
+        out = [f"BLOCKED {end.upper()}: {d['net']} is shut in at its {end}, near ({d['at'][0]:.3f}, {d['at'][1]:.3f}) mm"]
+        if end == "source":
+            out.append(f"   from its source it reaches {d['cells']} cell(s) ({where}) and none of its "
+                       f"{d['goals']} goal cell(s)")
+        elif not d["cells"]:
+            out.append(f"   none of its {d['goals']} goal cell(s) is free to stand on")
+        else:
+            out.append(f"   from its goal it reaches {d['cells']} cell(s) ({where}) and never its source")
+        out.append(f"   (its {other} end reaches {d['other']}{'' if d['other_closed'] else '+'} cell(s))")
+        if d["wall"]:
+            out.append("   what closes it, nearest first (distance from the " + end + "; cells of the wall):")
+            for r in d["wall"][:top]:
+                out.append(f"      {r['dist']:6.3f} mm  {r['layer']:7s} {r['label']}  -- {r['cells']} cell(s), "
+                           f"nearest at ({r['at'][0]:.3f}, {r['at'][1]:.3f})")
+            if len(d["wall"]) > top:
+                out.append(f"      ... and {len(d['wall']) - top} more")
+        if d["edge"]:
+            out.append(f"   it also ends at the window's {' / '.join(d['edge'])} edge: a wider window may open it")
+        if d["via"]:
+            out.append(f"   no layer change inside it ({d['no_via']} cell(s) without a legal via), because of:")
+            for r in d["via"][:max(2, top // 2)]:
+                out.append(f"      {r['dist']:6.3f} mm  {r['layer']:7s} {r['label']}  -- {r['cells']} cell(s)")
+        out.append("   a blocked " + ("start" if end == "source" else "end") + " point, not congestion: no "
+                   "price, seed or iteration count opens it.  Move or drop the nearest blocker, start the net "
+                   "somewhere else, open another layer to it, or widen the window.")
+        return out
+
+    def stuck_lines(self):
+        """self.stuck as the block a run prints: the nets, the cells in board mm, what it means."""
+        d = self.stuck
+        out = [f"STUCK at iteration {d['iteration']}: the same {d['ncells']} cell(s) have been contested for "
+               f"{d['window']} iterations with no new cell and no fewer overlaps, and no net on them has a way "
+               "round the others"]
+        out.append("   nets: " + ", ".join(f"{n} ({c} cell(s))" for n, c in d["nets"].items()))
+        for key, b in d["boxes"].items():
+            out.append(f"   {key}: {b['cells']} cell(s) in x {b['x0']:.3f} .. {b['x1']:.3f}, "
+                       f"y {b['y0']:.3f} .. {b['y1']:.3f} mm")
+        out.append("   these nets need the same channel: give one another layer / move the via / widen the window")
+        if d["open_if_lifted"]:
+            out.append("   (" + ", ".join(d["open_if_lifted"]) + " would pass if the nets that are NOT in conflict "
+                       "lay elsewhere: the channel is shut by routed nets, not by the board alone -- another "
+                       "--seed or --full may open it without a change to the spec)")
+        else:
+            out.append("   (no way even with every net outside this conflict lifted: the board itself has too few "
+                       "lanes there for these nets)")
+        return out
+
+    def _stuck_test(self, it, jobs, bad, recent, window):
+        """negotiate()'s second test, once the overlaps have recycled the same cells for `window`
+        iterations: could ANY net that overlaps now be laid clear of all the others as they lie
+        (way_round(): a flood, so "no" is certain)?  One that could will be, as the price
+        rises -- the run is slow, not stuck.  Fills self.stuck and returns True when none can."""
+        byjob = {jb["net"]: jb for jb in jobs}
+        now = [n for n in sorted(bad) if bad[n] and n in byjob]
+        for n in now:
+            if self.way_round(byjob[n]):
+                return False
+        per = {}
+        for cur in recent:
+            for n, cells in cur.items():
+                per.setdefault(n, set()).update(cells)
+        union = set().union(*per.values()) if per else set()
+        boxes = {}
+        for key, c in sorted(union):
+            x, y = self.xy(c)
+            b = boxes.setdefault(key, dict(cells=0, x0=x, y0=y, x1=x, y1=y))
+            b["cells"] += 1
+            b["x0"], b["y0"], b["x1"], b["y1"] = min(b["x0"], x), min(b["y0"], y), max(b["x1"], x), max(b["y1"], y)
+        settled = [n for n in byjob if n not in per]
+        self.stuck = dict(iteration=it, window=window, ncells=len(union),
+                          nets={n: len(per[n]) for n in sorted(per)}, boxes=boxes,
+                          cells=[[k, round(self.xy(c)[0], 4), round(self.xy(c)[1], 4)] for k, c in sorted(union)],
+                          open_if_lifted=[n for n in now if settled and self.way_round(byjob[n], soft_nets=settled)])
+        return True
+
     def _route_in_corridor(self, jb, prev, corridor, **kw):
         args = (jb["net"], jb["src"], jb["src_layer"], jb["goals"], jb["goal_layer"], jb["allowed"])
         opt = dict(via_mask=jb.get("via_mask"), bias=jb.get("bias"), start_dir=jb.get("start_dir", 0),
@@ -759,11 +1167,39 @@ class Grid:
 
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
                   log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4,
-                  corridor=None, jacobi=False, **kw):
+                  corridor=None, jacobi=False, stuck=20, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
         Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
         after every iteration; a truthy return (a reason) stops an unconverged run there.
         self.walled names the net that had no path at all (None otherwise).
+
+        stuck=N (default 20; 0: never): stop -- None, with the report in self.stuck -- when the
+        run is negotiating over something no price can settle.  Three conditions, all needed:
+
+          1. NO NEW CELL for N iterations: every cell contested in each of them was already
+             contested within the N iterations before it.  A search that is still working moves
+             its overlaps (a ribbon creeping sideways contests each lane once); one that is
+             stuck recycles the same cells -- the SAME cells every time when two nets want one
+             lane, each lane in turn when three nets want two (so "contested in most of the
+             last N" is no test: there each cell is contested every second iteration).
+          2. NO NEW MINIMUM of the overlap count in those N iterations: a run whose overlaps
+             shrink onto cells it already knew is converging, however slowly.
+          3. NO WAY ROUND.  1 and 2 also hold for a net whose clean detour is merely long: the
+             price reaches it later (pres grows by pres_mul per iteration; at 1.1 a detour of
+             a few hundred cells round six contested ones is taken near iteration 25-40).  So
+             every net that overlaps now is flooded with ALL the other nets' copper hard where
+             it lies (way_round(): no turn rule, no expansion limit -- a superset of any route,
+             so "no way" is certain).  Only when NONE of them has a way is the run stopped.
+
+          The overlap COUNT standing still is not among them: it sits flat for dozens of
+          iterations in runs that then converge.
+
+        The earliest stop is iteration N + 1; while 1 and 2 hold, 3 is tested every N//4
+        iterations.  It reads the grid and changes nothing: a run that converges gives the same
+        paths with it on or off (the harness's router fixture, 14 iterations: its result hash
+        did not move).  board1's R2 on In2.Cu is what it is for: two nets through a one-track
+        channel at an IC's edge, six cells contested from iteration 6 on, 433 iterations and
+        three minutes before the run gave up.
 
         rip="conflict" (the default): after iteration 1 only the nets that overlap another are
         ripped up and routed again -- the rest keep their paths, and their cells' rising
@@ -784,9 +1220,12 @@ class Grid:
         two nets may both take the same free lane and meet there next iteration.  The same
         result with HW_JOBS=1: a net routed in-process restores its old path before the next."""
         self.walled = None
+        self.stuck = None
         if rip not in ("conflict", "full"):
             raise ValueError(f"rip must be 'conflict' or 'full', got {rip!r}")
         bad, best, since, full_next = {}, None, 0, False
+        stuck = max(0, int(stuck or 0))
+        seen_in, recent, last_new, low, last_low, tested = {}, [], 0, None, 0, 0
         allgoals = set()
         for jb in jobs:
             allgoals |= set(jb["goals"])
@@ -851,6 +1290,28 @@ class Grid:
             if stop:
                 log(f"   iteration {it}: stopped -- {stop}")
                 return None
+            if stuck:
+                cur = {n: frozenset(v) for n, v in bad.items() if v}
+                cells = set().union(*cur.values())
+                if any(kc not in seen_in for kc in cells):
+                    last_new = it                  # a cell not contested in the `stuck` iterations before
+                if low is None or ncell < low:
+                    low, last_low = ncell, it
+                recent.append(cur)
+                for kc in cells:
+                    seen_in[kc] = seen_in.get(kc, 0) + 1
+                if len(recent) > stuck:
+                    for kc in set().union(*recent.pop(0).values()):
+                        if seen_in[kc] == 1:
+                            del seen_in[kc]
+                        else:
+                            seen_in[kc] -= 1
+                if it - max(last_new, last_low) >= stuck and it - tested >= max(1, stuck // 4):
+                    tested = it
+                    if self._stuck_test(it, jobs, bad, recent, stuck):
+                        log(f"   iteration {it}: stuck -- the same {self.stuck['ncells']} cell(s) for {stuck} "
+                            "iterations and no net on them has a way round the others")
+                        return None
             if hist_decay < 1.0:                  # stale history outlives the conflict that made it and,
                 for k in self.keys:               # with guided nets, bends tracks round cells nobody wants
                     h = self.hist[k]

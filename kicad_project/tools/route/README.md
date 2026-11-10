@@ -492,6 +492,91 @@ its docstring. What the spec has to be told:
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
 
+## When `netgroup.py` cannot end: BLOCKED, STUCK, and the exit codes
+
+A run that cannot produce a plan stops early and prints which nets, where, and by
+what. Read the block; do not re-run with more `--iters` or another `--seed` first.
+
+| exit | last line | what it means | what to do |
+|---|---|---|---|
+| 0 | `wrote <plan>` | a plan | `route.py check` |
+| 4 | `BLOCKED at this leg: NET` | one END of a net is shut in by what the run cannot move | move or drop the nearest blocker in the list, start the net elsewhere, open a layer to it, widen the window |
+| 3 | `STUCK at this leg` | the nets named need the same channel and none has a way round the others | give one another layer, move the via, widen the window |
+| 1 | `NO SOLUTION at this leg` / `STOPPED at the timeout` | out of `--iters`, the `--timeout`, or a net with no path that is not shut in (the 45° rule at an end, `--limit`) | the contested cells and the `reach` table, as before |
+
+**BLOCKED** is found before anything is negotiated, in milliseconds per net
+(`maze.Grid.blocked_end`): a flood from the net's source and one back from its goal,
+over static obstacles and the other nets' fixed copper only. A flood that ends in a
+small closed region without meeting the other end has found a blocked start (or end)
+point. The block lists the wall, nearest first, and says what each piece IS, because
+`netgroup.py` labels every obstacle as it stamps it (`maze.Grid.mark`):
+
+    BLOCKED SOURCE: EMMC_D3 is shut in at its source, near (16.450, 15.150) mm
+       from its source it reaches 419 cell(s) (419 on B.Cu) and none of its 29 goal cell(s)
+       what closes it, nearest first (distance from the source; cells of the wall):
+           0.200 mm  B.Cu    EMMC_D4's own copper  -- 25 cell(s), nearest at (16.250, 15.150)
+           0.200 mm  B.Cu    via of EMMC_VDDI at (16.450, 14.650), reserved by the spec's reserve_vias (in field U300)  -- 11 cell(s), ...
+           0.354 mm  B.Cu    pad C300.1 (EMMC_VDDI) at (16.430, 14.500)  -- 8 cell(s), ...
+
+(board1's R2 on B.Cu: the reserved via beside the start point, which the session had
+found by hand.) The origin of a track or via is one of `on the board`, `the spec's
+extra_*`, `reserved by the spec's reserve_*`; the other labels are pads, a field's
+shut pad area, the edge band, a `block` rectangle, a pour, the `plane`, and the via
+spacing round a via an earlier leg laid. The pre-check floods at most 4000 cells per
+end; a net that `negotiate` then finds walled in gets the same test without the cap.
+
+**STUCK** (`--stall N`, default 20; `--stall 0` turns it off) stops a negotiation
+that no price can settle. Three conditions, all needed (`maze.Grid.negotiate`,
+`stuck`):
+
+1. for N iterations every contested cell had already been contested in the N
+   iterations before it — the overlaps recycle the same cells (the same ones every
+   time when two nets want one lane; lane after lane when three want two);
+2. the overlap count made no new minimum in those N iterations;
+3. no net that overlaps now can be laid clear of all the others as they lie — a
+   flood with no turn rule and no expansion limit, so "no way" is certain.
+
+1 and 2 alone would stop a net whose clean detour is merely long (the rising price
+reaches it at iteration 25–40); a flat overlap COUNT is no test at all (it sits flat
+in runs that converge); 3 alone fires in the middle of a reshuffle. The block:
+
+    STUCK at iteration 30: the same 20 cell(s) have been contested for 20 iterations with no new cell and no fewer overlaps, and no net on them has a way round the others
+       nets: EMMC_RST_N (9 cell(s)), EMMC_STROBE (11 cell(s))
+       In2.Cu: 20 cell(s) in x 22.850 .. 23.100, y 17.350 .. 17.600 mm
+       these nets need the same channel: give one another layer / move the via / widen the window
+
+(board1's R2 on In2.Cu: 9 s and 30 iterations; before, 433 iterations and three
+minutes to a bare "no solution".) The last line of the block says whether the nets
+would pass with the nets that are NOT in conflict lifted — then another `--seed` or
+`--full` may still open it — or not even then: the board has too few lanes there.
+`--repair` is skipped after a STUCK stop (the stop is the proof it cannot help). The
+detector reads the grid and changes nothing: a run that converges gives the same plan
+with it on or off.
+
+`<plan>.partial.json` carries the same diagnosis as data: `"state": "blocked"` with
+a `"blocked"` list, or `"state": "stuck"` with `"stuck"` (nets, boxes per layer in
+mm, every cell). `tests/test_router_stall.py` holds all of this on board-free
+fixtures with both search cores.
+
+## The search core says when it is the slow one
+
+`maze.py` runs its search in C (`_maze.c`, built by `kicad_project/tools/setup.sh`
+into `kicad_project/tools/.native/`) and falls back to the same algorithm in Python
+when the library is missing, was built from an older ABI, or cannot be loaded. The
+results are identical; the time is not. So the fallback is never silent: every tool
+that imports `maze` prints ONE line on stderr,
+
+    router core: python (about 10x slower) - run kicad_project/tools/setup.sh
+
+and, when the library loads but `_maze.c` is newer than it (a pull that changed the
+core, no rebuild),
+
+    router core: compiled, but route/_maze.c is newer than .native/libmaze.so (a stale build) - run kicad_project/tools/setup.sh
+
+`HW_MAZE_CORE=python` (asking for the Python core, as the tests that compare the two
+do) prints nothing. `maze.CORE_NOTE` holds the line, or None. `./setup.sh check`
+reports the compiled core as REQUIRED on a machine with a C compiler.
+
 ## `prelayout.py` — can it be routed, before any copper
 
 The tests the boards learned to run late, run at placement:
