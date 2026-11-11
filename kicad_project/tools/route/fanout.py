@@ -73,6 +73,11 @@ Inner: a via keeps its pad only with "nfp": false or for "pad_nets" (the layer's
 "exit": any | east | west | north | south (screen axes, y down), as escape_bound.py.
 "pad_gap": mm -- the least copper gap between two different nets' via pads on this layer (its
 sources' and its pad_nets' vias): an inner layer's pair rule; one of each closer pair moves off.
+"obstacles": "file.json" -- [[x, y, r], ...]: the layer's copper that is not a via of the model,
+as discs of copper radius r -- a part's pads under the field (cover a rectangle with a row of
+discs), tracks already laid (sampled every ~0.1 mm: consecutive discs leave no gap, a wall).
+board1: U1's signal split with R1's DRAM escape and the pairs on the board and the decoupling
+caps on B.Cu, none of which the bare via model sees.
 "only": [regex, ...] -- the nets this layer may take (a pour layer opened to a few low-speed
 signals); a fixed net is placed where it is fixed regardless.  To fill one layer before another,
 run without the second first and add it only for what is left.
@@ -564,11 +569,25 @@ def cmd_layers(a):
              "south": lambda x, y: y > F.y1 - 0.75 * F.py, "north": lambda x, y: y < F.y0 + 0.75 * F.py}
     ball_xy = {(round(b["x"], 4), round(b["y"], 4)) for b in balls}
 
+    def extra(L, w, c):
+        """the layer's other copper as discs {(x, y): R}: "obstacles" -- a JSON file of [x, y, r]
+        (r: the copper's own radius; a part's pads and the tracks already laid, sampled), held at
+        the layer's clearance like a via"""
+        if not L.get("obstacles"):
+            return {}
+        return {(round(x, 4), round(y, 4)): r + c + w / 2 for x, y, r in json.load(open(resolve(a, L["obstacles"])))}
+
     def obstacles(L, exact_src=()):
         w, c = L["width"], L["clearance"]
         hc = L.get("hole_clearance", c)
         r_pad = pad / 2 + c + w / 2
         r_hole = drill / 2 + hc + w / 2
+        o, srcs = _obstacles(L, exact_src, w, c, hc, r_pad, r_hole)
+        for p, r in extra(L, w, c).items():
+            o.setdefault(p, r)
+        return o, srcs
+
+    def _obstacles(L, exact_src, w, c, hc, r_pad, r_hole):
         if L.get("side") == "component":
             o = {p: F.land / 2 + c + w / 2 for p in ball_xy}
             for p in vias:

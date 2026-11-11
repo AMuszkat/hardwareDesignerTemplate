@@ -101,7 +101,11 @@ OPTIONS
     row of them across a 4 mm top-side rail strip cut it in two (board2 R5:
     J1's +5V pins left on a 6 mm2 island, `pour.py`'s find, not DRC's; vias
     in "open" sat by the pins the nets left and failed the via-link rule);
-  "layer_cost": {"B.Cu": 1.5} prices a layer per step.
+  "layer_cost": {"B.Cu": 1.5} prices a layer per step;
+  "keep_pads": {"In5.Cu": ["+1V8", ...]} -- inside a field, a board via whose inner pad the fab
+    removes (unconnected-layer mode "remove") is modelled on such a layer as its hole + the
+    board's copper-to-hole, not its pad; the nets listed keep the pad there (a power layer's
+    own pours, not poured yet, so pcbnew does not flash them).
 
 A net that starts on a pad rather than on escape copper (the far side of a
 series resistor) names it as "src_pad" and gives a grid point inside it as
@@ -319,8 +323,16 @@ def main():
     for t in B.b.GetTracks():
         n = t.GetNetname().rsplit("/", 1)[-1]
         if t.Type() == pcbnew.PCB_VIA_T:
+            # a via whose unconnected inner pads the fab removes (UNCONNECTED_LAYER_MODE_REMOVE_*,
+            # 14_fab's non-functional pads) is only its HOLE on an inner layer it is not flashed on:
+            # "hole" carries drill / 2 + the board's copper-to-hole, and the field loop below uses it
+            # there instead of the 0.4 pad (board1 R2: the 1.0 mm gap between two U1 vias held two
+            # In2 escapes in KiCad's DRC but not in the grid)
+            unfl = {canon(L_) for L_ in B.b.GetEnabledLayers().CuStack()
+                    if L_ not in (pcbnew.F_Cu, pcbnew.B_Cu) and not t.FlashLayer(L_)}
             bvias.append(dict(net=n, x=B.mm(t.GetPosition().x), y=B.mm(t.GetPosition().y),
-                              r=B.mm(t.GetWidth(pcbnew.F_Cu)) / 2, o="on the board"))
+                              r=B.mm(t.GetWidth(pcbnew.F_Cu)) / 2, o="on the board", unfl=unfl,
+                              hole=B.mm(t.GetDrillValue()) / 2 + B.mm(B.b.GetDesignSettings().m_HoleClearance)))
         else:
             tracks.append(dict(net=n, layer=canon(t.GetLayer()), a=(B.mm(t.GetStart().x), B.mm(t.GetStart().y)),
                                b=(B.mm(t.GetEnd().x), B.mm(t.GetEnd().y)), w=B.mm(t.GetWidth()), o="on the board"))
@@ -534,8 +546,13 @@ def main():
             G.mark(f"via of {v['net'] or 'no net'} at {at_(v['x'], v['y'])}, {v['o']} (in field {F['ref']})")
             for L_ in LAYERS:
                 cl = F["_clr"] - F["_shrink"] if L_ in F.get("open", []) else maze.PADCLR
-                G.block_disc([L_], v["x"], v["y"], v["r"] + cl + maze.W / 2)
-                ROUND[L_].append((v["x"], v["y"], v["r"] + cl + maze.W / 2, v["net"]))
+                rr = v["r"] + cl + maze.W / 2
+                if (L_ in v.get("unfl", ()) and L_ in F.get("open", [])
+                        and v["net"] not in S.get("keep_pads", {}).get(L_, ())):
+                    # no pad here, only the hole: copper keeps the board's copper-to-hole from it
+                    rr = min(rr, v["hole"] - F["_shrink"] + maze.W / 2)
+                G.block_disc([L_], v["x"], v["y"], rr)
+                ROUND[L_].append((v["x"], v["y"], rr, v["net"]))
                 # a via near the field's edge: past the edge the track is the group's width, so the
                 # cells outside the field keep the full halo (board1: a 0.181 B.Cu run 0.066 from a
                 # dog-bone 0.3 inside U1's courtyard)

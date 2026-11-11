@@ -418,6 +418,14 @@ its docstring. What the spec has to be told:
   instead does not work -- a square crossing costs more cells than a 38 mm loop
   round the field. Two NEIGHBOURING balls on the two layers wall each other in
   whichever routes first (board1 In4 / In5): keep neighbour pairs on one layer.
+- **A board via with its inner pads removed is a hole there, not a pad.** Once the fanout is
+  ON the board (not a spec's `reserve_vias` with a hole-sized pad), `netgroup` used to read every
+  via at its F.Cu pad on every layer, so an inner-layer escape inside a BGA field was judged
+  against 0.4 mm pads the fab removes: board1's U1 had two In2 escapes fit a 1.0 mm via gap in
+  KiCad's DRC (hole + 0.1778) and STUCK in the grid. Now a via whose padstack removes unconnected
+  layers and that pcbnew does not flash on a field's open inner layer is its drill / 2 + the
+  board's copper-to-hole there. A power layer's own pours are not poured yet, so pcbnew does not
+  flash their vias either: name those nets in `"keep_pads": {"In5.Cu": [...]}`.
 - **Gate an escape against the WHOLE fanout.** `route.py check` judges what the
   plan holds; an escape plan holds its own nets' vias, so DRC never measures it
   against the field's other vias (board1 RV4.4: 331 of 358 missing, three
