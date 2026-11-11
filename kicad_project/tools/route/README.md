@@ -426,6 +426,21 @@ its docstring. What the spec has to be told:
   layers and that pcbnew does not flash on a field's open inner layer is its drill / 2 + the
   board's copper-to-hole there. A power layer's own pours are not poured yet, so pcbnew does not
   flash their vias either: name those nets in `"keep_pads": {"In5.Cu": [...]}`.
+- **A capacity split is only as true as its exits.** `fanout.py layers` proved board1's U1 at
+  139 of 139 and no router closed it: the model ended 0.5 mm past the ball array, at the
+  field's clearance. Each exit it counted and the board did not have cost a routing round --
+  gaps between a pair run's tracks (they lead only to that connector), a 0.78 mm slot between
+  two parts that the CLASS clearance outside the courtyard shuts, a column of parts cut in half
+  by the band. Give every layer its `"obstacles"` out to about 3 mm past the array (laid
+  tracks sampled, every pad, grown by class-minus-field clearance outside the courtyard) and
+  shut a side that leads nowhere with a row of discs: 133 of 139, which is what the router had
+  been saying. Then vary ONE rule per run (a `pad_gap`, an `only`) to find which one binds.
+- **Route a split with its own flow as guides.** `fanout.py layers --guides FILE` writes each
+  placed net's path through the gaps (a min-cost flow on the same triangulation); a netgroup
+  net's `"guide"` prices every cell farther than `guide_reach` from it. The negotiation then
+  settles geometry inside a topology known to fit: board1's In5 (13 nets) closed in 28
+  iterations where it had stalled on two nets at one gap for every seed. A layer with slack
+  may do better without (In4: closed unguided, stalled guided at one pinch).
 - **Gate an escape against the WHOLE fanout.** `route.py check` judges what the
   plan holds; an escape plan holds its own nets' vias, so DRC never measures it
   against the field's other vias (board1 RV4.4: 331 of 358 missing, three

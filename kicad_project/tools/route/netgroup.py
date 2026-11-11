@@ -102,6 +102,8 @@ OPTIONS
     J1's +5V pins left on a 6 mm2 island, `pour.py`'s find, not DRC's; vias
     in "open" sat by the pins the nets left and failed the via-link rule);
   "layer_cost": {"B.Cu": 1.5} prices a layer per step;
+  a net's "guide": [[x, y], ...] is the corridor it is meant to take (`fanout.py layers --guides`):
+    a cell farther than "guide_reach" (0.35) from it costs "guide_cost" (3.0) more for that net;
   "keep_pads": {"In5.Cu": ["+1V8", ...]} -- inside a field, a board via whose inner pad the fab
     removes (unconnected-layer mode "remove") is modelled on such a layer as its hole + the
     board's copper-to-hole, not its pad; the nets listed keep the pad there (a power layer's
@@ -1005,6 +1007,21 @@ def main():
                     arr_ = per[li_]
                     for c in cells_:
                         arr_[c] += cost_
+            # "guide": [[x, y], ...] -- the corridor this net is meant to take (fanout.py layers
+            # --guides: the capacity flow's own path, gap by gap).  Every cell farther than
+            # "guide_reach" from it costs "guide_cost" more for this net, on every layer: the
+            # negotiation then settles the geometry inside a topology that is known to fit,
+            # instead of searching for the topology (board1's U1: 139 nets at zero slack).
+            gd_ = S["nets"][n].get("guide")
+            if gd_ and len(gd_) > 1:
+                near_g = set()
+                for a_, b_ in zip(gd_, gd_[1:]):
+                    near_g |= G.seg(tuple(a_), tuple(b_), float(S.get("guide_reach", 0.35)))
+                gc_ = float(S.get("guide_cost", 3.0))
+                for arr_ in per:
+                    for c in range(G.nx * G.ny):
+                        if c not in near_g:
+                            arr_[c] += gc_
             if pl:
                 for c in range(G.nx * G.ny):
                     if plane_bias[n][c]:

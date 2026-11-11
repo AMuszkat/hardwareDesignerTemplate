@@ -642,6 +642,20 @@ def cmd_layers(a):
             out = out.with_name(out.stem + ".partial.json")
         json.dump(dict(sorted(lay.items())), open(out, "w"), indent=1)
         print(f"wrote {out}")
+    if a.guides:
+        gd = {}
+        for L in spec["layers"]:
+            if L.get("side") == "component" or not S[L["name"]]:
+                continue
+            srcs = {src_via[n]: n for n in S[L["name"]]}
+            o, _ = obstacles(L, exact_src=set(srcs))
+            g = flow_guides(o, srcs, L["width"], L["clearance"], exits[L.get("exit", "any")],
+                            (F.x0 + F.x1) / 2, (F.y0 + F.y1) / 2)
+            for n, pth in g.items():
+                gd[n] = {"layer": L["name"], "path": pth}
+            print(f"  guides {L['name']}: {len(g)} of {len(srcs)}")
+        json.dump(gd, open(resolve(a, a.guides, new=True), "w"), indent=1)
+        print(f"wrote {resolve(a, a.guides, new=True)}")
     return 0 if not left and not stopped else 1
 
 
@@ -716,6 +730,110 @@ def exact_escape(o, srcs, L, exit_ok):
     return got
 
 
+def flow_guides(o, srcs, w, c, exit_ok, cx, cy):
+    """One escape path per source, from the same planar relaxation as the bound, as geometry:
+    a min-cost flow (cost: distance between the gaps crossed) over the obstacles' Delaunay
+    triangulation, decomposed into one path per source -- each path the list of gap midpoints
+    it crosses, from the via to a point past the hull.  {net: [[x, y], ...]}; a source with no
+    path is left out.  The paths are a topological answer (which gap, in which order), not
+    copper: a router takes them as corridors (`netgroup` "guide")."""
+    P = w + c
+    pts = sorted(o)
+    tri = [tuple(pts[i] for i in t) for t in _delaunay(pts)]
+    et = collections.defaultdict(list)
+    for tid, t in enumerate(tri):
+        for e in ((t[0], t[1]), (t[1], t[2]), (t[0], t[2])):
+            et[tuple(sorted(e))].append(tid)
+    hull = {p for e, ts in et.items() if len(ts) == 1 for p in e}
+
+    def cap(p, q):
+        gap = math.hypot(p[0] - q[0], p[1] - q[1]) - o[p] - o[q]
+        return 0 if gap < -1e-9 else int(math.floor(gap / P + 1e-9)) + 1
+
+    def mid(e):
+        (ax, ay), (bx, by) = e
+        d = math.hypot(ax - bx, ay - by) or 1e-9
+        t = (o[e[0]] + (d - o[e[0]] - o[e[1]]) / 2) / d
+        return (ax + (bx - ax) * t, ay + (by - ay) * t)
+    cen = [((t[0][0] + t[1][0] + t[2][0]) / 3, (t[0][1] + t[1][1] + t[2][1]) / 3) for t in tri]
+    # arcs: [to, cap, cost, rev index, edge]
+    G = collections.defaultdict(list)
+
+    def add(u, v, cp, cost, e=None):
+        G[u].append([v, cp, cost, len(G[v]), e, True])
+        G[v].append([u, 0, -cost, len(G[u]) - 1, e, False])
+    for e, ts in et.items():
+        cp = cap(*e)
+        if not cp:
+            continue
+        if len(ts) == 2:
+            d = math.dist(cen[ts[0]], cen[ts[1]])
+            add(("t", ts[0]), ("t", ts[1]), cp, d, e)
+            add(("t", ts[1]), ("t", ts[0]), cp, d, e)
+        elif exit_ok is None or exit_ok((e[0][0] + e[1][0]) / 2, (e[0][1] + e[1][1]) / 2):
+            add(("t", ts[0]), "T", cp, 0.0, e)
+    inc = collections.defaultdict(list)
+    for tid, t in enumerate(tri):
+        for p in t:
+            inc[p].append(tid)
+    for p, n in srcs.items():
+        add("S", ("s", n), 1, 0.0)
+        for tid in inc[p]:
+            add(("s", n), ("t", tid), 1, math.dist(p, cen[tid]))
+        if p in hull and (exit_ok is None or exit_ok(*p)):
+            add(("s", n), "T", 1, 0.0)
+    while True:                                   # successive shortest paths (SPFA: negative residual costs)
+        dist, prev, inq = {"S": 0.0}, {}, {"S"}
+        q = collections.deque(["S"])
+        while q:
+            u = q.popleft()
+            inq.discard(u)
+            for i, (v, cp, cost, _, _, _) in enumerate(G[u]):
+                if cp > 0 and dist[u] + cost < dist.get(v, 1e18) - 1e-12:
+                    dist[v] = dist[u] + cost
+                    prev[v] = (u, i)
+                    if v not in inq:
+                        inq.add(v)
+                        q.append(v)
+        if "T" not in dist:
+            break
+        v = "T"
+        while v != "S":
+            u, i = prev[v]
+            G[u][i][1] -= 1
+            G[v][G[u][i][3]][1] += 1
+            v = u
+    # decompose: flow on a forward arc = what its reverse arc now holds
+    out = {}
+    xy_of = {n: p for p, n in srcs.items()}
+    for n, p0 in xy_of.items():
+        u, path, guard = ("s", n), [list(p0)], 0
+        if not any(v == "S" and cp > 0 for v, cp, _, _, _, _ in G[u]):
+            continue                              # no unit left this source
+        while u != "T" and guard < 10000:
+            guard += 1
+            for arc in G[u]:
+                v, cp, cost, ri, e, fwd = arc
+                if not fwd:
+                    continue
+                back = G[v][ri]
+                if back[1] > 0:                    # the reverse arc carries this arc's flow
+                    back[1] -= 1
+                    arc[1] += 1
+                    if e is not None:
+                        path.append([round(k, 4) for k in mid(e)])
+                    u = v
+                    break
+            else:
+                break
+        if u == "T" and len(path) >= 1:
+            ex, ey = path[-1]
+            d = math.hypot(ex - cx, ey - cy) or 1.0
+            path.append([round(ex + (ex - cx) / d * 1.5, 4), round(ey + (ey - cy) / d * 1.5, 4)])
+            out[n] = path
+    return out
+
+
 # ----------------------------------------------------------------------------- input
 def resolve(a, f, new=False):
     p = Path(f)
@@ -771,6 +889,8 @@ def main():
     q = sub.choices["layers"]
     q.add_argument("--vias", required=True, help="the fanout model (plan's output)")
     q.add_argument("--layers", required=True, help="the layer file (see above)")
+    q.add_argument("--guides", help="also write one escape path per placed net (the flow's own, as gap "
+                                    "midpoints): {net: {layer, path}} -- netgroup's \"guide\"")
     q.add_argument("--timeout", type=float, default=0,
                    help="seconds; stops at the next flow question with the split so far printed and written "
                         "as <out>.partial.json, exit 1 (use this, not a `timeout` prefix)")
