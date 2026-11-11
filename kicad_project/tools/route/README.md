@@ -459,6 +459,15 @@ its docstring. What the spec has to be told:
   `--corridors --json` gives each via's reach path in the no-plan geometry, to
   reserve (as the rail's `reserve_tracks`) for the vias a route cut off --
   reserving all of them walls the field, every corridor crossing every escape.
+- **An escape on a plane layer is gated by `pourreach` IN the routing loop, not after it.**
+  board1 planned 56 signal escapes on In3 / In4 / In5, each plan DRC-clean, and only then ran
+  pourreach: 60 of 124, 54 of 70 and 20 of 222 rail vias cut off. With the gate in the loop
+  (route; pourreach; reserve the cut vias' corridors; drop the nets that no longer fit; repeat --
+  `board1_module/build/plane_esc.py`) the same layers hold 7, 4 and 19. Count a power layer's
+  signal capacity that way BEFORE any split gives it nets: `fanout.py layers` does not know a pour
+  has to get in. Reserving every corridor up front is worse than reserving what a route cut
+  (In4: 5 against 7). And give `--json` an ABSOLUTE path: a relative one is not written where
+  you ran the command.
 - **`bga field: U1, U300` in the guide** makes the copper rules (shape, via
   links) skip the inside of those courtyards, where the neck-down and the
   via-in-pad are the fab rules' business, without `via field`'s refusal of the
