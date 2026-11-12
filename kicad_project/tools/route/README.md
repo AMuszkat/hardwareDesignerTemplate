@@ -456,6 +456,30 @@ its docstring. What the spec has to be told:
   outside the field: `POURREACH PASS|FAIL`, one line per via cut off. Run it
   with and without `--plans` -- a via already walled in by other nets' holes is
   the fanout's, not the escape's (board1 In5: 3 of 33 without tracks, 8 with).
+  Two traps: `--vias <model>` on a board that already HOLDS that fanout counts
+  every via twice (run the board alone); and `--box` is where "outside" begins,
+  so copper laid past the field is judged only with a box that contains it --
+  board1's via-site routes outside U1's courtyard shut a rail via in while the
+  courtyard box still read PASS. Reserve a cut via's own corridor
+  (`--corridors`) in the re-route's spec (`reserve_tracks`, width 0.01 so the
+  keep-clear does not swallow a start point 0.2 mm away).
+- **Via sites for a fan of track ends: least total length, then uncross.**
+  Giving each end of one layer the nearest free site by squared length handed
+  board1's In3 three knots of crossing nets, and no amount of banning sites
+  undid a crossing; the sum of plain lengths, with every pair of same-layer
+  straight lines that cross swapped, routed first time. Giving sites out one
+  net at a time, shortest first, walls the later ends in (a 38 mm path). A
+  site is a through via: keep it a lane (0.9 mm) off every OTHER end, on any
+  layer, or it hems that end to no heading. And netgroup's first corner at an
+  existing track's end is two cells -- shorter than a track width, which the
+  angle rule fails: re-draw it to a full width before `check`.
+- **`netgroup.py --limit` in a big fine window.** The default (900000) ran out
+  in a 24 mm window at 0.045 mm and read as "walled in" for a net with a clear
+  way; `--limit 8000000` routed it. "not shut in -- ... or --limit" in the
+  diagnosis is this.
+- **`route.py rip` keeps the group's plan as `<plan>.ripped.json`.** netgroup
+  writes over the plan's path on the next run; a rip taken back (the board
+  restored from `.<group>-rip-bak`, the manifest renamed back) needs it.
   `--corridors --json` gives each via's reach path in the no-plan geometry, to
   reserve (as the rail's `reserve_tracks`) for the vias a route cut off --
   reserving all of them walls the field, every corridor crossing every escape.

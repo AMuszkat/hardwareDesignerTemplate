@@ -1235,6 +1235,15 @@ def cmd_rip(a):
     origin.step(a.board, "rip", a.plan, sha_before, origin.sha_file(B.pcb))
     man.rename(man.with_suffix(".json.ripped"))
     print(f"ripped {n} of {len(want)} items from {a.plan}; manifest renamed to .ripped")
+    # the plan file the group was applied from is kept beside it: the next netgroup run writes over
+    # its path, and a rip that is taken back (the board restored from the -rip-bak) needs that file
+    pf = j.get("plan")
+    if pf:
+        pf = next((c for c in (Path(pf), B.pcb.parent.parent / pf, B.pcb.parent / pf) if c.exists()), None)
+        if pf is not None:
+            keep = pf.with_name(pf.stem + ".ripped.json")
+            shutil.copy2(pf, keep)
+            print(f"   its plan kept as {keep.name}")
     return 0
 
 
