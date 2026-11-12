@@ -473,6 +473,14 @@ its docstring. What the spec has to be told:
   layer, or it hems that end to no heading. And netgroup's first corner at an
   existing track's end is two cells -- shorter than a track width, which the
   angle rule fails: re-draw it to a full width before `check`.
+- **An escape's layer split is proven ball to ball, not to the ring.** board1's U1 escape put seven
+  eMMC lines on the one inner signal layer because they fit there AT U1; routed on to the eMMC, they
+  cross three times with the corridor empty -- their order leaving U1 is not the order the other
+  BGA's via map can take them in (each ball has one or two open sides; a via column is a wall). Before
+  an escape is applied, route every bus of it end to end on a scratch plan (source via to far via, each
+  line on its split layer), or at least write both ends' orders down and count the inversions. And a
+  group of low-speed via sites goes in AFTER the buses that cross its band: 14 of board1's 53 sites
+  stood in that same corridor.
 - **`netgroup.py --limit` in a big fine window.** The default (900000) ran out
   in a 24 mm window at 0.045 mm and read as "walled in" for a net with a clear
   way; `--limit 8000000` routed it. "not shut in -- ... or --limit" in the
