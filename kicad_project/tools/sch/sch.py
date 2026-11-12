@@ -144,6 +144,28 @@ def cmd_plan(a):
         src = plan.Source.from_json(board, boardsel.in_board(board, a.netlist))
     else:
         src = plan.Source.from_sch(board)
+    if a.drop or a.nc:
+        # a small edit after an answer, on a board whose source is its own drawing: parts the
+        # handoff deleted leave the source, and the pins they leave alone are no-connected
+        # only where --nc names them (the handoff's 'unused: no connect'; any other is left
+        # open for ERC to report)
+        drop = {r for r in (a.drop or "").split(",") if r}
+        missing = drop - set(src.parts)
+        if missing:
+            sys.exit(f"sch: --drop names parts the source does not hold: {sorted(missing)}")
+        for r in drop:
+            del src.parts[r]
+        for n in list(src.nets):
+            src.nets[n] = [t for t in src.nets[n] if t[0] not in drop]
+            if len(src.nets[n]) < 2 and n not in src.rails:
+                print(f"   --drop: net {n} is gone ({src.nets[n] or 'no pin left'})")
+                del src.nets[n]
+        src.nc = {t for t in src.nc if t[0] not in drop}
+        for t in (x for x in (a.nc or "").split(",") if x):
+            ref, pin = t.split(".", 1)
+            if any((ref, pin) in ns for ns in src.nets.values()):
+                sys.exit(f"sch: --nc {t} is still on a net")
+            src.nc.add((ref, pin))
     sys.exit(plan.run(src, out, only=a.only))
 
 
@@ -409,6 +431,8 @@ def main():
     g.add_argument("--handoff", action="store_true", help="handoff/netlist.json (complete) + schematic.json symbols")
     p.add_argument("--only", help="one sheet, by name")
     p.add_argument("--out")
+    p.add_argument("--drop", help="REF,REF: parts to leave out of the source (deleted by the handoff)")
+    p.add_argument("--nc", help="REF.PIN,...: pins to no-connect (the handoff's 'unused: no connect')")
     p.set_defaults(fn=cmd_plan)
     dr = sub.add_parser("drawn")
     dr.add_argument("--board")

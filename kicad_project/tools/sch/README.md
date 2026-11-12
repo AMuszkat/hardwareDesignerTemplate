@@ -273,6 +273,16 @@ pin tables — once, in this form:
 
 Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
 `--from-sch` reads the same from a drawn schematic (and KiCad's netlist of it).
+**Parts that leave** (the handoff deleted them): `plan --from-sch --drop TP2,R65,R67 --nc
+U1.J23,U1.AF18` takes the named parts out of that source and no-connects the named pins --
+the plan is then proven against the drawing minus those parts, and `draw` proves it against
+the handoff (board1, rev 68). On the PCB afterwards: the parts' copper out through its group
+(a plan's `ripvias`), `tools/place/rmfp.py REF…`, `schupdate.py`, `place.py drc` parity 0.
+**Two text rules the ladder block keeps by itself** (both were hand moves after a draw, and
+`draw` refuses a plan with a finding): a one-pin part whose own Reference / Value reach back
+to the row it hangs from (a test point: pin at the bottom, texts above) sits whole grid steps
+further off until the row clears every text; a horizontal pin's riser to its row steps out
+past the part's own texts (a crystal's fields sit over its pin's stub).
 
 ## What Konnect cannot do — and what that costs
 

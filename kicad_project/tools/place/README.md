@@ -303,6 +303,10 @@ API answering. When that path is closed:
   properties (BGA, heatsink, fiducial -- they reach the Gerbers' aperture
   functions); KiCad then reports lib_footprint_mismatch: copy each pad's
   property back from the library footprint (`pad.SetProperty`).
+- `rmfp.py REF…` removes footprints the schematic no longer has: refused while the reference is
+  still in the schematic's netlist or while copper ends on one of its pads (rip that through its
+  group first, so the manifests stay true); `schupdate.py` refuses a one-sided reference, so this
+  runs before it;
 - `addfp.py` adds footprints the schematic has and the board has not (from the
   schematic's own netlist; nets set **after** `Add`), parked off the board;
 - `refresh.py --models REF…` copies the library footprint's 3D model list (path, offset, scale,

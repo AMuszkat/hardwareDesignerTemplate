@@ -804,6 +804,10 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
             over = (oy - b[1]) if oy == min(ys) else (b[3] - oy)
             return snap(over + 1.26, 1.27) if over > 0.05 else 0.0
 
+        def own_texts(el_):
+            return [t for t in (el_.field_box("Reference", el_.ref if el_.ref and not el_.ref.startswith("#") else ""),
+                                el_.field_box("Value", el_.value)) if t]
+
         if len(mine) == 2:
             (n1, a), (n2, b) = mine
             if a in ri and b in ri:
@@ -829,6 +833,16 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
                 lift = (max(ys) - min(ys)) / 2 + G * 2
                 c = ry[net] + (-lift if ctx.ground(net) else lift)
                 el.x, el.y = 0, snap(c - (max(ys) + min(ys)) / 2, 1.27)
+                # a part whose own text reaches back to the row it hangs from (a test point: pin at the
+                # bottom, Reference and Value above it) sits further off, by whole grid steps, until the
+                # row's wire clears the text (board1 TP18: the POR_B row ran through its Value)
+                tbs = [t for t in own_texts(el) if t[1] < ry[net] + 0.9 and t[3] > ry[net] - 0.9]
+                if tbs:                         # one text on the row: every text of the part clears it
+                    tbs = own_texts(el)
+                if tbs and ctx.ground(net):
+                    el.y = round(el.y - math.ceil((max(t[3] for t in tbs) - (ry[net] - 0.9)) / 1.27 - 1e-9) * 1.27, 4)
+                elif tbs:
+                    el.y = round(el.y + math.ceil(((ry[net] + 0.9) - min(t[1] for t in tbs)) / 1.27 - 1e-9) * 1.27, 4)
         sub = Block()
         sub.els.append(el)
         mine_attach = []
@@ -847,7 +861,14 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
             if abs(e[1] - y) < 1e-6:
                 mine_attach.append((net, e[0]))
             elif o[0]:
-                s1 = (round(e[0] + o[0] * STUB, 4), e[1])
+                sx = round(e[0] + o[0] * STUB, 4)
+                # the riser to the row never runs through the part's own Reference / Value (a crystal's
+                # fields sit beside its body, over the pin's stub: board1 Y1's '24MHz'): it steps out past them
+                for t in own_texts(el):
+                    if check.seg_hits_box((sx, e[1]), (sx, y), (t[0] - 0.3, t[1] - 0.3, t[2] + 0.3, t[3] + 0.3)):
+                        sx = max(sx, round(math.ceil((t[2] + 1.0) / 1.27) * 1.27, 4)) if o[0] > 0 else \
+                            min(sx, round(math.floor((t[0] - 1.0) / 1.27) * 1.27, 4))
+                s1 = (sx, e[1])
                 sub.wire(e, s1)
                 sub.wire(s1, (s1[0], y))
                 mine_attach.append((net, s1[0]))
@@ -887,7 +908,10 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
             kind_ = "hier" if ctx.kind(net) == "hier" else "label"
             boxes = [e.box() for e in blk.els] + [e.box() for e in blk.power]
             pick = None
-            for t, rot in ((round(xs[0] - STUB * 2, 4), 180), (round(xs[-1] + STUB * 2, 4), 0)):
+            # ... or, where both ends run into a neighbour (a pull-up's stub and glyph on one side, the
+            # next part's on the other: board1's I2C_CAM_SCL), ON the row at its first attach point,
+            # the text above the row's own wire -- no extension at all
+            for t, rot in ((round(xs[0] - STUB * 2, 4), 180), (round(xs[-1] + STUB * 2, 4), 0), (xs[0], 0)):
                 if ctx.is_rail(net):
                     term = ctx.power_el(net, (t, y), (0, 1) if ctx.ground(net) else (0, -1))
                     tb = term.box()
@@ -896,6 +920,10 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
                 tb = check.shrink(tb, 0.3)
                 hit = any(check.overlap(tb, bx) for bx in boxes if bx) or \
                     any(check.seg_hits_box(a, c, tb) for a, c in blk.wires)
+                if os.environ.get("SCH_ROW_DEBUG") and net in os.environ["SCH_ROW_DEBUG"].split(","):
+                    print(f"row {net}: y {y} xs {xs} cand t {t} rot {rot} tb {[round(v, 2) for v in tb]} "
+                          f"boxes hit {[[round(v, 2) for v in bx] for bx in boxes if bx and check.overlap(tb, bx)]} "
+                          f"wires hit {[(a, c) for a, c in blk.wires if check.seg_hits_box(a, c, tb)]}")
                 if not hit:
                     pick = (t, rot, term)
                     break
@@ -906,7 +934,8 @@ def ladder(ctx, parts, hint=0.0, kind="ladder"):
             else:
                 blk.labels.append((kind_, net, t, y, rot))
         for a, b in zip(xs, xs[1:]):
-            blk.wire((a, y), (b, y))
+            if abs(a - b) > 1e-6:
+                blk.wire((a, y), (b, y))
     if free:
         fb = stack(ctx, free)
         b0, fb0 = blk.box(), fb.box()
