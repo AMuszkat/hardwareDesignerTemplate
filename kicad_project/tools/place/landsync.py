@@ -33,7 +33,7 @@ import place as P  # noqa: E402
 def land(p, pn):
     sz = p.GetSize(pn.F_Cu)
     return (p.GetShape(), sz.x, sz.y, p.GetLocalSolderMaskMargin(), p.GetLocalSolderPasteMargin(),
-            p.GetProperty())
+            p.GetProperty(), p.GetThermalSpokeAngle().AsDegrees())
 
 
 def main():
@@ -84,6 +84,9 @@ def main():
                 p.SetLocalSolderMaskMargin(q.GetLocalSolderMaskMargin())
                 p.SetLocalSolderPasteMargin(q.GetLocalSolderPasteMargin())
                 p.SetProperty(q.GetProperty())
+                # a pad's default thermal-spoke angle follows its shape (45 for a circle, 90 otherwise);
+                # SetShape keeps the old one, which KiCad then saves as an override the library lacks
+                p.SetThermalSpokeAngle(q.GetThermalSpokeAngle())
         want[ref] = {k: land(q, pn) for k, q in lib.items()}
         print(f"{ref:5s} {name}: {n} of {len(brd)} pads take the library's land")
     if a.dry_run:

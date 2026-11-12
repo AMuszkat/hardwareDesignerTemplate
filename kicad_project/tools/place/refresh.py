@@ -36,6 +36,9 @@ def main():
     ap.add_argument("refs", nargs="+")
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
     ap.add_argument("--layers", default="CrtYd", help="comma list of CrtYd, SilkS, Fab (front side)")
+    ap.add_argument("--models", action="store_true",
+                    help="copy the library footprint's 3D model list instead of shapes (either side): after "
+                         "`set_footprint_models` + `fp.py tidy` gave a library footprint its model")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
@@ -59,7 +62,7 @@ def main():
         f = B.fps.get(ref)
         if f is None:
             P.die(f"{ref} is not on the board")
-        if f.GetLayer() != pn.F_Cu:
+        if f.GetLayer() != pn.F_Cu and not a.models:
             P.die(f"{ref} is on the back; this tool handles front-side parts only")
         nick, name = str(f.GetFPID().GetLibNickname()), str(f.GetFPID().GetLibItemName())
         if nick != stem:
@@ -68,6 +71,22 @@ def main():
         if L is None:
             P.die(f"{name} is not in {pretty.name}")
         keep.append(L)
+        if a.models:
+            # a model's offset / scale / rotate are in the footprint's own frame: the list is copied as it is
+            have = [m.m_Filename for m in f.Models()]
+            new = []
+            for m in L.Models():
+                c = pn.FP_3DMODEL()
+                for k in ("m_Filename", "m_Offset", "m_Scale", "m_Rotation", "m_Opacity", "m_Show"):
+                    setattr(c, k, getattr(m, k))
+                new.append(c)
+            print(f"{ref:5s} {name}: models {have or 'none'} -> {[m.m_Filename for m in new] or 'none'}")
+            if not a.dry_run:
+                ms = f.Models()
+                ms.clear()
+                for m in new:
+                    ms.push_back(m)
+            continue
         L.SetOrientation(f.GetOrientation())
         L.SetPosition(f.GetPosition())
         for lay in layers:

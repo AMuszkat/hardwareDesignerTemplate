@@ -1322,6 +1322,14 @@ def cmd_park(a):
     return 0
 
 
+def _walk(d):
+    """Every (key, value) of a nested dict, depth first."""
+    if isinstance(d, dict):
+        for k, v in d.items():
+            yield k, v
+            yield from _walk(v)
+
+
 def thin_silk(B):
     """Unfilled silk strokes narrower than the project's default silk line --
     the one `board_setup.py apply` sets from 14_fab's silkscreen row (KiCad's
@@ -1673,6 +1681,17 @@ def drc_summary(B, d, msg):
     out.append(f"schematic parity: {len(bad)} problem(s)"
                + (f" ({n_ok} board-only footprint(s) from placement.json 'fixed' ignored)" if n_ok else ""))
     out += ["  PARITY " + b for b in bad]
+    # no silkscreen printed (14_fab's "Silkscreen line / text" row says "not used"): the footprints'
+    # silk stays as the libraries have it and no silk stroke is judged
+    try:
+        fabj = json.loads((Path(B.pcb).parent / "handoff" / "fab.json").read_text())
+        row = next((v for k, v in _walk(fabj) if k.lower().startswith("silkscreen line")), None)
+        silk_off = isinstance(row, dict) and "not used" in str(row.get("value", "")).lower()
+    except (OSError, ValueError):
+        silk_off = False
+    if silk_off:
+        out.append("silk: not printed (14_fab: silkscreen not used) -- strokes not checked")
+        return out, (1 if bad else 0)
     # silk line width: KiCad's DRC tests text thickness, never a stroke's width
     floor, thin = thin_silk(B)
     out.append(f"silk strokes under {floor:g} mm: {len(thin)}"

@@ -305,6 +305,13 @@ API answering. When that path is closed:
   property back from the library footprint (`pad.SetProperty`).
 - `addfp.py` adds footprints the schematic has and the board has not (from the
   schematic's own netlist; nets set **after** `Add`), parked off the board;
+- `refresh.py --models REF…` copies the library footprint's 3D model list (path, offset, scale,
+  rotate) onto the placed footprints, either side, and nothing else; `landsync.py` copies a pad's
+  thermal-spoke angle with its shape (a circle made square kept 45 degrees, which KiCad saves as an
+  override the library lacks: `sync` said "DIFFER: pads");
+- `place.py drc` judges no silk stroke when `handoff/fab.json`'s "Silkscreen line / text" is
+  "not used" (a board with no silkscreen printed); `board_setup.py` reads "Silkscreen | none" and
+  that row the same way, and `fabpkg.py` leaves the silk Gerbers out;
 - `refresh.py` replaces the shapes on chosen front layers of named footprints
   with the library's, after `fp.py tidy` changed a courtyard or silk. Pads,
   texts, fields, model and placement are untouched — a land change is a

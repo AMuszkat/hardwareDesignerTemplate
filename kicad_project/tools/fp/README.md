@@ -178,6 +178,23 @@ as everywhere else. The stock 3D model stays referenced through
 variants) `check` says so as a note, and the vendor's STEP can be added later with
 Konnect's `set_footprint_models` followed by `tidy` (to re-hash).
 
+**Giving a library footprint a 3D model afterwards** (any source; KiCad may be closed --
+`set_footprint_models` and `edit_footprint_pad` edit the file):
+1. the model: `easyeda2kicad --3d --lcsc_id C… --output <scratch>/lib` (the C-number from
+   Konnect's `search_jlcpcb_parts`; a same-outline part's model serves when the exact one has
+   none -- say so in the note), or `stepbox.py OUT.step --size X Y Z` for an ENVELOPE at
+   datasheet size when the vendor's site refuses a script (do not work round a refusal: the
+   vendor's own file is a manual download);
+2. measure it before trusting it: the STEP's bounding box, and for a BGA its
+   `SPHERICAL_SURFACE` centres against our pads for each rotation (board1: the eMMC's 153
+   balls fit at 0 degrees only; a symmetric pattern leaves the pin-1 dot unproven). Ball
+   bottoms below z = 0 or a taller sibling: `offset` z and `scale` z in the model line;
+3. copy it to `lib/<stem>.3dshapes/`, `set_footprint_models` (mode replace) with
+   `${KIPRJMOD}/lib/<stem>.3dshapes/<file>`, `fp.py tidy NAME --note "<source, measurements>"`;
+4. the board: `tools/kpy tools/place/refresh.py --models REF…` (either side), `place.py sync`;
+5. proof: `kicad-cli pcb export step` to a scratch file names every product and warns of a
+   model it could not read; `render.py --audit` says `own` for every body.
+
 After either command the board still holds its old copy. Same library id →
 Konnect's `update_footprints_from_library` (dry run, then apply; it reads
 the `.kicad_mod` files from disk). It refuses a library footprint that

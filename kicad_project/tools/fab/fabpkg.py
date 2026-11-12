@@ -102,6 +102,12 @@ def main():
     pn, b = B.pn, B.b
     cu = [b.GetLayerName(l) for l in b.GetEnabledLayers().CuStack()]
     layers = cu + ["F.Mask", "B.Mask", "F.Silkscreen", "B.Silkscreen", "F.Paste", "B.Paste", "Edge.Cuts"]
+    # 14_fab's order form says "Silkscreen | none ...": no silk Gerber is written (the footprints'
+    # silk stays in the board file; a silk file in the package would be printed)
+    silk_row = re.search(r"^\|\s*Silkscreen\s*\|\s*\**\s*([^|*]*)", (bdir / "handoff" / "14_fab.md").read_text(), re.M | re.I)
+    if silk_row and silk_row.group(1).strip().lower().startswith("none"):
+        layers = [l for l in layers if "Silkscreen" not in l]
+        print("no silkscreen (14_fab): F.Silkscreen / B.Silkscreen left out of the package")
     run(["kicad-cli", "pcb", "export", "gerbers", "--layers", ",".join(layers), "--check-zones",
          "--subtract-soldermask", "-o", str(g) + "/", str(pcb)])
     run(["kicad-cli", "pcb", "export", "drill", "--format", "excellon", "--excellon-units", "mm",

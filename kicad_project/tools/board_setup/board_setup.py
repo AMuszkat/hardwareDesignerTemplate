@@ -201,7 +201,12 @@ def parse_fab(path):
         elif o == "solder mask":
             spec["mask_colour"] = next((k for k in COLOURS if k.lower() in c), None) or die(f"unknown mask colour '{choice}'")
         elif o == "silkscreen":
-            spec["silk_colour"] = next((k for k in COLOURS if k.lower() in c), None) or die(f"unknown silk colour '{choice}'")
+            if c.startswith("none"):
+                # no silkscreen is printed: the stackup's silk layers keep KiCad's "Not specified",
+                # and the fab package leaves the layers out (fabpkg reads the same row)
+                spec["silk_colour"], spec["no_silk"] = "Not specified", True
+            else:
+                spec["silk_colour"] = next((k for k in COLOURS if k.lower() in c), None) or die(f"unknown silk colour '{choice}'")
         elif o == "surface finish":
             spec["finish"] = FINISH.get(c) or die(f"unknown finish '{choice}'; add it to FINISH")
         elif o == "via process":
@@ -234,6 +239,9 @@ def parse_fab(path):
         elif n.startswith("minimum uvia"):
             if "not used" not in value.lower():
                 die(f"'{name}' is now '{value}'; microvias need handling in the script")
+        elif n.startswith("silkscreen") and "not used" in value.lower():
+            spec["notes"].append("no silkscreen: no silk minimum is typed into Board Setup and no silk "
+                                 "default is written; KiCad's silk checks are not this board's gates.")
         elif n.startswith("silkscreen"):
             m_h = re.search(r"(\d+(?:\.\d+)?)\s*mm high", value)
             m_s = re.search(r"(\d+(?:\.\d+)?)\s*stroke", value)
@@ -857,7 +865,8 @@ def compare(spec, board_dir):
                 if "Mask" in l["name"]:
                     cmp(f"stackup {l['name']} colour", spec.get("mask_colour"), l.get("color"))
                 if "Silk" in l["name"]:
-                    cmp(f"stackup {l['name']} colour", spec.get("silk_colour"), l.get("color"))
+                    # KiCad does not save "Not specified" (its default): no colour read back is that
+                    cmp(f"stackup {l['name']} colour", spec.get("silk_colour"), l.get("color") or "Not specified")
             cmp("copper finish", spec.get("finish"), st["finish"])
             tot = sum(float(l.get("thickness", 0)) for l in st["layers"])
             if spec["stackup_total"]:
