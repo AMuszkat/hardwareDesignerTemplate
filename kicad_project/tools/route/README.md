@@ -463,6 +463,16 @@ its docstring. What the spec has to be told:
   courtyard box still read PASS. Reserve a cut via's own corridor
   (`--corridors`) in the re-route's spec (`reserve_tracks`, width 0.01 so the
   keep-clear does not swallow a start point 0.2 mm away).
+- **`reachcmp.py`: the pour gate as a before / after comparison, at several widths.** `pourreach` at the
+  fab's minimum says whether a rail via is cut off; it does not show a via that reached through 0.3 mm
+  before a group and reaches through 0.12 mm after it. `reachcmp.py --board B --before <backup .kicad_pcb
+  or folder> --gate routing/reach_gate.json` runs both boards over the gate file's layers, boxes and widths
+  and prints only what changed (`REACH SAME` / `REACH CHANGED`). Board 1's bus crossing: on one power
+  layer the group cut two ring capacitors' vias off their rails from the supply's side (a box with
+  `"sides": "N"`, where the regulator is -- with all four sides everything "reaches"); on the other layer
+  nothing was cut off, but six I/O-rail balls went from >= 0.3 mm to 0.125-0.15 mm, which the report then
+  states with their currents. **Choose the layer of a group that may take either power layer by running
+  this on both** (swap the plan's two layer names, `pourreach --plans`): the guess was wrong here.
 - **Via sites for a fan of track ends: least total length, then uncross.**
   Giving each end of one layer the nearest free site by squared length handed
   board1's In3 three knots of crossing nets, and no amount of banning sites
