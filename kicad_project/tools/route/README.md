@@ -783,6 +783,37 @@ its docstring. What the spec has to be told:
 - **No via inside a goal pad** — an 0402's land with a drill in it is a solder
   thief at assembly.
 
+## An escape toward one neighbour: what a negotiation settles and what it does not (board1's DRAM, R1)
+
+- **End the router at the BGA's courtyard edge, not at a line in the channel.** Inside the field the tracks run at the
+  field's pitch, outside at the class pitch: between the two EVERY track has to shift, and a negotiation does not settle
+  N tracks that all move -- 37 nets to a line 1.7 mm out never converged, at any split, guided or not; to the edge the
+  same nets closed. The fan-out and the channel are then drawn by construction (sorted exits, lanes at the class pitch).
+- **Choose the grid for the pitch.** At 4 / 4 mil, 0.2032 mm is 5 cells of 1/24 mm = 0.2083: a gap the bound counts
+  three tracks in passes two. 0.5 / 49 mm puts it on 20 cells (0.2041). Cut the window to the field, and give the
+  bigger grid `--limit 30000000 --jacobi --corridor 1.5 --pres-mul 1.2` (6 s an iteration; without `--limit` the run
+  ends in seconds with "not shut in ... or --limit").
+- **After a stall, freeze what settled and re-negotiate the rest.** Take the partial's uncontested nets as a plan,
+  apply it, and run `--only` the contested nets -- with whoever fences them in (a BLOCKED SOURCE names the frozen track:
+  free that net too). Three nets closed in 4 iterations and five in 11 after 100 iterations of the whole half had not.
+  `--only` takes the spec's KEYS (`DRAM_CA2_A`), not short names: a name that matches nothing dies in `max()`.
+- **A via keeps its pad on its own layer, and that decides the exits.** Two pads of one inner layer on a 0.707 mm
+  diagonal leave 0.002 mm: the bound counts one track there, a router none. Grow every radius by 0.01 mm in the
+  capacity model, and choose WHICH nets take the other layer by the gaps their holes open.
+- **`fanout.py` flow guides are one flow.** A min-cost flow's paths are not planar between two destinations and it will
+  send a net of one channel out through the other's side: one flow per group with a fence of posts between them, and
+  each net `avoid`s the other group's half in the run (two runs that do not see each other shorted at apply).
+- **Draw a differential pair's escape; route the singles round it.** A router takes each line the short way: it split
+  a pair round a via, 1.75 mm apart. A build script draws both necks converging before the edge and the coupled lines
+  from it -- at the COUPLED pitch already where the two widen side by side (necks at the neck pitch short when they widen).
+- **"own copper" in a BLOCKED SOURCE can be another group's.** Two of the nets had escapes left by a different group
+  (laid when a neighbour was re-routed); list every track of the nets on the board before routing them.
+- **Count the spacing rule before the split, and the order before the escape.** A "5 x from other signals" rule for the
+  pairs' layer decides how many single-ended nets that layer can carry across the channel at all (pairs 0.512 + 0.905
+  each side, a single 0.181 at 0.362): a split made by escape capacity alone needed 16.3 mm of a 15 mm channel. And an
+  escape that closes is not yet an order the far BGA can take: read the order off the plans and give it to the far
+  side's fanout model BEFORE polishing the escape -- here the layer's order was infeasible, found after the escape closed.
+
 ## When `netgroup.py` cannot end: BLOCKED, STUCK, and the exit codes
 
 A run that cannot produce a plan stops early and prints which nets, where, and by
