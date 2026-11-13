@@ -559,6 +559,19 @@ its docstring. What the spec has to be told:
   track width, or a row that must sit between grid lines (two tracks in 0.555 mm), is redrawn in the script
   that merges the layers, and `check` judges the result. A table of every line's delay (per-layer ps/mm from
   the handoff, each via by the depth it is used over) after every run is what makes it converge: seven runs.
+- **A via a plan lays inside a BGA courtyard carries `"nfp": true`, and the board is read back for it.** Where the fab
+  removes non-functional pads (14_fab), a via without it keeps a pad on every layer: DRC is silent, the planes lose
+  0.02 mm a side round each one and the order form says something the board does not (board 1's RV22.4: three site
+  vias a hand-merged plan laid; the fanout tools set it, a merged plan does not). `GetRemoveUnconnected()` on each
+  new via before the request.
+- **An area rule whose area is wider than the fab's is a hole in DRC: measure what it relaxes.** KiCad's
+  `intersectsCourtyard` relaxes a gap wherever BOTH items touch the courtyard -- a track laid along the courtyard
+  line is relaxed for its whole length -- and a memory's courtyard can be 3 mm wider each way than its ball array,
+  on both sides of the board. Board 1 passed DRC with 0.091 mm gaps 3 mm from the nearest ball (RV22.2). A script
+  that samples each routed line and reports the smallest outer-layer gap OUTSIDE the true area (and, for a bus
+  with a spacing cap, each line's length under each gap) is the gate: `board1_module/build/emmc_spacing.py`,
+  60 lines of pcbnew, pads as boxes, BGA lands and vias as circles, a via on an inner layer only where it keeps
+  a pad.
 - **A script that builds a plan's `rips` from the board lists by group, never by net.** Board 1's builder took
   "every segment of the bus's nets" and ripped the neighbouring group's pull-up link, applied a minute before
   (2 segments, said plainly in `apply`'s last line: "removed 2 segments"). Read that line every time.
