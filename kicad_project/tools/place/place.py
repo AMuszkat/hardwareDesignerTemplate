@@ -641,6 +641,34 @@ def run_check(B, moves, verbose=True):
         hits = sorted({h for cr in X["rects"] for h in keepout_hits(B, cr, X["side"], r)})
         if hits:
             fails.append(f"KEEPOUT {r}: {', '.join(hits)}")
+    # a moved part's pad over copper that is already on the board: a via or a track of ANOTHER net under it is a
+    # short, and saving the board hides it -- pcbnew gives the touching copper the pad's net (board 1: R33's pad
+    # moved onto a capacitor's ground via and its supply via; both came back as LED_PWR, DRC silent, and only the
+    # via-link audit after the next group named one of them).  Judged at the board's copper clearance.
+    mm_ = B.pn.ToMM
+    cu_items = []
+    for t in B.b.GetTracks():
+        if t.GetClass() == "PCB_VIA":
+            q = t.GetPosition(); r_ = mm_(t.GetWidth(B.pn.F_Cu)) / 2
+            cu_items.append((None, (mm_(q.x) - r_, mm_(q.y) - r_, mm_(q.x) + r_, mm_(q.y) + r_), t.GetNetname(),
+                             f"via at ({mm_(q.x):.3f}, {mm_(q.y):.3f})"))
+        else:
+            a_, e_ = t.GetStart(), t.GetEnd(); w_ = mm_(t.GetWidth()) / 2
+            cu_items.append((t.GetLayerName(), (min(mm_(a_.x), mm_(e_.x)) - w_, min(mm_(a_.y), mm_(e_.y)) - w_,
+                                                max(mm_(a_.x), mm_(e_.x)) + w_, max(mm_(a_.y), mm_(e_.y)) + w_),
+                             t.GetNetname(), f"track on {t.GetLayerName()} at ({mm_(a_.x):.3f}, {mm_(a_.y):.3f})"))
+    for r in moves:
+        for p in after[r]["pads"]:
+            if not p["cu"]:
+                continue
+            lays = {"F": "F.Cu", "B": "B.Cu"}
+            pl = {lays.get(c, c) for c in p["cu"]}
+            for lay, bx_, net_, what in cu_items:
+                if (lay is None or lay in pl or p["hole"]) and net_ != p["net"] and rgap(p["box"], bx_) < B.clearance:
+                    # a diagonal track's box is larger than its copper: only an axis-aligned one, or a via, is certain
+                    if lay is None or bx_[2] - bx_[0] < 0.3 or bx_[3] - bx_[1] < 0.3:
+                        fails.append(f"COPPER {r}.{p['num']}({p['net'].split('/')[-1] or 'no net'}) over a {what} of "
+                                     f"{net_.split('/')[-1] or 'no net'}: gap {rgap(p['box'], bx_):.3f} < {B.clearance:g} -- a short the save would rename")
     ok = not fails
     for fl in fails:
         print(fl)

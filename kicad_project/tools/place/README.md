@@ -34,6 +34,14 @@ interpreter. `gaps`, `check` and `sync` read the **saved** board: run Konnect
 `save_project` first when KiCad is open. Anything that writes the board needs
 KiCad closed and refuses while a lock file exists.
 
+**`check` judges a moved part's pads against the copper already on the board** (`COPPER R33.1(LED_PWR) over a via
+at (..) of GND: gap -0.090 < 0.0889`): a via or a track of another net under a pad is a short, and saving the board
+HIDES it -- pcbnew gives the touching copper the pad's net, so DRC is silent and parity is clean. Board 1 moved a
+pull-up onto a decoupling capacitor's two vias after routing had begun; both vias came back as the resistor's net
+and only the via-link audit of the next group named one. Placement plans made once copper exists are checked
+against it; if a save has already renamed something, compare every via's net by position with the last backup
+(`<board>.kicad_pcb.<step>-bak`, copied to a `.kicad_pcb` name -- `LoadBoard` returns None for any other suffix).
+
 ## `<board>/placement.json`
 
 Board data the scripts must not hard-code (the skeleton comes with every new
