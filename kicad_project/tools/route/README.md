@@ -575,6 +575,37 @@ its docstring. What the spec has to be told:
 - **A script that builds a plan's `rips` from the board lists by group, never by net.** Board 1's builder took
   "every segment of the bus's nets" and ripped the neighbouring group's pull-up link, applied a minute before
   (2 segments, said plainly in `apply`'s last line: "removed 2 segments"). Read that line every time.
+- **"converged" is not "routed as meant": read every length after a run.** A net's `avoid` at 1e8 is a
+  price, and negotiation outbids any price: a net whose way is shut ends "converged" THROUGH its own wall
+  (board 1: one of six strip nets 23 mm through the BGA's interior, a different one each run, the other five
+  on their lanes). The net far longer than its neighbours is the one that was shut in. Route it again ALONE:
+  the rest of the plan as `extra_tracks`, the escape hatch under a spec `"block"` -- `BLOCKED SOURCE` then
+  lists the wall, nearest first, and the last entries of that list name the real obstacle. On board 1 it
+  named three in turn, none of them congestion:
+  - **a guide between grid lines.** A guide snaps either way; two neighbours that snap towards each other
+    leave 4 cells where a lane needs 5. Put every guide point ON the grid (`G(x, y)`), lanes a whole number
+    of cells apart (5 cells of 0.5 / 11 for 0.1016 / 0.1016), and `"guide_reach"` under half a cell (0.02):
+    with one cell of play the same thing happens further along.
+  - **parallel 45-degree runs that turn at one height.** Lanes p apart are p / sqrt 2 apart on the diagonal
+    (0.227 -> 0.16 mm, under the clearance). Stagger the turns: each lane further out turns later by 3 cells
+    (0.257 mm between diagonals). 2 cells give 0.225 mm -- legal by 0.022 mm and still shut on the raster.
+  - **a lane a few micrometres clear of a fixed pad.** The router jogs one cell off it and the jog shuts the
+    next lane. A 0.5 mm power via beside a strait takes a lane the 0.4 mm arithmetic gave: count a strait's
+    lanes in CELLS from the real pads (0.968 mm is five 0.2032 lanes and four 5-cell ones).
+- **Out of a BGA ball straight, then turn** -- when the next ball's via keeps its pad on that layer (its own
+  track leaves there). A 45-degree run out of a ball passes it at 0.354 mm centre to centre against 0.352
+  asked: 0.002 mm, which the raster closes for one net of a row or another.
+- **Nets that enter a corridor from one side take its lanes in the order they enter; give the far sites out
+  in that same order**, or one wraps round another's site and the length cap goes. Two families that cross
+  in plan view (one set entering south and leaving north, the other the reverse) need a layer each -- a
+  member of one family fits on the other's layer only where it can pass beyond that family's END points.
+- **A leg's `"src"` is a grid point** -- a via site a leg STARTS from is snapped to the grid before it is
+  given to the group that ends there (`source ... is not a grid point` otherwise). A hop that starts at an
+  existing track's end takes a guide whose first segment goes ON in the direction the track arrives: left
+  free, it turns back after one cell and `check` fails `RULE angle` on a 0.02 mm stub.
+- **A via site kept open for a later group is a wall for this one.** A reserved site beside a column of
+  sites closed the only way north out of a pocket; the track it shut in went 32 mm round. Before fixing
+  sites, draw every track that must pass BETWEEN them, lane by lane.
 - **A foreign track that crosses a field's edge is cut at the edge** (netgroup, 2026-11): the part inside
   keeps the field's clearance, the part outside the class's. Judged whole by its two ends, another net's
   escape that ends on the ring took the class's 0.2032 all the way in and shut the one-site gap it shares
