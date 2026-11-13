@@ -3,7 +3,7 @@
 
     tools/kpy tools/route/pourreach.py --board board1 --layer In4.Cu --box 21.705,14.205,36.295,28.795 \\
         --vias placement/vias_U1.json --pad-nets VDD_SOC,VDD_ARM,VDD_GPU_VPU_DRAM,NVCC_DRAM \\
-        [--plans routing/R1_esc_In4.json ...] [--nfp] [--min-width 0.1] [--sides W,N,S] [--json out.json]
+        [--plans routing/R1_esc_In4.json ...] [--nfp | --board-pads] [--clr-track 0.1016] [--min-width 0.1] [--sides W,N,S] [--json out.json]
 
 A signal track routed through a power layer's via field can close the last gap between a
 rail's via and the rest of its pour: DRC passes (there is no pour yet), the fill later leaves
@@ -45,6 +45,9 @@ def main():
     ap.add_argument("--pad-nets", required=True, help="the pours this layer carries (comma list)")
     ap.add_argument("--nets", default=None, help="test only these pour nets (default: all --pad-nets)")
     ap.add_argument("--nfp", action="store_true", help="other nets' vias inside --box are holes here")
+    ap.add_argument("--board-pads", action="store_true",
+                    help="a via ON THE BOARD is a pad or a bare hole on --layer as the board has it (its own size, flashed or "
+                         "not), wherever it stands -- --nfp then holds for the --vias models and the plans only")
     ap.add_argument("--via-pad", type=float, default=0.4)
     ap.add_argument("--drill", type=float, default=0.2)
     ap.add_argument("--clr-track", type=float, default=0.0889, help="pour to another net's track / pad")
@@ -100,9 +103,18 @@ def main():
             if p.IsOnLayer(lid):
                 bb = p.GetBoundingBox()
                 pads.append((short(p.GetNetname()), B.mm(bb.GetLeft()), B.mm(bb.GetTop()), B.mm(bb.GetRight()), B.mm(bb.GetBottom())))
+    asboard = {}                                # (x, y) -> (flashed on --layer, pad, drill) of a via on the board
+    if a.board_pads:
+        B.b.BuildConnectivity()                 # FlashLayer asks what joins the via on the layer
     for t in B.b.GetTracks():
         if t.Type() == pn.PCB_VIA_T:
             vias.append((short(t.GetNetname()), B.mm(t.GetPosition().x), B.mm(t.GetPosition().y), False))
+            if a.board_pads:
+                try:
+                    fl = bool(t.FlashLayer(lid))
+                except Exception:                    # an older pcbnew: the flag alone
+                    fl = not t.GetRemoveUnconnected()
+                asboard[(round(vias[-1][1], 4), round(vias[-1][2], 4))] = (fl, B.mm(t.GetWidth(lid)), B.mm(t.GetDrillValue()))
         elif t.GetLayer() == lid:
             tracks.append((short(t.GetNetname()), (B.mm(t.GetStart().x), B.mm(t.GetStart().y)),
                            (B.mm(t.GetEnd().x), B.mm(t.GetEnd().y)), B.mm(t.GetWidth()), False))
@@ -138,6 +150,10 @@ def main():
 
         for n_, x, y, plan in vias:
             if n_ == net or (plan and not with_plans):
+                continue
+            real = asboard.get((round(x, 4), round(y, 4)))
+            if real:
+                disc(x, y, (real[1] / 2 + a.clr_track if real[0] else real[2] / 2 + a.clr_hole) + half)
                 continue
             hole = a.nfp and n_ not in pours and inbox(x, y)
             disc(x, y, (a.drill / 2 + a.clr_hole if hole else a.via_pad / 2 + a.clr_track) + half)

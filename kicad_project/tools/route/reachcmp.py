@@ -17,7 +17,7 @@ The gate file is the board's (its numbers do not belong in a tool):
     {"layers": {"In4.Cu": ["VDD_SOC", "VDD_ARM"], "In5.Cu": ["+3V3", "+1V8"]},
      "boxes": [{"name": "U1 courtyard", "box": [21.705, 14.205, 36.295, 28.795], "sides": "W,N,E,S"},
                {"name": "from the PMIC", "box": [17.0, 7.5, 36.295, 28.795], "sides": "N", "layers": ["In4.Cu"]}],
-     "widths": [0.1, 0.175, 0.3, 0.5]}
+     "widths": [0.1, 0.175, 0.3, 0.5], "clr_track": 0.1016, "board_pads": true}
 """
 import argparse
 import json
@@ -49,10 +49,10 @@ def board_copy(before, board_dir):
     return str(tmp), tmp.parent
 
 
-def cut(board, layer, nets, box, sides, w, res):
+def cut(board, layer, nets, box, sides, w, res, extra=("--nfp",)):
     js = tempfile.mktemp(suffix=".json")
     r = subprocess.run([str(KP / "tools" / "kpy"), str(HERE / "pourreach.py"), "--board", board, "--layer", layer,
-                        "--box", ",".join(str(v) for v in box), "--pad-nets", ",".join(nets), "--nfp",
+                        "--box", ",".join(str(v) for v in box), "--pad-nets", ",".join(nets), *extra,
                         "--min-width", str(w), "--sides", sides, "--res", str(res), "--json", js],
                        cwd=str(KP), capture_output=True, text=True)
     if not os.path.exists(js):
@@ -72,6 +72,13 @@ def main():
     bdir = Path(boardsel.resolve(a.board))
     gate = json.load(open(bdir / a.gate if not os.path.isabs(a.gate) else a.gate))
     widths = [float(v) for v in a.widths.split(",")] if a.widths else gate.get("widths", [0.1, 0.175, 0.3, 0.5])
+    # the gate file says how copper is read: "clr_track" (pourreach's default is the OUTER escape's 0.0889; an inner
+    # layer's rule is the fab's inner clearance) and "board_pads" (each via as the board has it on the layer, pad or
+    # bare hole, its own size -- without it every other net's via inside a box is taken as a bare hole)
+    extra = ["--board-pads" if gate.get("board_pads") else "--nfp"]
+    if gate.get("clr_track"):
+        extra += ["--clr-track", str(gate["clr_track"])]
+    print(f"gate: {' '.join(extra)}; widths {widths}")
     before, tmp = board_copy(a.before if os.path.isabs(a.before) else KP / a.before, bdir)
     changed = 0
     try:
@@ -80,11 +87,12 @@ def main():
                 if bx.get("layers") and layer not in bx["layers"]:
                     continue
                 for w in widths:
-                    b, n = cut(before, layer, nets, bx["box"], bx["sides"], w, a.res)
-                    c, _ = cut(str(bdir), layer, nets, bx["box"], bx["sides"], w, a.res)
+                    b, n = cut(before, layer, nets, bx["box"], bx["sides"], w, a.res, extra)
+                    c, n2 = cut(str(bdir), layer, nets, bx["box"], bx["sides"], w, a.res, extra)
                     new, gone = sorted(c - b), sorted(b - c)
                     changed += len(new)
-                    print(f"{layer} {bx['name']:18s} >= {w:5.3f} mm: cut off {len(b):2d} -> {len(c):2d} of {n}"
+                    # the rail vias in the box, before and after: a change that ADDS vias (a capacitor's) shows here
+                    print(f"{layer} {bx['name']:18s} >= {w:5.3f} mm: cut off {len(b):2d} -> {len(c):2d} of {n if n == n2 else f'{n} -> {n2}'}"
                           + (f"   NEWLY CUT {new}" if new else "") + (f"   now reach {gone}" if gone else ""))
     finally:
         if tmp:

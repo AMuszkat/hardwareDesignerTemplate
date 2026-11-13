@@ -473,6 +473,31 @@ its docstring. What the spec has to be told:
   nothing was cut off, but six I/O-rail balls went from >= 0.3 mm to 0.125-0.15 mm, which the report then
   states with their currents. **Choose the layer of a group that may take either power layer by running
   this on both** (swap the plan's two layer names, `pourreach --plans`): the guess was wrong here.
+  **The gate file also says how copper is read**: `"clr_track": 0.1016` (pourreach's default 0.0889 is an
+  OUTER escape's rule; a power layer is judged at the fab's inner clearance) and `"board_pads": true`
+  (`pourreach --board-pads`: each via ON THE BOARD is the pad or the bare hole the board has on that layer,
+  its own size -- without it every other net's via inside a box is taken as a bare hole, which is wrong for
+  a via site outside a BGA courtyard, where the pad stays). Each line prints the rail vias in the box
+  before -> after: a change that adds a part's vias shows there.
+- **Before the pour gate, every part in or beside the change gets its own vias on the gate's scratch copy,
+  and its area is a box of the gate.** "It has no supply via yet" read as a pass, and a capacitor's last
+  via sites had been taken by the group under review (board 1's RV24: a decoupling capacitor 2 mm from its
+  pin with 88 in-pad sites before the group and 0 after). List the bottom parts under a new fan of tracks,
+  find each one's nearest site that is legal on BOTH power layers (outside a BGA courtyard a via keeps its
+  pad on every layer), lay them on a copy, then gate -- a via that does not reach its rail there means the
+  part moves, and that belongs in the same request.
+- **Escapes that end on a GND layer take the via sites nearest the BGA, and two of them never end on
+  NEIGHBOURING sites.** Two plane-layer tracks that leave side by side and end on vias one pitch apart close
+  the plane between them: the two antipads merge and the strip is an island with no ground via -- DRC has
+  no test for it and no pour exists yet to show it. Leave one site empty between them (about 0.5 mm of
+  plane then joins the strip to the rest), keep such tracks from under a pad that needs the plane, and
+  measure before the request: raster the layer as a pour would fill it and list every piece that does not
+  reach the window's border (board 1's `build/gnd_islands.py`; 0.8 mm2 under a bias resistor's pad).
+- **KiCad's DRC report stops at 199 violations a test and 499 unconnected items.** On an unrouted board
+  "via_dangling 199, unconnected 499, as before" is the limit both times and says nothing about the group
+  just routed: `place.py drc` / `route.py audit` mark such a count "AT KiCad's report limit -- at least that
+  many". Judge a routed group by `route.py status`' open links and by walking each net's own copper from
+  its first pad to its last via (track ends that stop inside a via's pad count as joined).
 - **Via sites for a fan of track ends: least total length, then uncross.**
   Giving each end of one layer the nearest free site by squared length handed
   board1's In3 three knots of crossing nets, and no amount of banning sites

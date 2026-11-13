@@ -1694,10 +1694,16 @@ def drc_summary(B, d, msg):
         return v["type"] == "lib_footprint_mismatch" and refs and refs <= edited
     aside = [v for v in d.get("violations", []) if set_aside(v)]
     viol = collections.Counter(v["type"] for v in d.get("violations", []) if not set_aside(v))
+    # KiCad's report stops at 199 violations a test and 499 unconnected items: a count AT the limit is "at least",
+    # stays the same whatever a group routes, and says nothing about it (board1's RV24.7: "as before" at the limit)
+    capped = sorted(t for t, n in viol.items() if n >= 199)
     out.append(f"violations: {dict(viol) or 'none'}"
                + (f" ({len(aside)} lib_footprint_mismatch on footprints `place.py silk` edited -- "
-                  f"placement.json 'silk_edited' -- set aside)" if aside else ""))
-    out.append(f"unconnected: {len(d.get('unconnected_items', []))}")
+                  f"placement.json 'silk_edited' -- set aside)" if aside else "")
+               + (f" [{', '.join(capped)}: AT KiCad's report limit of 199 a test -- at least that many]" if capped else ""))
+    n_unc = len(d.get('unconnected_items', []))
+    out.append(f"unconnected: {n_unc}" + (" [AT KiCad's report limit of 499 -- at least that many; `route.py status` counts the open links, "
+                                          "and a routed group is judged net by net]" if n_unc >= 499 else ""))
     bad = []
     for v in d.get("schematic_parity", []):
         who = " ".join(i.get("description", "") for i in v.get("items", []))
