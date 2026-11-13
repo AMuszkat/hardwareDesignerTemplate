@@ -545,6 +545,23 @@ its docstring. What the spec has to be told:
   but no guides it took the shorter way round for one net and stalled on two crossings; guided, 43
   iterations. A lane narrower than the grid (0.026 mm) is drawn (`extra_tracks`) and the leg ends on
   its outer end.
+- **Length for a match is laid as loops the router is walled into, not as guides alone.** A `"guide"` is a
+  price: a cell between a loop's two legs is near the guide too, so every loop was cut short (board 1's eMMC:
+  11 lines to +/-1 mm of the clock in time, 5 to 10 mm to add on each). What worked, one negotiated run per
+  layer in 4 s: each line's loop drawn in its guide, on the side of the bundle that line has free (nest them:
+  the outer line the deeper loop), `"guide_reach": 0.05-0.1`, and the INSIDE of the loop shut to that net alone
+  -- `"avoid": [[x0, y0, x1, y1, layer, 1e8]]`. The wall, not the guide, sets a bump's height (its top comes
+  one cell beyond the wall's end); make it at least 0.25 mm thick -- the plan writer's straightening pulled a
+  run through a 0.1 mm one, avoid cells being no obstacle to it -- and close its base on real copper (a via,
+  another net's track), or the net goes round the wrong end. A net that has NO legal path pays the 1e8 and
+  goes through the wall: the plan then shows a track inside a wall, which is the sign that a lane you counted
+  on is shut (measure the pads, the grid rounds a 0.128 mm need to 0.15). A corner the grid leaves under one
+  track width, or a row that must sit between grid lines (two tracks in 0.555 mm), is redrawn in the script
+  that merges the layers, and `check` judges the result. A table of every line's delay (per-layer ps/mm from
+  the handoff, each via by the depth it is used over) after every run is what makes it converge: seven runs.
+- **A script that builds a plan's `rips` from the board lists by group, never by net.** Board 1's builder took
+  "every segment of the bus's nets" and ripped the neighbouring group's pull-up link, applied a minute before
+  (2 segments, said plainly in `apply`'s last line: "removed 2 segments"). Read that line every time.
 - **A foreign track that crosses a field's edge is cut at the edge** (netgroup, 2026-11): the part inside
   keeps the field's clearance, the part outside the class's. Judged whole by its two ends, another net's
   escape that ends on the ring took the class's 0.2032 all the way in and shut the one-site gap it shares
