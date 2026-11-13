@@ -493,6 +493,21 @@ its docstring. What the spec has to be told:
   plane then joins the strip to the rest), keep such tracks from under a pad that needs the plane, and
   measure before the request: raster the layer as a pour would fill it and list every piece that does not
   reach the window's border (board 1's `build/gnd_islands.py`; 0.8 mm2 under a bias resistor's pad).
+- **`lanecount.py`: how many more tracks fit across a line, and WHERE.** `tools/kpy tools/route/lanecount.py BOARD.kicad_pcb --layer L
+  --x x0,x1 --y y1,y2,...` lists, per line, the runs where a track's centre may lie and what is there now. Read the runs, not
+  the total: "8 more fit" was a corridor behind three other legs plus two dead-end slots beside a via, and the strait took
+  one net fewer than wanted. Count a strait lane by lane before a plan sends one more net through it.
+- **Parallel 45-degree runs between two obstacles are counted in x - y** (or x + y): n runs need (n - 1) x 0.2874 mm of it at
+  4 mil spacing, 0.318 on a 0.0455 grid (7 cells, 0.225 mm apart), plus each obstacle's own keep-out x 1.414. Six runs
+  wanted 1.59 between two vias 1.50 apart: one via site moved 0.14 mm, by hand, before any router ran.
+- **`gndislands.py`: a plane island before there is a pour** (`dump` with KiCad's python, `find` with numpy / scipy): rasters a GND
+  layer as a pour would fill it and lists every piece that does not reach the window's border, with the ground vias in it,
+  and any escape under a named pad. A standing gate wherever escapes end on a ground layer.
+- **A GND or rail track in a plan puts that whole net before the shape rule**: two short bottom links brought 15 pad-and-via
+  notches of GND / +1V8 from all over the board up as "new". Keep rail and ground links for the power group, where the net's
+  shape is settled once; a signal group brings vias in pads, which the rule passes.
+- **A site ends at its via.** A link from a site via to a far pad through several bends is judged by the via-link rule (one
+  straight segment); draw such links with the onward routes, not with the escape group.
 - **KiCad's DRC report stops at 199 violations a test and 499 unconnected items.** On an unrouted board
   "via_dangling 199, unconnected 499, as before" is the limit both times and says nothing about the group
   just routed: `place.py drc` / `route.py audit` mark such a count "AT KiCad's report limit -- at least that

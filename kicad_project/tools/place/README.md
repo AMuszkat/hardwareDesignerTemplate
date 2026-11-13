@@ -130,6 +130,10 @@ Parts are placed in the order listed, each becoming an obstacle for the next,
 so put the big or critical ones first. It writes `<spec>.plan.json` for
 `check` and `apply`; it never writes the board.
 
+**`auto` sees footprints, not copper.** A spot it returns can lie on a via or under a top-layer track (board 1: three of five
+spots). Run its plan through `check` -- which does report `COPPER <pad> over a via` -- and `drc` before believing it, and put
+areas whose vias are still to come (under a regulator's exposed pad) in the spec's `avoid`.
+
 The search stays exhaustive; the distance to a rail's nearest pad comes from a bucket grid
 (`PointGrid.nearest`, the same minimum) -- under a BGA a rail is hundreds of pads, and asking
 each of them at every grid position was the whole run time (42 s -> 6 s on the large fixture,
