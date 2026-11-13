@@ -528,6 +528,32 @@ its docstring. What the spec has to be told:
   Inside the field box the escape is modelled thin and written thin. Without it the whole run inside the
   courtyard came out at the neck width: 9.3 mm against #39's 4 mm cap on board 1's eMMC, whose
   11.5 x 13 mm body surrounds a 6.5 x 6.5 mm array.
+- **A bus between two BGAs: count the lanes with the HOLE's clearance, and prove the order at both ends
+  before the first escape.** On an inner layer a via with its pad removed is still a hole, and copper keeps
+  the board's copper-to-hole from it: two vias 0.5 mm apart pass a track only if `0.5 - 2 x (drill / 2 +
+  copper-to-hole)` holds one (board 1: 0.2 mm drill, 0.1778 -> -0.056 mm, NO orthogonal lane at all; the
+  only ways through a via column are an empty site -- 0.444 mm, two 4 mil tracks -- and the diagonal lane
+  between two diagonal vias, 0.05 mm of slack hole to hole, 0.026 hole to pad, 0.002 pad to pad). So a via
+  in the pad of an OUTER-column ball walls in the ball behind it on every inner layer. Board 1's eMMC: with
+  vias under the three outer balls the clock left by a 4.5 mm loop through the field, the bus's order at
+  the SoC could not be laid at the memory, and the group read as "one inner layer is not enough". Fix,
+  without a layer: an outer-row ball leaves on the top with NO via in its pad and takes its via outside
+  the field -- its top leg crosses over the inner lines, so each such net can be put anywhere in the
+  inner layer's order. Routed as one spec per layer with the via sites FIXED (`extra_vias`, a row across
+  the bundle in the inner layer's order) and a `"guide"` per net at `"guide_cost": 20`: left to itself the
+  negotiation (two layers, free vias) did not converge in 300 iterations x 4 seeds, and with fixed sites
+  but no guides it took the shorter way round for one net and stalled on two crossings; guided, 43
+  iterations. A lane narrower than the grid (0.026 mm) is drawn (`extra_tracks`) and the leg ends on
+  its outer end.
+- **A foreign track that crosses a field's edge is cut at the edge** (netgroup, 2026-11): the part inside
+  keeps the field's clearance, the part outside the class's. Judged whole by its two ends, another net's
+  escape that ends on the ring took the class's 0.2032 all the way in and shut the one-site gap it shares
+  with a second escape (board 1: BT_PCM_CLK's 0.343 halo across a 0.319 mm lane; `BLOCKED SOURCE` named
+  the track with its nearest cell 0.325 away -- a halo wider than the field's rule is the sign).
+- **Deleting copper with pcbnew in a script: `board.RemoveNative(item)`, never `board.Remove(item)`** in a
+  loop over `GetTracks()` -- the SWIG proxy frees the item twice and the interpreter dies with a
+  segmentation fault AFTER the loop, before `SaveBoard` (exit 139, the board untouched). `route.py rip`
+  uses RemoveNative; a what-if script must too.
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.

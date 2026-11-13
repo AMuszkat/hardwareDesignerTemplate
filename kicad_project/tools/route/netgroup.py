@@ -198,6 +198,25 @@ def heading(a, b):
     return int(round(ang / 45.0)) % 8 + 1
 
 
+def _clip(a, b, box, m=0.0):
+    """The part of segment a-b inside an axis-aligned box (grown by m), as (t0, t1) along it; None when
+    none of it is inside (Liang-Barsky)."""
+    x0, y0, x1, y1 = box[0] - m, box[1] - m, box[2] + m, box[3] + m
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t0, t1 = 0.0, 1.0
+    for p_, q_ in ((-dx, a[0] - x0), (dx, x1 - a[0]), (-dy, a[1] - y0), (dy, y1 - a[1])):
+        if abs(p_) < 1e-12:
+            if q_ < 0:
+                return None
+            continue
+        r_ = q_ / p_
+        if p_ < 0:
+            t0 = max(t0, r_)
+        else:
+            t1 = min(t1, r_)
+    return (t0, t1) if t1 - t0 > 1e-9 else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
@@ -484,10 +503,32 @@ def main():
         else:
             # a track on a layer this group does not route on still blocks VIAS:
             # a through via lands on every layer (static_track skips the layer block itself)
-            F = field_of(*t["a"])
-            inside = F is not None and t["layer"] in F.get("open", []) and field_of(*t["b"]) is F
             G.mark(f"track of {t['net'] or 'no net'} on {t['layer']}, {at_(*t['a'])} to {at_(*t['b'])}, {t['o']}")
-            G.static_track(t["layer"], t["a"], t["b"], t["w"], clr=F["_clr"] - F["_shrink"] if inside else maze.PADCLR)
+            # a track that CROSSES a field's edge (another net's escape, laid out to the ring) is cut there:
+            # the part inside keeps the field's clearance, the part outside the class's.  Judged whole by its
+            # two ends it took the class's clearance all the way in, and shut the one-site gap in a via column
+            # that it shares with a second escape (board 1: BT_PCM_CLK's 0.343 halo across the 0.319 mm lane
+            # beside it at U1's row 17.5, which DRC passes at the courtyard's 0.1016)
+            pieces = [(t["a"], t["b"], None)]
+            for F in FO:
+                if t["layer"] not in F.get("open", []):
+                    continue
+                nxt = []
+                for a_, b_, f_ in pieces:
+                    cut = None if f_ is not None else _clip(a_, b_, F["_box"], F["_m"])
+                    if cut is None:
+                        nxt.append((a_, b_, f_))
+                        continue
+                    u0, u1 = cut
+                    pt = lambda u: (a_[0] + (b_[0] - a_[0]) * u, a_[1] + (b_[1] - a_[1]) * u)
+                    if u0 > 1e-9:
+                        nxt.append((a_, pt(u0), None))
+                    nxt.append((pt(u0), pt(u1), F))
+                    if u1 < 1 - 1e-9:
+                        nxt.append((pt(u1), b_, None))
+                pieces = nxt
+            for a_, b_, f_ in pieces:
+                G.static_track(t["layer"], a_, b_, t["w"], clr=f_["_clr"] - f_["_shrink"] if f_ is not None else maze.PADCLR)
     board_vias = collections.defaultdict(list)
     for v in bvias:
         board_vias[v["net"]].append((v["x"], v["y"]))
