@@ -1498,6 +1498,23 @@ class Board:
             rel = self.get(attr)
             if rel and os.path.exists(os.path.join(ROOT, rel)):
                 copies[dst] = rel
+        # DRAWINGS: something concept drew or measured that a rule cites, as
+        # DATA beside the prose -- (file name, repo-relative source, what it
+        # is). A rule that says "as drawn by concept" names its file here.
+        drw = self.get("DRAWINGS") or ()
+        if drw:
+            L = ["# Drawings -- what concept drew, as data", "",
+                 "Each file is the drawing a rule or an answer cites (`10_layout.md`, `07_answers.md`): the objects "
+                 "themselves, in the routing plan's shape (tracks: net, layer, width, pts; vias: net, at, pad, drill; mm, "
+                 "board coordinates). A drawing is evidence and a starting point, never copper to apply as it is: it was "
+                 "checked against the board state its own header names.", "",
+                 "| file | what it is |", "|---|---|"]
+            for name, rel, what in drw:
+                if not os.path.exists(os.path.join(ROOT, rel)):
+                    die(f"{self.id} DRAWINGS names {rel}, which does not exist")
+                copies["drawings/" + name] = rel
+                L.append(f"| `drawings/{name}` | {what} |")
+            files["16_drawings.md"] = "\n".join(L) + "\n"
         return files, copies, ds
 
     def page_hashes(self, files, copies, ds):
@@ -1536,6 +1553,7 @@ class Board:
                 with open(os.path.join(new, n), "w") as f:
                     f.write(t)
             for dst, rel in copies.items():
+                os.makedirs(os.path.dirname(os.path.join(new, dst)), exist_ok=True)
                 shutil.copy2(os.path.join(ROOT, rel), os.path.join(new, dst))
             os.makedirs(os.path.join(new, "datasheets"))
             for _, mm in ds:

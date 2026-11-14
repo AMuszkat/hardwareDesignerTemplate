@@ -192,6 +192,10 @@ RAILS = ()                # power nets beyond GROUND_NETS, drawn as power symbol
 
 DIAGRAM = None            # e.g. "design/diagrams/{{ID}}_block.svg"   [06_block_diagram.svg]
 FLOORPLAN = None          # e.g. "design/diagrams/{{ID}}_floorplan.svg" [11_floorplan.svg]
+# Drawings concept made that a rule or an answer cites ("as drawn by concept"),
+# published as data: (file name, repo-relative source, what it is). A count
+# in prose cannot be reproduced; the objects can.   [16_drawings.md, drawings/]
+DRAWINGS = []             # e.g. ("escape_j1.json", "tools/handoff/drawings/{{ID}}/escape_j1.json", "J1's escape, 34 pins")
 ANSWERS = "tools/handoff/answers/{{ID}}.md"           # [07_answers.md]
 REVIEWS = "tools/handoff/reviews/{{ID}}.md"           # [15_reviews.md] the reviewers' verdicts
 
