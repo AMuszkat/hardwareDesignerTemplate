@@ -165,7 +165,11 @@ written: a one-off Konnect fix can take its arguments from them.
   redraw of a board drawn by an older plan may reorder the pages and move the root's sheet symbols, re-lay and
   re-caption every sheet's frames, and drop a text field the plan no longer writes (a "DNP" field, KiCad's own
   flag kept). None moves a connection (`parity` proves it), but a reviewer who compares the two drawings finds
-  them: list them under the request's Scope (board1's RV28.1).
+  them: list them under the request's Scope (board1's RV28.1). `tools/.venv/bin/python tools/sch/schdiff.py
+  --board boardN` prints that list -- the board's sheets against the backup `draw` just made, as sets (parts and
+  fields, nets, and per sheet the symbols, wires, labels and frames that sit elsewhere, paper, rev); a text diff
+  cannot (a draw re-orders every file). A backup folder read directly fails in `plan.Source.from_sch` (the root
+  sheet is found by the folder's name): the script stages it under the board's name.
 
 - ⚠ **A named net a ladder closes on its own carries its label.** A row
   wire with no label is a net KiCad names after a pin (`Net-(D1-A)`), and
