@@ -161,6 +161,12 @@ Footprint field, so `frame`, `flags` and `footprints` stay only for a board
 drawn by the older Konnect replay. The `ops.json` call lists are still
 written: a one-off Konnect fix can take its arguments from them.
 
+- **A draw for a small change re-writes every sheet, and its review request says so.** Besides the change, a
+  redraw of a board drawn by an older plan may reorder the pages and move the root's sheet symbols, re-lay and
+  re-caption every sheet's frames, and drop a text field the plan no longer writes (a "DNP" field, KiCad's own
+  flag kept). None moves a connection (`parity` proves it), but a reviewer who compares the two drawings finds
+  them: list them under the request's Scope (board1's RV28.1).
+
 - ⚠ **A named net a ladder closes on its own carries its label.** A row
   wire with no label is a net KiCad names after a pin (`Net-(D1-A)`), and
   `parity --handoff` then fails on the handoff's name for it. The planner
