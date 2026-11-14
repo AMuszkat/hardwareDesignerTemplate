@@ -25,6 +25,18 @@ It does exactly what the sync would for a NEW part and nothing else:
 It never touches a footprint that is already on the board -- that is
 `update_footprints_from_library`'s job, not this one.  Afterwards `place.py drc`
 must show the parity entry gone, and `place.py sync` must still exit 0.
+
+    tools/kpy tools/place/addfp.py --board board1 --replace L100 L102 [--dry-run]
+
+`--replace` is the one exception, KiCad's "Replace footprints with those
+specified by the symbols": a named part that IS on the board and whose
+schematic Footprint field names ANOTHER library footprint gets that one, at
+the old one's position, side and rotation, with the symbol link, the lock and
+the Reference / Value text placement carried over; the old one is removed
+last.  The pads move with the land, so copper that ended on an old pad is left
+where it was: a pad with copper on it is refused unless `--force` (rip the
+part's group first, `route.py rip`, so the manifests stay true).  A named part
+whose footprint already matches is left alone and listed.
 """
 
 import argparse
@@ -91,9 +103,14 @@ def main():
     ap.add_argument("refs", nargs="*")
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
     ap.add_argument("--at", help="x,y of the first one; the rest step 3 mm east (default: parked)")
+    ap.add_argument("--replace", action="store_true",
+                    help="the named parts are on the board with another footprint than the schematic names: swap it in place")
+    ap.add_argument("--force", action="store_true", help="--replace even when copper ends on a pad of the old footprint")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
+    if a.replace and not a.refs:
+        sys.exit("--replace takes the references to swap")
 
     B = P.Board(a.board)
     pn, b = B.pn, B.b
@@ -149,8 +166,31 @@ def main():
     have = set(B.fps)
     comps = netlist(B.pcb)
     todo = [r for r in (a.refs or sorted(comps)) if r not in have]
+    old_of = {}
+    if a.replace:
+        todo = []
+        for ref in a.refs:
+            if ref not in have:
+                sys.exit(f"{ref} is not on the board: add it without --replace")
+            c = comps.get(ref) or sys.exit(f"{ref} is not in the schematic netlist")
+            old = B.fps[ref]
+            if old.GetFPIDAsString() == c["fp"]:
+                print(f"{ref:6s} already {c['fp']}: left alone")
+                continue
+            hit = []                                   # copper that ends on a pad of the old land
+            for pad in old.Pads():
+                for t in b.GetTracks():
+                    if t.GetNetCode() != pad.GetNetCode() or not t.IsOnLayer(pad.GetPrincipalLayer()) and t.Type() != pn.PCB_VIA_T:
+                        continue
+                    ends = [t.GetPosition()] if t.Type() == pn.PCB_VIA_T else [t.GetStart(), t.GetEnd()]
+                    if any(pad.HitTest(e) for e in ends):
+                        hit.append(f"{pad.GetNumber()}:{pad.GetNetname()}")
+            if hit and not a.force:
+                sys.exit(f"{ref}: copper ends on its pads ({', '.join(sorted(set(hit)))}) -- rip its group first, or --force")
+            old_of[ref] = old
+            todo.append(ref)
     if not todo:
-        print("nothing to add")
+        print("nothing to replace" if a.replace else "nothing to add")
         return 0
     o = B.outline
     x0, y0 = (float(v) for v in a.at.split(",")) if a.at else (o[0], None)
@@ -192,10 +232,27 @@ def main():
         x_next += w + 1.0
         fp.SetPosition(pn.VECTOR2I(pn.FromMM(x), pn.FromMM(y)))
         b.Add(fp)                       # add FIRST
+        old = old_of.get(ref)
+        if old is not None:             # --replace: where the old one stands (on the board before Flip: a parentless Flip segfaults)
+            fp.SetPosition(old.GetPosition())
+            if old.IsFlipped():
+                fp.Flip(fp.GetPosition(), pn.FLIP_DIRECTION_LEFT_RIGHT)      # as place.py does
+            fp.SetOrientation(old.GetOrientation())
+            fp.SetPath(old.GetPath())
+            fp.SetLocked(old.IsLocked())
+            for t_old, t_new in ((old.Reference(), fp.Reference()), (old.Value(), fp.Value())):
+                t_new.SetPosition(t_old.GetPosition()); t_new.SetLayer(t_old.GetLayer())
+                t_new.SetVisible(t_old.IsVisible()); t_new.SetTextAngle(t_old.GetTextAngle())
+                t_new.SetMirrored(t_old.IsMirrored())
+            for k in ("Sheetname", "Sheetfile"):
+                if old.HasField(k):
+                    fp.SetField(k, old.GetField(k).GetText()); fp.GetField(k).SetVisible(False)
         for p in fp.Pads():              # then the nets: set before Add, they are lost
             n = c["pads"].get(p.GetNumber())
             if n:
                 p.SetNet(net(n))
+        if old is not None:
+            b.Remove(old)
         for t in (fp.Reference(), fp.Value()) if B.text_h > 0 and B.text_t > 0 else ():
             t.SetTextSize(pn.VECTOR2I(pn.FromMM(B.text_h), pn.FromMM(B.text_h)))
             t.SetTextThickness(pn.FromMM(B.text_t))
@@ -207,7 +264,7 @@ def main():
     with P.quiet_stderr():
         if not pn.SaveBoard(str(B.pcb), b):
             sys.exit("SaveBoard failed")
-    print(f"added {len(todo)}: {' '.join(todo)} (previous copy: {bak.name})")
+    print(f"{'replaced' if a.replace else 'added'} {len(todo)}: {' '.join(todo)} (previous copy: {bak.name})")
     return 0
 
 

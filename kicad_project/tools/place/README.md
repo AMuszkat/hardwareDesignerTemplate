@@ -321,6 +321,11 @@ API answering. When that path is closed:
   runs before it;
 - `addfp.py` adds footprints the schematic has and the board has not (from the
   schematic's own netlist; nets set **after** `Add`), parked off the board;
+  `addfp.py --replace REF…` is KiCad's "replace footprints with those the symbols name" for a part
+  already placed whose Footprint field changed (a new land for an inductor): the new footprint stands
+  at the old one's position, side and rotation with its symbol link, and a pad with copper on it is
+  refused (rip the group first). `rmfp.py` + `addfp.py` is not that route: `rmfp` refuses a reference
+  the schematic still has. Proof: `place.py drc` parity 0 with the new id;
 - `refresh.py --models REF…` copies the library footprint's 3D model list (path, offset, scale,
   rotate) onto the placed footprints, either side, and nothing else; `landsync.py` copies a pad's
   thermal-spoke angle with its shape (a circle made square kept 45 degrees, which KiCad saves as an
