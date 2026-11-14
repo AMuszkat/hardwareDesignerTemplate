@@ -30,6 +30,15 @@ folder name or a path; left out, it is this session's board (`HW_BOARD`), and
 another session's board is refused. A plan, spec or zone file is taken as
 typed, else inside the board folder (`routing/R1.json`).
 
+- **`padvias.py` -- vias IN a pad** (a regulator's output or input capacitor, an exposed pad): `--pads REF.PAD[:N],...`
+  keeps N centres (or as many as fit) inside each pad, legal on every copper layer (the other nets' copper by the larger
+  class clearance, holes by 14_fab's hole gaps, the via-to-pad gap from every OTHER pad), `--pitch` apart, spread from a
+  corner; `--count` is the survey (legal centres and how many fit per pad) to run BEFORE a bottom-side part is placed
+  under a power pad: board1 found a buck's output capacitor with 0 sites under two straps placed on the other side.
+  `stitch.py --only-pads` remains the tool for ONE via beside a small pad on a link.  SWIG hands out a new wrapper per
+  call: compare pads by reference, number and position, never with `is` (the first run found 0 sites everywhere --
+  each pad forbade itself).
+
 ## The gate is KiCad's DRC, not arithmetic of ours
 
 `check` writes the plan into a **scratch copy** of the board and runs KiCad's
