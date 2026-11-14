@@ -814,6 +814,17 @@ its docstring. What the spec has to be told:
   escape that closes is not yet an order the far BGA can take: read the order off the plans and give it to the far
   side's fanout model BEFORE polishing the escape -- here the layer's order was infeasible, found after the escape closed.
 
+- **Read what a model's best answer does with every exemption it was given.** A fanout model let a line that changes layer in
+  the channel out of the order rule ("it is on another layer"): its optimum sent one net from the BGA's north edge to the far
+  part's middle gap across every track of the layer it arrived on, and every count taken from it was too low (12 against
+  an infeasible half). A line that changes layer crosses the channel on ONE layer -- the one it arrives on if the via is at the
+  near end, the one it left on if at the far end -- and is in that layer's order like any other. Draw the three worst nets of
+  an answer before quoting its number.
+- **A through via for one more net in a pocket other groups cross is checked on EVERY layer first.** A site that is free on
+  the layers the net uses stood on four plane-layer lanes of an earlier group; `route.py check` reports them as shorts.
+  `west_pocket.py near`-style site finders must count all copper, and the cheaper way out is often no via at all (the net
+  stayed on its inner layer to a via under its pad).
+
 ## When `netgroup.py` cannot end: BLOCKED, STUCK, and the exit codes
 
 A run that cannot produce a plan stops early and prints which nets, where, and by
