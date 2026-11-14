@@ -69,6 +69,8 @@ def main():
     ap.add_argument("--plan", default=None)
     ap.add_argument("--keep", type=int, default=60, help="candidates kept per pin for the search (shortest first)")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--edge", type=float, default=None, help="via copper to the board outline (default: the guide's edge gate, else 0.4)")
+    ap.add_argument("--hole-edge", type=float, default=0.5, help="via hole to the board outline")
     ap.add_argument("--group", default="rowfan")
     a = ap.parse_args()
     a.board = R.P.board_dir_arg(a.board)
@@ -84,6 +86,21 @@ def main():
         pn.ZONE_FILLER(b).Fill(b.Zones())
     cu = list(b.GetEnabledLayers().CuStack())
     err = FM(0.002)
+    # the board outline: a row beside the edge (a connector's outer row) has a strip, not open board -- a via
+    # centre must lie inside the outline shrunk by what its copper and its hole each keep from it (board1: J1's
+    # outer row took a second via row 0.13 mm from Edge.Cuts)
+    eg = B.gates.get("edge")
+    edge = a.edge if a.edge is not None else float(eg.get("min", 0.4) if isinstance(eg, dict) else (eg or 0.4))
+    ew = max([mm(d.GetWidth()) for d in b.GetDrawings() if d.GetLayer() == pn.Edge_Cuts and hasattr(d, "GetWidth")] or [0.0]) / 2
+    inside = pn.SHAPE_POLY_SET()
+    try:
+        got = b.GetBoardPolygonOutlines(inside, True)     # KiCad 10: (outline, infer if necessary)
+    except TypeError:
+        got = b.GetBoardPolygonOutlines(inside)
+    if got:
+        inside.Deflate(FM(max(edge + r, a.hole_edge + hr) + ew), pn.CORNER_STRATEGY_ROUND_ALL_CORNERS, err)
+    else:
+        inside = None
     gone = {s for s in a.ignore_refs.split(",") if s}
     f = b.FindFootprintByReference(a.ref)
     want = [p for p in f.Pads() if p.GetNumber() in a.pins.split(",")]
@@ -214,6 +231,8 @@ def main():
                 v = pn.VECTOR2I(FM(x), FM(y))
                 if own.Contains(v):
                     continue                                     # inside its own pad's gap
+                if inside is not None and not inside.Contains(v):
+                    continue                                     # too near the board outline
                 if any(vf[l].Contains(v) for l in cu) or hf.Contains(v):
                     continue
                 bad = False
