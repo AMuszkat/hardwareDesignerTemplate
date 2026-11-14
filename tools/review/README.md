@@ -117,6 +117,16 @@ answer, and names it under *Measured by hand*; when a verdict is published,
 a measurement named there becomes a `geom.py` query (with a hand-computed
 case in the test), not a note.
 
+**A what-if drawing is checked against the board's whole rule set, not a
+typed list.** A drawing made on a snapshot to prove an option (an escape, a
+part shift) reads every limit from the snapshot's `handoff/fab.json` and
+`14_fab.md` custom rules -- hole to board edge and the measure KiCad takes
+it by (to the Edge.Cuts stroke) among them -- and from the layout rows that
+name pins (a pin that may not join a pad). Its last step is the board's own
+gates on a scratch copy with the drawing applied; until then its result is
+"drawn in the model", never "closes". One decision rested on a drawing whose
+typed rule list missed three of them.
+
 ## What it does
 
 1. **Freezes the board**: copies `kicad_project/<board>/` to
