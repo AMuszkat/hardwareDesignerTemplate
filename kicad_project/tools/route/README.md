@@ -982,6 +982,11 @@ docstring.
   17 of 25 pins and no via site -- after the stage was drawn over it. Count every row of a connector that a part on
   the other side covers, with that part's copper (`rowfan.py --inward`, `padvias.py --map` per net) before
   placing or routing the part above it.
+- **"With that part's copper" means its TOP tracks too, laid first.** A row's vias are through vias: the other
+  side's tracks over the row (a crystal's legs, LDO links, a sense line) take the same sites as its pads do.
+  board1's J1 counted 34 of 34 under the PMIC without them and 4-9 of 18 inner pins with them. Lay the other side's
+  copper as a plan, then search the row cluster by cluster (pins more than ~0.8 mm apart do not interact), each
+  `rowfan.py --plan` seeing the vias already chosen; the pins left over become runs to `padvias.py --map` sites.
 - `tests/fixture_pcb.py --kind prelayout` is the three historical failures;
   each must FAIL.
 - A waiver's `target` is a part (every check on it) or, for `rows`, `REF:SIDE`
