@@ -825,6 +825,19 @@ its docstring. What the spec has to be told:
   `west_pocket.py near`-style site finders must count all copper, and the cheaper way out is often no via at all (the net
   stayed on its inner layer to a via under its pad).
 
+## Three measurements no gate made (board1's RV27: three must-fix findings, each legal to DRC)
+
+- **`viawebs.py --board PCB --box ...`: antipads that merge.** A row of signal vias under a part, flashed on every inner layer,
+  0.67 mm apart: each plane keeps 0.070 mm webs between their clearances -- one slot, which `gndislands.py` passes (a slot that
+  reaches the box's edge is no island) and DRC does not test. `WEBS PASS|FAIL`; the cure is the via's own "remove unconnected
+  layers" (a plan via's `"nfp": true`), where the fab page allows it.
+- **`necklen.py --board PCB --match NET_`: a net's neck over BOTH outer layers.** A limit on the neck-down counts the top stub
+  out of the land AND the bottom-layer escape; a report that summed one layer passed 4.18 mm against 4. `NECKS PASS|FAIL`.
+- **Where a spacing rule starts is a coordinate: end the lines on the right side of it.** Lines drawn to "1 mm past the
+  courtyard" at x 37.30 stood 0.025 mm PAST the mark (the courtyard edge was 36.275, not 36.295), at fan-out spacing where the
+  wider rule already held; six router-made lines ran 0.59 mm past it. Read the courtyard edge off the board, end at or before
+  the mark, and list the nets with copper beyond it.
+
 ## When `netgroup.py` cannot end: BLOCKED, STUCK, and the exit codes
 
 A run that cannot produce a plan stops early and prints which nets, where, and by
