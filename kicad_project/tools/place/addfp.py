@@ -35,8 +35,10 @@ the old one's position, side and rotation, with the symbol link, the lock and
 the Reference / Value text placement carried over; the old one is removed
 last.  The pads move with the land, so copper that ended on an old pad is left
 where it was: a pad with copper on it is refused unless `--force` (rip the
-part's group first, `route.py rip`, so the manifests stay true).  A named part
-whose footprint already matches is left alone and listed.
+part's group first, `route.py rip`, so the manifests stay true), and so is a new
+pad that lands on another net's via or track: saved, that copper would take the
+pad's net and DRC would have nothing left to show.  A named part whose footprint
+already matches is left alone and listed.
 """
 
 import argparse
@@ -252,6 +254,26 @@ def main():
             if n:
                 p.SetNet(net(n))
         if old is not None:
+            # the new land on another net's copper: SaveBoard would re-net that copper to the pad's net (a via
+            # of GND under an LX pad became LX on board1, and DRC then shows nothing) -- refuse, name it
+            under = []
+            for pad in fp.Pads():
+                box = pad.GetBoundingBox()
+                for t in b.GetTracks():
+                    if t.GetNetCode() == pad.GetNetCode():
+                        continue
+                    via = t.Type() == pn.PCB_VIA_T
+                    if not via and not t.IsOnLayer(pad.GetPrincipalLayer()):
+                        continue
+                    grow = box.GetInflated(t.GetWidth(pn.F_Cu) // 2 if via else t.GetWidth() // 2)
+                    ends = [t.GetPosition()] if via else [t.GetStart(), t.GetEnd()]
+                    if any(grow.Contains(e) for e in ends):
+                        e = ends[0]
+                        under.append(f"{ref}.{pad.GetNumber()} ({pad.GetNetname()}) on a {'via' if via else 'track'} of "
+                                     f"{t.GetNetname()} at ({B.mm(e.x):.3f}, {B.mm(e.y):.3f})")
+            if under and not a.force:
+                sys.exit("the new land stands on another net's copper -- rip or move it first (a plan's ripvias / rips), "
+                         "or --force:\n  " + "\n  ".join(sorted(set(under))) + "\nnothing written")
             b.Remove(old)
         for t in (fp.Reference(), fp.Value()) if B.text_h > 0 and B.text_t > 0 else ():
             t.SetTextSize(pn.VECTOR2I(pn.FromMM(B.text_h), pn.FromMM(B.text_h)))
