@@ -62,7 +62,12 @@ project, no PCB, no `kicad-cli`) is told to the board / the user as is.
 ## 3. Review
 
 Spawn the agent — `schematic-reviewer` or `pcb-reviewer` — with the board,
-the id, the scope, the snapshot directory, the report path
+the id, the scope **in the reviewer's own words** (`fixes for RVk`, the
+routing or placement group, `fab release` or `all`: the pcb-reviewer's depth
+is its scope's row, so "fixes for RV12" gets the open findings and the
+changed objects checked, not the whole board again), the open findings of
+the review being fixed (ids and one line each, from
+`tools/handoff/reviews/boardN.md`), the snapshot directory, the report path
 `history/reviews/<YYYY-MM-DD>-<board>-<id>-<kind>.md`, and the line "your
 only scratch folder is `<snapshot>/tmpWork/`; never `/tmp` or a scratchpad"
 (its environment names a scratchpad outside the project, where every read
@@ -70,11 +75,19 @@ asks the user). A request whose scope
 covers both (a redraw after placement) gets both, in parallel. Wait for
 it; do not review the same thing yourself meanwhile.
 
+**The reviewer agents review; they are not a measuring service.** A question
+from a board (`answer-question`) that needs a number from a snapshot is
+answered with `tools/review/geom.py` yourself — `lengths`, `conn`, `stitch`,
+`coupled`, `overlap`, `probe` — or with the board tool that owns the question
+(`kicad_project/tools/route/README.md`); a route-options or what-if study
+handed to `pcb-reviewer` ran 13–55 minutes each time it was tried.
+
 ## 4. Verify, then triage — the reviewer's report is not the verdict
 
 - **Every `must` finding is checked by you** against its evidence before it
   reaches the board: open the page, rerun the line (a measured one: the
-`geom.py` query it quotes, on the same snapshot). A false finding sent to a
+  `geom.py` query it quotes, on the same snapshot — every finding's query in
+  one Bash call, `;` between them). A false finding sent to a
   board session costs a fix that breaks something; drop it with one line in
   the report's *Not proven* ("dropped: <why>").
 - **`handoff` findings are yours**: fix the GENERATOR in the same pass (the
@@ -135,4 +148,8 @@ publish, `publish.py --check --all`, `./verify.sh`.
 - **Relay off:** tell the user that line; they carry it.
 - To the user, always: the verdict, the must-fix findings in one line each,
   anything waiting on them — and the turn's retro rows
-  (`kicad_project/SELF_IMPROVEMENT.md`).
+  (`kicad_project/SELF_IMPROVEMENT.md`). **A measurement the report lists
+  under *Measured by hand* is a retro row**: it becomes a `geom.py` query with
+  a hand-computed case in `tests/test_review_geom.py` (or a line in the
+  reviewer's table naming the board tool that answers it) before the next
+  review, or the next reviewer scripts it again.

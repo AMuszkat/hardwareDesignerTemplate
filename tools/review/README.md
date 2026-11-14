@@ -35,12 +35,15 @@ every tile in scope. An unchanged board lists none.
 (from, to, rotation, side), added, removed, changed (value, footprint, DNP,
 pad count); pads that changed
 net; copper added and removed per net and layer (segments, length, the box
-it lies in); vias; zones (outline, layers, net, priority, settings, filled
+it lies in); vias added and removed, and vias whose pad moved to other layers
+(unused pads removed or restored: the antipad in every plane changes);
+copper shapes added and removed; zones (outline, layers, net, priority, settings, filled
 area); silk and fab texts moved, reworded, hidden, added, removed (a text
 that only followed its moved part is counted, not listed); the outline; the
 board's rules and net classes. Objects are matched by net, layer and
 geometry to 1 µm, not by UUID, so a group ripped up and re-applied
-unchanged is no change. **The base is the newest earlier PCB snapshot of
+unchanged is no change. A base dumped in an older format (before `shapes`)
+is dumped again from its frozen board first. **The base is the newest earlier PCB snapshot of
 that board whose id has a verdict** — a `## <id> — … pcb …: … — PASS` or
 `— CHANGES (…)` heading in `tools/handoff/reviews/boardN.md` (or the file
 the board module's `REVIEWS` names); a snapshot that was never reviewed, or
@@ -58,7 +61,8 @@ snapshot dumps the frozen board ONCE, through pcbnew with the zones refilled
 870 tracks and 660 vias): every track,
 arc, via (span, and the layers its pad is flashed on), pad (net, layers,
 shape, size, position, hole), zone (outline and each filled island per
-layer), text (what, where, its box, whether it is visible), the outline, the
+layer), copper shape (a polygon, rectangle or line drawn on a copper layer,
+with its net — a plan's copper polygon), text (what, where, its box, whether it is visible), the outline, the
 board's rules and net classes — all mm, KiCad board coordinates.
 `geom.py` answers a reviewer's measurements from that file in plain python3,
 read only:
@@ -74,11 +78,20 @@ read only:
 | `via-pad [SEL] [--below G]` | each via against the nearest pad of its own net and of a foreign one | via pad edge to pad copper edge |
 | `holes [--below G]` | hole-to-hole gaps: vias, plated and non-plated pad holes | wall to wall |
 | `copper NET [--layer L]` | a net's copper per layer: length, segments, arcs, length per width, vias | centre-line length |
+| `lengths [NETS] [--max-width W] [--box B] [--layer L,L] [--over D]` | every net's track length, per layer and summed: a neck-down's whole length on a net, a net's share inside a rectangle, the nets over a limit | centre-line length; `--max-width`: tracks that wide or narrower; `--box`: the part of each centre line inside it |
+| `conn NET` | is the net one piece: its pieces with the pads in each, and its loose track ends | joined = copper touching on a shared layer, a via joining its layers, a pour what stands in its fill; a loose end = an end POINT outside every other copper of the net |
+| `stitch SEL --to NET [--over D]` | per via, the nearest via of a net | centre to centre (the `stitch via` check's measure), farthest first |
+| `coupled SEL --within G` | the length a selection's tracks run nearer than G to each foreign net on their own layer | stations 0.01 mm apart along the centre line; edge-to-edge gap of the track's copper there |
+| `overlap SEL [--adjacent L,L] [--margin M]` | the length its tracks lie over or under foreign tracks, via pads, pads and shapes of other layers, and with copper on every such layer at once | plan view, stations as above; pours and bare holes never count |
+| `probe X,Y [--radius R] [--drill D] [--net N]` | what a disc at a point would meet: nearest copper per layer, the nearest hole, the outline | disc edge to copper edge; wall to wall |
 | `box X0,Y0,X1,Y1` | every copper object, part, text and zone touching a rectangle | copper edge, not centre |
 | `show SEL`, `info` | what an object is; counts, layers, rules, net classes | |
 
 `SEL`: `U1.A5`, `U1`, `net:NAME`, `pads:NAME`, `via:X,Y`, `track:X,Y`,
-`uuid:PREFIX`, `box:…` (`--help`). The model: every copper object is a core
+`uuid:PREFIX`, `box:…`, and `added:[NAME]` — the tracks, vias and copper
+shapes the snapshot's `changes.json` lists as added (`--help`). A NAME with
+`*` or `?` is a pattern for several nets. Before and after: the same query on
+the base snapshot. The model: every copper object is a core
 (a point, a line, a polygon) grown by a radius — exact for round, oval,
 rectangular and rounded-rectangle pads, tracks and vias; KiCad's own outline
 polygon (within 0.002 mm) for custom, chamfered and trapezoid pads; chords
@@ -89,6 +102,14 @@ are geometry, not verdicts: DRC is the gate. `tests/test_review_geom.py`
 holds every query to hand-computed values and to pcbnew's own collision
 engine on the fixture board; `tests/test_review_changes.py` holds the diff
 to a board with one part moved, one track and one via added.
+
+**What the reviews cost is measured** (`tools/measure/sessions.py`, sections
+6 and 7): 42 `pcb-reviewer` runs on the first project took a median of 19
+minutes, 85 % of it model time — some 26 inline scripts and 60 turns a run —
+and tools 15 %. Hence the reviewer's definition: medium effort, a depth set
+by the scope (a fix review checks the findings and the changed objects, not
+the board), independent calls in one turn, no fix design, and the queries
+above for what was scripted most. Measure again after a change to any of it.
 
 **The helper grows by what reviewers still script.** The pcb-reviewer writes
 a script only for a measurement `measurements.json` and `geom.py` cannot

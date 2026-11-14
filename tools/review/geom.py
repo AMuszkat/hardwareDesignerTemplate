@@ -19,21 +19,34 @@ cannot answer is written as a script in tmpWork/ and NAMED in the report's
     via-pad  [SEL] [--below G]   each via's gap to the nearest pad, its own net's and a foreign one
     holes    [--below G]         the hole-to-hole gaps (vias and drilled pads), smallest first
     copper   NET [--layer L]     a net's copper per layer: length, segments, widths, vias
+    lengths  [NETS] [--max-width W] [--box B] [--layer L,L] [--over D]
+                                 every net's track length, per layer and summed (a neck's whole length; a box's share)
+    conn     NET                 is the net one piece: its pieces, the pads in each, its loose track ends
+    stitch   SEL --to NET [--over D]   per via, the nearest via of NET, centre to centre
+    coupled  SEL --within G      the length a selection's tracks run nearer than G to each foreign net, same layer
+    overlap  SEL [--adjacent L,L] [--margin M]   the length its tracks lie over / under foreign copper of other layers
+    probe    X,Y [--radius R] [--drill D] [--net N]   what a disc at a point would meet on each layer, hole and edge
     box      X0,Y0,X1,Y1         every object in a rectangle
 
 SEL -- what a query is about:
 
     U1.A5          a pad            U1             every pad of a part
-    net:NAME       a net's tracks, arcs and vias (not its pads)
+    net:NAME       a net's tracks, arcs, vias and copper shapes (not its pads)
     pads:NAME      a net's pads
+    added:[NAME]   the tracks, arcs, vias and shapes CHANGES.md lists as added (of that net) -- a snapshot folder only
     via:X,Y        the via whose centre is nearest that point (within 0.5 mm)
     track:X,Y      the track or arc whose copper is nearest that point (within 0.5 mm)
     uuid:PREFIX    the track, arc, via or zone whose uuid starts so
     box:X0,Y0,X1,Y1   the copper touching that rectangle
 
 NAME is the net's full name, or its last path component when that is unique
-("/cpu/DDR_A3" answers to DDR_A3).  --layer L narrows any query to one copper
-layer.  --json prints the rows as JSON instead of a table.
+("/cpu/DDR_A3" answers to DDR_A3); with * or ? it is a pattern for several
+nets (net:DDR_DQ*).  --layer L narrows any query to one copper layer.  --json
+prints the rows as JSON instead of a table.
+
+BEFORE AND AFTER: the same query on the base snapshot (CHANGES.md names it in
+its first line; it is the folder beside this one).  Several queries in one
+shell call, `;` between them, cost one turn.
 
 THE DEFINITIONS (each function's docstring repeats its own):
 
@@ -45,7 +58,13 @@ THE DEFINITIONS (each function's docstring repeats its own):
     r = 0.  These are exact.  A custom, chamfered or trapezoid pad is KiCad's
     own outline polygon (curves within 0.002 mm); an arc track is a chain of
     chords within 0.001 mm of it; a pour is its filled polygons, as refilled
-    by dump.py.
+    by dump.py; a copper shape (a polygon, rectangle or line drawn on a copper
+    layer, with or without a net) is KiCad's outline of it.
+  * ALONG A TRACK (coupled, overlap): the track's centre line is cut into
+    stations --step apart (0.01 mm), each standing for its piece of the
+    length; a station counts when the disc of the track's width there is
+    nearer than the limit to the other copper.  A length is right to about
+    one step per place where it starts or stops.
   * GAP is edge to edge: the distance between two cores less both radii, and
     0.0 when the two touch or overlap (never negative).  CENTRE distances are
     named "centre".  Two objects are compared only on a copper layer both are
@@ -60,6 +79,7 @@ THE DEFINITIONS (each function's docstring repeats its own):
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -117,6 +137,34 @@ def turn(u, v):
     folds back on itself."""
     dot = max(-1.0, min(1.0, u[0] * v[0] + u[1] * v[1]))
     return 180.0 - math.degrees(math.acos(dot))
+
+
+def clip_len(a, b, box):
+    """The length of segment ab inside the rectangle box (x0, y0, x1, y1), edges included
+    (Liang-Barsky)."""
+    x0, y0, x1, y1 = box
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, a[0] - x0), (dx, x1 - a[0]), (-dy, a[1] - y0), (dy, y1 - a[1])):
+        if p == 0:
+            if q < 0:
+                return 0.0
+        else:
+            t = q / p
+            if p < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+    return max(0.0, t1 - t0) * math.hypot(dx, dy)
+
+
+def centre_of(it):
+    """An Item's centre for a centre-to-centre distance: a pad's position (not the first
+    corner of its core), a via's centre; a track's start."""
+    s = it.src if isinstance(it.src, dict) else {}
+    if it.kind in ("pad", "pad-hole", "hole") and s.get("at"):
+        return tuple(s["at"])
+    return it.pts[0]
 
 
 # -- the objects ---------------------------------------------------------------
@@ -195,6 +243,7 @@ class Geometry:
 
     def __init__(self, d):
         self.d = d
+        self.dir = None                    # the snapshot folder, when loaded from one (changes.json for `added:`)
         self.copper_layers = list(d["board"]["copper_layers"])
         self.items = []
         self._grid = None
@@ -233,6 +282,13 @@ class Geometry:
                     if len(isl.get("outline", [])) >= 3:
                         add("pour", z["net"], [L], isl["outline"], 0.0,
                             f"pour {short(z['net'])} {L} island {k}", z, isl.get("holes", ()))
+        for sh in d.get("shapes", []):
+            for poly in sh.get("polys", []):
+                if len(poly.get("outline", [])) >= 3:
+                    b = sh.get("box") or [0, 0, 0, 0]
+                    add("shape", sh["net"], [sh["layer"]], poly["outline"], 0.0,
+                        f"shape {short(sh['net'])} {sh['layer']} {fmt_pt(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))}",
+                        sh, poly.get("holes", ()))
 
     def _add(self, kind, net, layers, pts, r, name, src, holes=()):
         it = Item(kind, net, layers, pts, r, name, src, holes)
@@ -255,15 +311,43 @@ class Geometry:
         near = got or [n for n in have if name.lower() in n.lower()][:12]
         raise SystemExit(f"geom: no net {name!r}" + (f" (did you mean: {', '.join(near)})" if near else ""))
 
+    def net_list(self, name):
+        """The nets a NAME stands for: one (`net`), or with * / ? every net whose full name or
+        last path component matches the pattern."""
+        if "*" not in name and "?" not in name:
+            return [self.net(name)]
+        rx = re.compile("".join(".*" if ch == "*" else "." if ch == "?" else re.escape(ch) for ch in name) + r"\Z")
+        got = [n for n in self.nets() if rx.match(n) or rx.match(n.rsplit("/", 1)[-1])]
+        if not got:
+            raise SystemExit(f"geom: no net matches {name!r}")
+        return got
+
+    def changes(self):
+        """The snapshot's changes.json (changes.py): what CHANGES.md lists, as data."""
+        p = self.dir / "changes.json" if self.dir else None
+        if p is None or not p.exists():
+            raise SystemExit("geom: `added:` reads the snapshot's changes.json -- give the snapshot folder, not a geometry.json")
+        c = json.loads(p.read_text())
+        if not c.get("base"):
+            raise SystemExit("geom: changes.json has no base (everything is new): select by net or by box instead")
+        return c
+
     def select(self, sel, layer=None):
         """The Items a SEL names (see the module docstring), narrowed to `layer` when given."""
         its = self.items
         if sel.startswith("net:"):
-            n = self.net(sel[4:])
-            out = [i for i in its if i.net == n and i.kind in ("track", "arc", "via", "via-hole")]
+            n = set(self.net_list(sel[4:]))
+            out = [i for i in its if i.net in n and i.kind in ("track", "arc", "via", "via-hole", "shape")]
         elif sel.startswith("pads:"):
-            n = self.net(sel[5:])
-            out = [i for i in its if i.net == n and i.kind in ("pad", "pad-hole")]
+            n = set(self.net_list(sel[5:]))
+            out = [i for i in its if i.net in n and i.kind in ("pad", "pad-hole")]
+        elif sel.startswith("added:"):
+            c = self.changes()
+            uu = {t.get("uuid") for k in ("copper", "vias", "shapes") for t in (c.get(k) or {}).get("added", [])}
+            out = [i for i in its if i.kind in ("track", "arc", "via", "via-hole", "shape") and i.src.get("uuid") in uu]
+            if sel[6:]:
+                n = set(self.net_list(sel[6:]))
+                out = [i for i in out if i.net in n]
         elif sel.startswith("via:"):
             x, y = (float(v) for v in sel[4:].split(",")[:2])
             vias = [i for i in its if i.kind in ("via", "via-hole")]
@@ -326,8 +410,12 @@ class Geometry:
 
     def _near(self, box, R):
         """{item id: its edges} for every item with copper in `box` grown by R."""
+        return self._cands(self._cells((box[0] - R, box[1] - R, box[2] + R, box[3] + R)))
+
+    def _cands(self, cells):
+        """{item id: its edges filed under those grid cells}."""
         g, seen, out = self.grid(), set(), {}
-        for c in self._cells((box[0] - R, box[1] - R, box[2] + R, box[3] + R)):
+        for c in cells:
             for k in g.get(c, ()):
                 if k not in seen:
                     seen.add(k)
@@ -341,8 +429,8 @@ class Geometry:
         """The smallest edge-to-edge gap between two selections (lists of Items), compared only
         on copper layers both are on (`any_layer`: wherever they are, as if on one layer).
         Returns {gap, a, b, at, layers, centre} or None when no pair shares a layer.  `at` is the
-        middle of the shortest line between the two; `centre` the distance between the two cores'
-        first points (a via's or a round pad's centre; a track's start)."""
+        middle of the shortest line between the two; `centre` the distance between the two
+        objects' centres (a pad's position, a via's centre; for a track its start)."""
         best = None
         for a in A:
             for b in B:
@@ -360,7 +448,7 @@ class Geometry:
                 if best is None or g < best["gap"]:
                     best = dict(gap=g, a=a, b=b, at=((p[0] + q[0]) / 2, (p[1] + q[1]) / 2),
                                 layers=sorted(shared, key=self._layer_key),
-                                centre=math.dist(a.pts[0], b.pts[0]))
+                                centre=math.dist(centre_of(a), centre_of(b)))
         return best
 
     def _layer_key(self, L):
@@ -702,6 +790,321 @@ class Geometry:
                     texts=[t for t in self.d.get("texts", []) if hit(t.get("box"))],
                     zones=[z for z in self.d.get("zones", []) if hit(z.get("box"))])
 
+    # -- along a track, across a net, at a point ------------------------------------------
+
+    def _stations(self, it, step):
+        """A track Item's centre line as (point, the length it stands for), `step` apart."""
+        a, b = it.pts[0], it.pts[-1]
+        L = math.dist(a, b)
+        n = max(1, int(math.ceil(L / step - 1e-9)))
+        for k in range(n):
+            t = (k + 0.5) / n
+            yield (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t), L / n
+
+    @staticmethod
+    def _disc_gap(p, r, o, edges):
+        """The gap between the disc (p, r) and Item o, measured to the given edges of o's core
+        (raw: negative when they overlap); 0.0 or less also when p is inside o's filled area."""
+        g = min(pt_seg(p, c, d)[0] for c, d in edges) - r - o.r
+        if g > 0.0 and len(o.pts) >= 3 and o.contains(p):
+            return 0.0
+        return g
+
+    def _around(self, p, reach, state):
+        """The candidates within `reach` of point p ({item id: edges}); `state` remembers the
+        last cells asked for, so stations along one track read the grid once."""
+        cells = tuple(self._cells((p[0] - reach, p[1] - reach, p[0] + reach, p[1] + reach)))
+        if state.get("cells") != cells:
+            state["cells"], state["got"] = cells, self._cands(cells)
+        return state["got"]
+
+    def coupled(self, items, within, layer=None, ignore=(), pours=True, step=0.01):
+        """The length a selection's tracks and arcs run NEARER THAN `within` to foreign copper on
+        their own layer, per foreign net.
+
+        Each track's centre line is cut into stations `step` apart; a station counts for a
+        foreign net when the gap between the track's copper there (the disc of its width) and
+        any copper of that net on the layer -- track, via pad or bare hole, pad, shape, pour --
+        is under `within`.  gap: edge to edge, as everywhere.  `ignore`: nets left out (a pair's
+        other half, a rail); `pours=False` leaves zone fills out.
+        Returns {rows, totals}.  rows: {net, layer, other, length, gap (the smallest), at (where
+        it is smallest), box (of the counted stations)}, longest first.  totals: per own net and
+        layer {net, layer, length (routed), near (the length with ANY foreign copper under
+        `within` -- not the sum of the rows, which overlap)}."""
+        rows, totals, state = {}, {}, {}
+        fills = [o for o in self.items if o.kind == "pour"] if pours else []
+        for it in items:
+            if it.kind not in ("track", "arc") or (layer and layer not in it.layers):
+                continue
+            L = next(iter(it.layers))
+            tot = totals.setdefault((it.net, L), dict(net=it.net, layer=L, length=0.0, near=0.0))
+            for pt, ds in self._stations(it, step):
+                tot["length"] += ds
+                seen = {}
+                for j, edges in self._around(pt, it.r + within, state).items():
+                    o = self.items[j]
+                    if o.src is it.src or L not in o.layers or (it.net and o.net == it.net) or o.net in ignore:
+                        continue
+                    if o.kind == "pour" and not pours:
+                        continue
+                    g = max(0.0, self._disc_gap(pt, it.r, o, edges))
+                    if g < within and g < seen.get(o.net, INF):
+                        seen[o.net] = g
+                for o in fills:                       # deep inside a foreign fill: no edge of it is near
+                    if L in o.layers and o.net != it.net and o.net not in ignore and o.net not in seen and o.contains(pt):
+                        seen[o.net] = 0.0
+                if seen:
+                    tot["near"] += ds
+                for other, g in seen.items():
+                    r = rows.setdefault((it.net, L, other), dict(net=it.net, layer=L, other=other, length=0.0,
+                                                                 gap=INF, at=pt, box=[pt[0], pt[1], pt[0], pt[1]]))
+                    r["length"] += ds
+                    if g < r["gap"]:
+                        r["gap"], r["at"] = g, pt
+                    b = r["box"]
+                    r["box"] = [min(b[0], pt[0]), min(b[1], pt[1]), max(b[2], pt[0]), max(b[3], pt[1])]
+        out = sorted(rows.values(), key=lambda r: (-r["length"], r["net"], r["layer"], r["other"]))
+        return dict(rows=out, totals=sorted(totals.values(), key=lambda t: (t["net"], self._layer_key(t["layer"]))))
+
+    def overlap(self, items, adjacent=None, margin=0.0, ignore=(), step=0.01):
+        """The length a selection's tracks and arcs lie OVER OR UNDER foreign copper of other
+        layers, in plan view (copper over copper, whatever is between).
+
+        The other layers: `adjacent` (a list), else the copper layers next to the track's own in
+        the stack.  Stations as in `coupled`; a station counts for a foreign net on layer M when
+        the plan-view gap between the track's copper there and a track, arc, via PAD, pad or
+        shape of that net on M is `margin` or less (0.0: the two outlines overlap or touch).
+        Pours and bare holes never count: a plane under a track is what should be there.
+        Returns {rows, totals}.  rows: {net, layer, other_layer, other, length, at (the first
+        station), box}, longest first.  totals: per own net and layer {net, layer, length
+        (routed), over: {M: the length with any foreign copper on M}, both: the length with
+        foreign copper on EVERY one of the other layers at once (a track between two signal
+        layers has no plane beside it there) -- None with fewer than two}."""
+        rows, totals, state = {}, {}, {}
+        for it in items:
+            if it.kind not in ("track", "arc"):
+                continue
+            L = next(iter(it.layers))
+            k = self._layer_key(L)
+            others = list(adjacent) if adjacent else [M for M in (self.copper_layers[k - 1] if 0 < k < 99 else None,
+                                                                 self.copper_layers[k + 1] if k + 1 < len(self.copper_layers) else None) if M]
+            others = [M for M in others if M != L]
+            tot = totals.setdefault((it.net, L), dict(net=it.net, layer=L, length=0.0, over={M: 0.0 for M in others},
+                                                      both=0.0 if len(others) > 1 else None))
+            for M in others:
+                tot["over"].setdefault(M, 0.0)
+            for pt, ds in self._stations(it, step):
+                tot["length"] += ds
+                seen = {}
+                for j, edges in self._around(pt, it.r + margin, state).items():
+                    o = self.items[j]
+                    if o.kind not in ("track", "arc", "via", "pad", "shape") or (it.net and o.net == it.net) or o.net in ignore:
+                        continue
+                    hit = [M for M in others if M in o.layers and (M, o.net) not in seen]
+                    if hit and self._disc_gap(pt, it.r, o, edges) <= margin + 1e-9:
+                        for M in hit:
+                            seen[(M, o.net)] = True
+                on = {M for M, _n in seen}
+                for M in on:
+                    tot["over"][M] += ds
+                if tot["both"] is not None and len(on) == len(others):
+                    tot["both"] += ds
+                for M, other in seen:
+                    r = rows.setdefault((it.net, L, M, other), dict(net=it.net, layer=L, other_layer=M, other=other,
+                                                                    length=0.0, at=pt, box=[pt[0], pt[1], pt[0], pt[1]]))
+                    r["length"] += ds
+                    b = r["box"]
+                    r["box"] = [min(b[0], pt[0]), min(b[1], pt[1]), max(b[2], pt[0]), max(b[3], pt[1])]
+        out = sorted(rows.values(), key=lambda r: (-r["length"], r["net"], r["layer"], r["other_layer"], r["other"]))
+        return dict(rows=out, totals=sorted(totals.values(), key=lambda t: (t["net"], self._layer_key(t["layer"]))))
+
+    def stitch(self, items, to):
+        """Per via of a selection, the nearest via of the net(s) `to`: CENTRE TO CENTRE (the
+        `stitch via` check's measure, tools/route/checks.py), whatever the layers.  Rows {via,
+        centre, other (that via's Item), shared (the copper layers both span)}, FARTHEST first;
+        centre None when the board has no via of `to` at all."""
+        want = set(self.net_list(to))
+        targets = [v for v in self.d.get("vias", []) if v["net"] in want]
+        rows, done = [], set()
+        by_src = {}
+        for i in self.items:
+            if i.kind == "via":
+                by_src[id(i.src)] = i                      # its pad, where it has one
+            elif i.kind == "via-hole":
+                by_src.setdefault(id(i.src), i)
+        for it in items:
+            if it.kind not in ("via", "via-hole") or id(it.src) in done:
+                continue
+            done.add(id(it.src))
+            best = min((v for v in targets if v is not it.src), key=lambda v: math.dist(v["at"], it.pts[0]), default=None)
+            rows.append(dict(via=by_src[id(it.src)], centre=math.dist(best["at"], it.pts[0]) if best else None,
+                             other=by_src[id(best)] if best else None,
+                             shared=[L for L in it.src["layers"] if best and L in best["layers"]]))
+        rows.sort(key=lambda r: (r["centre"] is not None, -(r["centre"] or 0.0), r["via"].id))
+        return rows
+
+    def conn(self, net):
+        """Is a net one piece?  {net, pads, pieces, loose}.
+
+        A PIECE is copper of the net that touches: two objects are joined when their copper
+        overlaps or touches (gap 0.0) on a copper layer both are on; a via or a plated hole joins
+        its layers; a pour joins what stands in its fill.  pieces: {pads (names), tracks, vias,
+        pours, shapes, length, box}, the one with most pads first -- a routed net is ONE piece
+        holding all its pads; a pad nothing reaches is a piece of its own.
+        loose: the track ends that land in no other copper of the net -- the end POINT lies
+        outside every other track, via, pad, shape and pour of the net on its layer (KiCad
+        connects a track by its end point) -- each {at, layer, track, gap}: gap is from the
+        track's copper at that end to the nearest other copper of the net there (0.0: the copper
+        touches although the end point is outside it; None: nothing of the net within 0.5 mm)."""
+        n = self.net(net)
+        its = [i for i in self.items if i.net == n and i.kind != "hole"]
+        parent = {i.id: i.id for i in its}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def join(x, y):
+            x, y = find(x), find(y)
+            if x != y:
+                parent[max(x, y)] = min(x, y)
+        by_src = {}
+        for i in its:
+            if id(i.src) in by_src and i.kind not in ("pour", "shape", "arc"):
+                join(i.id, by_src[id(i.src)])               # a via and its bare hole, a pad and its hole
+            by_src.setdefault(id(i.src), i.id)
+        fills = [i for i in its if i.kind == "pour"]
+        for it in its:
+            if it.kind == "pour":
+                continue
+            mine = it.edges()
+            for j, edges in self._near(it.box, 0.0).items():
+                o = self.items[j]
+                if j not in parent or j == it.id or not (o.layers & it.layers) or (o.kind != "pour" and j < it.id):
+                    continue
+                if find(j) == find(it.id):
+                    continue
+                g = min(seg_seg(a, e, c, d)[0] for a, e in mine for c, d in edges) - it.r - o.r
+                if g <= 1e-9 or o.contains(it.pts[0]) or it.contains(o.pts[0]):
+                    join(it.id, j)
+            for o in fills:
+                if (o.layers & it.layers) and find(o.id) != find(it.id) and o.contains(it.pts[0]):
+                    join(it.id, o.id)
+        groups = {}
+        for i in its:
+            groups.setdefault(find(i.id), []).append(i)
+        pieces = []
+        for g in groups.values():
+            tracks = {id(i.src): i for i in g if i.kind in ("track", "arc")}
+            length = sum(t.src["length"] if "mid" in t.src else math.dist(t.src["a"], t.src["b"]) for t in tracks.values())
+            pieces.append(dict(
+                pads=sorted({f"{i.src['ref']}.{i.src['num']}" for i in g if i.kind in ("pad", "pad-hole")}),
+                tracks=len(tracks), vias=len({id(i.src) for i in g if i.kind in ("via", "via-hole")}),
+                pours=sum(1 for i in g if i.kind == "pour"), shapes=len({id(i.src) for i in g if i.kind == "shape"}),
+                length=length, box=[min(i.box[0] for i in g), min(i.box[1] for i in g),
+                                    max(i.box[2] for i in g), max(i.box[3] for i in g)]))
+        pieces.sort(key=lambda p_: (-len(p_["pads"]), -p_["length"], p_["box"]))
+        loose, state = [], {}
+        for it in its:
+            if it.kind not in ("track", "arc"):
+                continue
+            L = next(iter(it.layers))
+            ends = [it.pts[0], it.pts[-1]]
+            if it.kind == "arc":                           # a chord inside the arc is no end of it
+                ends = [e for e in ends if e in (tuple(it.src["pts"][0]), tuple(it.src["pts"][-1]))]
+            for end in ends:
+                landed, near = False, None
+                for j, edges in self._around(end, it.r + 0.5, state).items():
+                    o = self.items[j]
+                    if j not in parent or o.src is it.src or L not in o.layers:
+                        continue
+                    g = self._disc_gap(end, 0.0, o, edges)
+                    if g <= 1e-9:
+                        landed = True
+                        break
+                    near = max(0.0, g - it.r) if near is None else min(near, max(0.0, g - it.r))
+                if not landed and any(L in o.layers and o.contains(end) for o in fills):
+                    landed = True
+                if not landed:
+                    loose.append(dict(at=end, layer=L, track=it.name, gap=near if near is not None and near <= 0.5 else None))
+        loose.sort(key=lambda r: (self._layer_key(r["layer"]), r["at"]))
+        return dict(net=n, pads=sum(len(p_["pads"]) for p_ in pieces), pieces=pieces, loose=loose)
+
+    def lengths(self, nets=None, max_width=None, box=None, layers=None):
+        """Every net's track length: rows {net, total, layers: {L: length}, segments, vias},
+        longest first; nets with no track counted are left out.
+
+        length: centre-line length of tracks and arcs (an arc by its chords when clipped), summed
+        per layer and over the layers.  `nets`: a name or a pattern (default: every net).
+        `max_width`: only copper this wide or narrower counts -- a neck-down's whole length on a
+        net.  `box` (x0, y0, x1, y1): only the part of each centre line inside the rectangle
+        counts, and only the vias whose centre is in it.  `layers`: only those copper layers."""
+        want = set(self.net_list(nets)) if nets else None
+        if box:
+            box = (min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3]))
+        rows = {}
+        for t in self.d.get("tracks", []) + self.d.get("arcs", []):
+            if (want is not None and t["net"] not in want) or (layers and t["layer"] not in layers):
+                continue
+            if max_width is not None and t["w"] > max_width + 1e-9:
+                continue
+            arc = "mid" in t
+            if box:
+                p = t["pts"] if arc else [t["a"], t["b"]]
+                ln = sum(clip_len(a, b, box) for a, b in zip(p, p[1:]))
+            else:
+                ln = t["length"] if arc else math.dist(t["a"], t["b"])
+            if ln <= 0.0:
+                continue
+            r = rows.setdefault(t["net"], dict(net=t["net"], total=0.0, layers={}, segments=0, vias=0))
+            r["total"] += ln
+            r["segments"] += 1
+            r["layers"][t["layer"]] = r["layers"].get(t["layer"], 0.0) + ln
+        for v in self.d.get("vias", []):
+            if v["net"] in rows and (not box or (box[0] <= v["at"][0] <= box[2] and box[1] <= v["at"][1] <= box[3])):
+                rows[v["net"]]["vias"] += 1
+        return sorted(rows.values(), key=lambda r: (-r["total"], r["net"]))
+
+    def probe(self, at, radius=0.0, drill=None, net=None):
+        """What a disc of `radius` at a point would meet -- can a via stand here.
+
+        {layers: per copper layer {layer, gap, other, at}: the nearest copper there that is not
+        of `net` (every net is foreign without one; pours count), gap from the disc's edge;
+        hole: {gap, other, centre}: the nearest drilled hole, wall to wall from a hole of `drill`
+        at the point (None without `drill`); edge: the disc's edge to the nearest outline
+        segment (None when the dump has no outline)}.  Geometry only: the rule each gap is held
+        to is the handoff's."""
+        own = self.net(net) if net else ""
+        at = (float(at[0]), float(at[1]))
+        rows = []
+        for L in self.copper_layers:
+            it = Item("probe", own, [L], [at], radius, "probe", {})
+            it.id = -1
+            got = self.foreign(it, layer=L)
+            rows.append(dict(layer=L, gap=got[0]["gap"] if got else None, other=got[0]["other"] if got else None,
+                             at=got[0]["at"] if got else None))
+        hole = None
+        if drill is not None:
+            me = Item("hole", own, [], [at], drill / 2, "probe hole", {})
+            for v in self.d.get("vias", []):
+                g = max(0.0, math.dist(v["at"], at) - drill / 2 - v["drill"] / 2)
+                if hole is None or g < hole["gap"]:
+                    hole = dict(gap=g, other=f"via {short(v['net'])} {fmt_pt(v['at'])} drill {v['drill']:g}",
+                                centre=math.dist(v["at"], at))
+            for p in self.d.get("pads", []):
+                h = p.get("hole")
+                if h:
+                    o = Item("hole", p["net"], [], h["core"], h["r"], "", p)
+                    g = core_gap(me, o)[0]
+                    if hole is None or g < hole["gap"]:
+                        hole = dict(gap=g, other=f"pad {p['ref']}.{p['num']} drill {'x'.join(f'{v:g}' for v in p['drill'])}",
+                                    centre=math.dist(p["at"], at))
+        edges = self.d["board"].get("edges") or []
+        edge = max(0.0, min(pt_seg(at, a, b)[0] for a, b in edges) - radius) if edges else None
+        return dict(at=at, layers=rows, hole=hole, edge=edge)
+
 
 def short(net):
     """A net name without its sheet path, for a table."""
@@ -717,7 +1120,9 @@ def load(path):
         raise SystemExit(f"geom: no {p} -- a PCB snapshot writes it (tools/review/snapshot.py --kind pcb); "
                          "for an older snapshot: kicad_project/tools/kpy tools/review/dump.py "
                          "<snapshot>/snap/<board> <snapshot>/geometry.json")
-    return Geometry(json.loads(p.read_text()))
+    G = Geometry(json.loads(p.read_text()))
+    G.dir = p.parent
+    return G
 
 
 # -- the command line -----------------------------------------------------------------
@@ -755,13 +1160,24 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("snapshot", help="a PCB snapshot folder (out/reviews/<board>/<id>-pcb) or a geometry.json")
     ap.add_argument("query", choices=["info", "show", "nearest", "gap", "label", "joints", "via-pad", "holes",
-                                      "copper", "box"])
+                                      "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box"])
     ap.add_argument("args", nargs="*", help="the query's SEL / NET / REF / box")
     ap.add_argument("--layer", help="one copper layer")
-    ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest")
+    ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest; "
+                    "coupled: the gap under which a track counts as beside foreign copper")
+    ap.add_argument("--to", help="stitch: the net (or pattern) whose nearest via is looked for, e.g. GND")
+    ap.add_argument("--over", type=float, help="stitch: only vias farther than this (mm); lengths: only nets longer than this")
+    ap.add_argument("--adjacent", help="overlap: the other layers, comma-separated (default: the two next to the track's)")
+    ap.add_argument("--margin", type=float, default=0.0, help="overlap: counts when the plan-view gap is this or less (default 0: copper over copper)")
+    ap.add_argument("--step", type=float, default=0.01, help="coupled, overlap: the station pitch along a track (mm, default 0.01)")
+    ap.add_argument("--max-width", type=float, help="lengths: only tracks this wide or narrower (a neck-down)")
+    ap.add_argument("--box", dest="in_box", help="lengths: X0,Y0,X1,Y1 -- only the length inside this rectangle")
+    ap.add_argument("--radius", type=float, default=0.0, help="probe: the disc's radius (a via's pad / 2)")
+    ap.add_argument("--drill", type=float, help="probe: a hole of this diameter at the point, for hole to hole")
+    ap.add_argument("--net", help="probe: the net the disc would be of (its own copper is not foreign)")
     ap.add_argument("--below", type=float, help="via-pad, holes, label: only rows under this (mm); holes default 1.0")
-    ap.add_argument("--ignore", action="append", default=[], help="nearest: a net that is not foreign (a pair's other half); repeatable")
-    ap.add_argument("--no-pours", action="store_true", help="nearest: leave zone fills out")
+    ap.add_argument("--ignore", action="append", default=[], help="nearest, coupled, overlap: a net (or pattern) that is not foreign (a pair's other half); repeatable")
+    ap.add_argument("--no-pours", action="store_true", help="nearest, coupled: leave zone fills out")
     ap.add_argument("--any-layer", action="store_true", help="gap: compare the two even when they share no layer")
     ap.add_argument("--all-nets", action="store_true", help="joints: every net")
     ap.add_argument("--all", action="store_true", help="every row (joints: the unflagged too; others: no row limit)")
@@ -772,9 +1188,17 @@ def main(argv=None):
     G = load(a.snapshot)
     d = G.d
     q = a.query
-    need = {"show": 1, "nearest": 1, "gap": 2, "copper": 1, "box": 1}
+    need = {"show": 1, "nearest": 1, "gap": 2, "copper": 1, "box": 1, "conn": 1, "stitch": 1, "coupled": 1,
+            "overlap": 1, "probe": 1}
     if q in need and len(a.args) != need[q]:
         ap.error(f"{q} takes {need[q]} argument(s)")
+    if q == "lengths" and len(a.args) > 1:
+        ap.error("lengths takes one net name or pattern, or none (every net)")
+    if q == "stitch" and not a.to:
+        ap.error("stitch needs --to NET (the net whose vias are looked for, e.g. --to GND)")
+    if q == "coupled" and a.within is None:
+        ap.error("coupled needs --within G (mm)")
+    ignore = [n for pat in a.ignore for n in G.net_list(pat)]
     cut = (lambda rows: rows) if a.all else (lambda rows: rows[:a.top])
 
     def more(rows):
@@ -798,10 +1222,11 @@ def main(argv=None):
                " ".join(f"{v:.3f}" for v in i.box)] for i in cut(its)],
              [dict(kind=i.kind, object=i.name, layers=sorted(i.layers), box=i.box) for i in its], more(its))
     elif q == "nearest":
-        rows = G.nearest(G.select(a.args[0], a.layer), a.layer, a.within, [G.net(n) for n in a.ignore], not a.no_pours)
+        rows = G.nearest(G.select(a.args[0], a.layer), a.layer, a.within, ignore, not a.no_pours)
         emit(a, ["gap", "own", "foreign", "on", "at"],
              [[r["gap"], r["own"].name, r["other"].name, ",".join(r["layers"]), fmt_pt(r["at"])] for r in cut(rows)],
-             rows, more(rows) or ("" if rows else "nothing foreign on its layers"))
+             rows, more(rows) or ("" if rows else f"nothing foreign nearer than {a.within:g} mm" if a.within is not None
+                               else "nothing foreign on its layers"))
     elif q == "gap":
         A, B = G.select(a.args[0], a.layer), G.select(a.args[1], a.layer)
         r = G.gap(A, B, a.layer, a.any_layer)
@@ -882,6 +1307,87 @@ def main(argv=None):
                   [[fmt_pt(v["at"]), v["d"], v["drill"], f"{v['layers'][0]}..{v['layers'][-1]}"] for v in cut(c["vias"])])
             if more(c["vias"]):
                 print(more(c["vias"]))
+    elif q == "lengths":
+        box = [float(v) for v in a.in_box.split(",")] if a.in_box else None
+        layers = a.layer.split(",") if a.layer else None
+        rows = G.lengths(a.args[0] if a.args else None, a.max_width, box, layers)
+        if a.over is not None:
+            rows = [r for r in rows if r["total"] > a.over]
+        cols = [L for L in G.copper_layers if any(L in r["layers"] for r in rows)]
+        emit(a, ["net", "total"] + cols + ["segments", "vias"],
+             [[short(r["net"]), r["total"]] + [r["layers"].get(L) for L in cols] + [r["segments"], r["vias"]] for r in cut(rows)],
+             rows, (more(rows) + "\n" if more(rows) else "") + f"{len(rows)} net(s); centre-line length, mm"
+             + (f"; only tracks {a.max_width:g} mm wide or narrower" if a.max_width is not None else "")
+             + (f"; only inside {a.in_box}" if box else "") + (f"; only nets over {a.over:g} mm" if a.over is not None else ""))
+    elif q == "conn":
+        c = G.conn(a.args[0])
+        if a.json:
+            print(json.dumps(plain(c), indent=1))
+            return 0
+        one = len(c["pieces"]) == 1
+        print(f"{c['net']}: {c['pads']} pad(s) in {len(c['pieces'])} piece(s)" + (" -- ONE PIECE" if one else " -- NOT ONE PIECE")
+              + f"; {len(c['loose'])} loose track end(s)")
+        table(["piece", "pads", "tracks", "vias", "pours", "length", "box", "pads in it"],
+              [[k, len(p["pads"]), p["tracks"], p["vias"], p["pours"], p["length"], " ".join(f"{v:.2f}" for v in p["box"]),
+                " ".join(p["pads"][:8]) + (f" ... {len(p['pads']) - 8} more" if len(p["pads"]) > 8 else "")]
+               for k, p in enumerate(cut(c["pieces"]), 1)])
+        if more(c["pieces"]):
+            print(more(c["pieces"]))
+        if c["loose"]:
+            table(["loose end at", "layer", "track", "copper gap to the net"],
+                  [[fmt_pt(r["at"]), r["layer"], r["track"], "> 0.5" if r["gap"] is None else r["gap"]] for r in cut(c["loose"])])
+            if more(c["loose"]):
+                print(more(c["loose"]))
+    elif q == "stitch":
+        rows = G.stitch(G.select(a.args[0], a.layer), a.to)
+        far = [r for r in rows if r["centre"] is None or (a.over is not None and r["centre"] > a.over)]
+        shown = far if a.over is not None else rows
+        emit(a, ["centre", "via", f"nearest {a.to} via", "layers both span"],
+             [["none" if r["centre"] is None else r["centre"], r["via"].name, r["other"].name if r["other"] else "",
+               f"{r['shared'][0]}..{r['shared'][-1]}" if r["shared"] else ""] for r in cut(shown)], shown,
+             (more(shown) + "\n" if more(shown) else "") + f"{len(rows)} via(s), centre to centre, farthest first"
+             + (f"; {len(far)} farther than {a.over:g} mm" if a.over is not None else ""))
+    elif q == "coupled":
+        c = G.coupled(G.select(a.args[0], a.layer), a.within, a.layer, ignore, not a.no_pours, a.step)
+        if a.json:
+            print(json.dumps(plain(c), indent=1))
+            return 0
+        table(["net", "layer", "beside", "length", "least gap", "at", "over the box"],
+              [[short(r["net"]), r["layer"], short(r["other"]), r["length"], r["gap"], fmt_pt(r["at"]),
+                " ".join(f"{v:.2f}" for v in r["box"])] for r in cut(c["rows"])])
+        if more(c["rows"]):
+            print(more(c["rows"]))
+        table(["net", "layer", "routed", f"nearer than {a.within:g} to any foreign copper"],
+              [[short(t["net"]), t["layer"], t["length"], t["near"]] for t in c["totals"]])
+    elif q == "overlap":
+        c = G.overlap(G.select(a.args[0], a.layer), a.adjacent.split(",") if a.adjacent else None, a.margin, ignore, a.step)
+        if a.json:
+            print(json.dumps(plain(c), indent=1))
+            return 0
+        table(["net", "layer", "over / under", "on", "length", "from", "over the box"],
+              [[short(r["net"]), r["layer"], short(r["other"]), r["other_layer"], r["length"], fmt_pt(r["at"]),
+                " ".join(f"{v:.2f}" for v in r["box"])] for r in cut(c["rows"])])
+        if more(c["rows"]):
+            print(more(c["rows"]))
+        table(["net", "layer", "routed", "with foreign copper on", "on every one at once"],
+              [[short(t["net"]), t["layer"], t["length"], ", ".join(f"{M}: {v:.4f}" for M, v in t["over"].items()),
+                t["both"]] for t in c["totals"]])
+        print(f"plan view, gap {a.margin:g} mm or less; tracks, via pads, pads and shapes (never pours or bare holes)")
+    elif q == "probe":
+        x, y = (float(v) for v in a.args[0].split(",")[:2])
+        r = G.probe((x, y), a.radius, a.drill, a.net)
+        if a.json:
+            print(json.dumps(plain(r), indent=1))
+            return 0
+        print(f"a disc of radius {a.radius:g} at {fmt_pt(r['at'])}" + (f", net {G.net(a.net)}" if a.net else ", every net foreign"))
+        table(["layer", "gap", "nearest copper", "at"],
+              [[w["layer"], w["gap"], w["other"].name if w["other"] else "nothing", fmt_pt(w["at"]) if w["at"] else ""]
+               for w in r["layers"]])
+        if r["hole"]:
+            print(f"hole to hole (a {a.drill:g} mm drill here): {r['hole']['gap']:.4f} wall to wall to {r['hole']['other']} "
+                  f"(centres {r['hole']['centre']:.4f})")
+        if r["edge"] is not None:
+            print(f"disc edge to the board outline: {r['edge']:.4f}")
     elif q == "box":
         box = [float(v) for v in a.args[0].replace("box:", "").split(",")]
         its = G.in_box(box, a.layer)

@@ -39,6 +39,11 @@ own nanometre grid, so nothing is lost.
                 area, box, outline and holes -- as REFILLED here, the way
                 measure.py refills, so a fill left stale in the file cannot
                 be measured
+  shapes        every graphic drawn on a copper layer at board level -- a polygon,
+                rectangle, circle or line, with a net or without (a plan's
+                copper polygon, a net tie): uuid, net, layer, kind, box, and
+                polys: KiCad's own outline of its copper (stroke included,
+                curves within 0.002 mm) as polygons with holes
   texts         every text on the board: text (as shown), layer, part (its
                 footprint's reference, or null for a board text), kind
                 (reference / value / field / text), at, box, rot, height,
@@ -74,7 +79,7 @@ import pcbnew as pn
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from measure import bbox, courtyard, edge_segments  # noqa: E402  (the same outline and courtyard the measurements use)
 
-SCHEMA = 1
+SCHEMA = 2                   # 2: `shapes` (graphics on copper layers)
 CHECK_TOL = 0.005            # mm: an exact pad model may differ this much from KiCad's own outline
 mm = pn.ToMM
 
@@ -303,9 +308,20 @@ def dump(board_dir):
         for g in f.GraphicalItems():
             if g.GetClass() == "PCB_TEXT" and g.m_Uuid.AsString() not in seen:
                 out["texts"].append(text_row(g, ref, "text", b))
+    out["shapes"] = []
     for d in b.GetDrawings():
         if d.GetClass() == "PCB_TEXT":
             out["texts"].append(text_row(d, None, "text", b))
+        elif d.GetClass() == "PCB_SHAPE" and d.GetLayer() in cu_set:
+            ps = pn.SHAPE_POLY_SET()
+            d.TransformShapeToPolygon(ps, d.GetLayer(), 0, pn.FromMM(0.002), pn.ERROR_INSIDE)
+            ps.Simplify()
+            po = polys(ps)
+            allp = [q for poly in po for q in poly["outline"]]
+            if allp:
+                out["shapes"].append(dict(uuid=d.m_Uuid.AsString(), net=d.GetNetname(), layer=name(d.GetLayer()),
+                                          kind=str(d.ShowShape()), box=rbox(pts_box(allp)), polys=po))
+    out["shapes"].sort(key=lambda s_: (s_["net"], s_["layer"], s_["box"], s_["uuid"]))
 
     for t in b.GetTracks():
         cls = t.GetClass()
@@ -368,7 +384,8 @@ def main():
     Path(sys.argv[2]).write_text(json.dumps(d, separators=(",", ":")) + "\n")
     s = d["source"]
     print(f"geometry: {len(d['parts'])} parts, {len(d['pads'])} pads, {len(d['tracks'])} tracks, "
-          f"{len(d['arcs'])} arcs, {len(d['vias'])} vias, {len(d['zones'])} zones, {len(d['texts'])} texts; "
+          f"{len(d['arcs'])} arcs, {len(d['vias'])} vias, {len(d['zones'])} zones, {len(d['shapes'])} copper shapes, "
+          f"{len(d['texts'])} texts; "
           f"pad models {s['pad_models']}")
     return 0
 
