@@ -309,6 +309,13 @@ past the part's own texts (a crystal's fields sit over its pin's stub).
   into the board's library with its fields beside the body -- for Device:R,
   whose Value sits inside the body, so a Value longer than the body ("33 1%
   (PROPOSED)") runs over the resistor's own wires in any orientation.
+- **Power pins of two rails on one side, 2.54 mm apart, short in the plan.** The planner hangs a ground
+  glyph straight down from a GND pin and a rail glyph up from a supply pin: a GND pin ABOVE a supply pin
+  on the same side lands its glyph on that pin's wire (board1's SiT1552: GND, VDD, GND on the left --
+  `plan` reported the supply rail merged into GND, then into the clock beside it). In the pin table
+  (`symgen.py`, sides L / R only) put the supply pin(s) at the top of a side and the ground pins below
+  them, the signals on the other side; parity is the proof. `symgen.py --lib` names the board's library
+  (`board1`); without it the generator looks for one named after the board folder.
 - **Deleting or replacing a library symbol once KiCad has saved it.**
   `delete_symbol` finds only symbols in Konnect's own two-space layout;
   kicad-cli and KiCad's Symbol Editor save with tabs, so after one
