@@ -97,6 +97,34 @@ def exactly_the_edits(c, bad, tag):
         bad.append(f"{tag}: texts.followed = {c['texts']['followed']}, expected 3 (R3's reference, its value and its fab-layer reference)")
 
 
+def by_hand():
+    """The diff on two boards written here: a via that keeps its place and loses its inner pad is
+    no via added or removed -- it is `reflashed` (its antipad changed in a plane); a copper
+    polygon is a shape added, and the same polygon under another UUID is no change."""
+    sys.path.insert(0, str(ROOT / "tools" / "review"))
+    import changes
+    via = lambda fl: dict(uuid="v", net="N", at=[1, 2], d=0.4, drill=0.2, type="through",
+                          layers=["F.Cu", "In1.Cu", "B.Cu"], flashed=fl)
+    shape = lambda u: dict(uuid=u, net="N", layer="F.Cu", kind="Polygon", box=[0, 0, 1, 1],
+                           polys=[dict(outline=[[0, 0], [1, 0], [1, 1]], holes=[])])
+    base = dict(board=dict(copper_layers=["F.Cu", "In1.Cu", "B.Cu"], edges=[], rules={}, netclasses={}, net_class={}))
+    old = dict(base, vias=[via(["F.Cu", "In1.Cu", "B.Cu"])])
+    new = dict(base, vias=[via(["F.Cu", "B.Cu"])], shapes=[shape("s1")])
+    c, bad = changes.diff(old, new), []
+    n = c["summary"]
+    if (n["vias_added"], n["vias_removed"], n["vias_reflashed"]) != (0, 0, 1) or c["vias"]["reflashed"][0]["was"] != old["vias"][0]["flashed"]:
+        bad.append(f"by hand: a via that lost its inner pad: {c['vias']}")
+    if (n["shapes_added"], n["shapes_removed"]) != (1, 0) or c["shapes"]["added"][0]["uuid"] != "s1":
+        bad.append(f"by hand: a copper polygon added: {c['shapes']}")
+    md = changes.markdown(c, "")
+    if "Vias whose pads moved to other layers (1)" not in md or "Copper shapes added (1)" not in md:
+        bad.append("by hand: CHANGES.md lacks the reflashed via or the added shape")
+    again = changes.diff(new, dict(new, shapes=[shape("s2")]))
+    if changes.one_line(again) != "nothing changed":
+        bad.append(f"by hand: the same polygon under another UUID: {changes.one_line(again)}")
+    return bad
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--kpy":
         return kpy_side(sys.argv[2])
@@ -199,6 +227,7 @@ def main():
             exactly_the_edits(json.loads(r.stdout), bad, "changes.py RVa RVb")
         except (ValueError, KeyError) as e:
             bad.append(f"changes.py OLD NEW --json: {e!r}: {(r.stderr or r.stdout)[-300:]}")
+        bad += by_hand()
         if bad:
             print("\n".join(bad))
             print(f"FAIL: {len(bad)} wrong; first: {bad[0]}")

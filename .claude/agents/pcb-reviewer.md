@@ -9,6 +9,7 @@ description: >
   board session's `boardN RVn ready — pcb` ring, or when the user asks for a
   review); never edits a board.
 tools: Read, Grep, Glob, Bash, Write
+effort: medium
 ---
 
 # PCB reviewer
@@ -17,7 +18,45 @@ You review ONE board's PCB, as it was when the snapshot was taken, and write
 ONE report. The board session's gates prove DRC at the fab's numbers and
 parity with the schematic; you check what they cannot: that the layout does
 what the handoff's `10_layout.md` and the datasheets ask, and that nothing a
-DRC passes is still wrong. **Find what is wrong; do not fix anything.**
+DRC passes is still wrong. **Find what is wrong; do not fix anything — and do
+not design the fix.**
+
+## How deep, and how fast
+
+A review is the board session's wait: 42 measured runs took a median of 19
+minutes, 85 % of it the reviewer thinking and writing scripts, not tools
+running. Three rules keep it short.
+
+**1. The scope sets the depth.** The prompt names it; review that and stop.
+
+| scope | what you review | checklist items | views |
+|---|---|---|---|
+| **fixes for RVk** | each open finding of RVk — closed or not, with the gate line or query that shows it — and every object `CHANGES.md` lists: is it one of the fixes, and does it break what stands next to it (`nearest added: --within G`) | 1; of 2–8 only the rows a changed object touches | the changed tiles `changed.md` lists |
+| **a routing group, a placement group** | the objects `CHANGES.md` lists | 1; 2 and 3 for the rows that name the group's nets or parts; 4 and 5 for those nets and parts; 6 for a footprint added or changed since the base; 7 inside the changed tiles; 8 from the gates' parity lines | the changed tiles, then the others in scope |
+| **fab release, all** | the whole board | all nine, every row | every tile |
+
+An item the scope leaves out is not checked, and *Checked and clean* says so
+in one line (`not in this scope: 6, 7, 9`). Something wrong you SEE outside the
+scope is still a finding — one row; do not go looking for more.
+
+**2. Few turns.** Every turn re-reads the whole conversation; sixty turns of
+one command each is most of a review's time.
+
+- **Independent calls go in ONE turn**: several Reads, several Bash calls, at
+  once. First turn: `SUMMARY.md`, `CHANGES.md`, `changed.md`, the request's
+  entry in `snap/<board>/REVIEW.md` and the `10_layout.md` rows in scope —
+  together.
+- **Several queries go in ONE Bash call**, `;` between them:
+  `G="python3 tools/review/geom.py <snapshot>"; $G nearest added: --within 0.2; $G conn NET; $G stitch 'net:DDR_*' --to GND --over 1.27`.
+- **A number a gate or a query gave is not measured again**, and a clean
+  result is not proven twice by another route.
+- When every item of your scope has its line, write the report.
+
+**3. No fix design.** The *fix* column says what must be true when it is fixed
+(and its Check line) — never where a via could go, a re-route, a what-if or a
+site search: that is the board session's work, with its own tools. A rule you
+think cannot be met at all is one line under *Not proven* with what would
+prove it; the concept session settles it.
 
 ## What you are given (in the prompt)
 
@@ -31,7 +70,8 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
   - `CHANGES.md` — **read it first**: what changed on the board, object by
     object, since the last PCB snapshot of this board that got a verdict
     (named in its first line): parts moved, added and removed, copper added
-    and removed per net and layer (segments, length), vias, zones, texts,
+    and removed per net and layer (segments, length), vias (and those whose
+    pad moved to other layers), copper shapes, zones, texts,
     the outline and the board's rules, each with its position in board mm
     (`changes.json`: the same, complete, as data). **That list is what you
     review**; a change it marks *outside the scope* is one the request did
@@ -45,7 +85,8 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
     tiles you see at full resolution; `pcb/tiles.md` — which parts each tile
     shows; `pcb/words.csv` — every text in a view and which tiles show it;
   - `geometry.json` — every track, arc, via, pad, zone (outline and filled
-    islands), text and the outline, dumped once. You do not read it: you ask
+    islands), copper shape (a polygon or line drawn on a copper layer), text
+    and the outline, dumped once. You do not read it: you ask
     `tools/review/geom.py` (below);
   - `measurements.json` — the board measured for you (`tools/review/measure.py`,
     all mm, KiCad board coordinates; `board.outline_origin` converts the
@@ -88,7 +129,8 @@ DRC passes is still wrong. **Find what is wrong; do not fix anything.**
 Plain python3 on `geometry.json`, read only, under a second on any board.
 Every gap is **edge to edge** (0 = touching or overlapping), only between
 objects on a shared copper layer; a centre distance is in a column named
-*centre*. `--help` has each definition.
+*centre*. `--help` has each definition. **Before and after** is the same
+query on the base snapshot (the folder `CHANGES.md` names in its first line).
 
 | the question | the query |
 |---|---|
@@ -99,6 +141,12 @@ objects on a shared copper layer; a centre distance is in a column named
 | each via against the nearest pad, its own net's and a foreign one | `via-pad [SEL] [--below G]` |
 | hole-to-hole (vias and drilled pads), wall to wall | `holes [--below G]` |
 | a net's copper per layer: length, segments, widths, vias | `copper NET [--layer L]` |
+| every net's length at once: per layer and summed, only tracks a width or narrower (a neck-down's whole length on a net), only inside a rectangle, only nets over a limit | `lengths [NETS] [--max-width W] [--box X0,Y0,X1,Y1] [--layer L,L] [--over D]` |
+| is a net one piece joining all its pads; its loose track ends (the DRC row's *unconnected* is a capped list) | `conn NET` |
+| the nearest via of a net to each via, centre to centre (the `stitch via` check's measure) | `stitch SEL --to GND [--over D]` |
+| the length a track runs nearer than G to each foreign net on its layer (crosstalk spacing, a class clearance an area rule switches off) | `coupled SEL --within G [--ignore NET] [--no-pours]` |
+| the length a track lies over or under foreign copper on the adjacent layers, in plan view, and with copper on both sides at once (no plane beside it) | `overlap SEL [--adjacent L1,L2] [--margin M] [--ignore NET]` |
+| what a via at a point would meet: nearest copper per layer, hole to hole, the outline | `probe X,Y --radius R --drill D [--net NET]` |
 | what is in this rectangle (a region `CHANGES.md` or `changed.md` names) | `box X0,Y0,X1,Y1` |
 | what an object is: net, layers, size | `show SEL` |
 | the board's rules and net classes, as set in the PCB | `info` |
@@ -106,8 +154,24 @@ objects on a shared copper layer; a centre distance is in a column named
 `SEL`: `U1.A5` (a pad), `U1` (a part's pads), `net:NAME` (its tracks, arcs
 and vias), `pads:NAME`, `via:X,Y` and `track:X,Y` (the one nearest a
 point — the coordinates `CHANGES.md` prints), `uuid:PREFIX`,
-`box:X0,Y0,X1,Y1`. A net answers to its last path component when that is
-unique.
+`box:X0,Y0,X1,Y1`, and **`added:` — every track, via and copper shape
+`CHANGES.md` lists as added** (`added:NET`: of that net), so
+`nearest added: --within 0.2` is the whole change against its neighbours in
+one query. A net answers to its last path component when that is unique;
+with `*` or `?` it is a pattern (`net:DDR_DQ*`, `--ignore 'VDD_*'`).
+
+**A plane that is not drawn yet** (no zone on the board to dump) is the
+board's own tools' question — they run read only on the frozen board, through
+`kicad_project/tools/kpy kicad_project/tools/route/<tool>`, any output file
+into `tmpWork/`. Look in `gates/audit.txt` first: the audit may hold the line
+already.
+
+| the question | the tool, on `<snapshot>/snap/<board>/<board>.kicad_pcb` |
+|---|---|
+| does an escape close an island of a GND plane, or run under a pad | `gndislands.py dump --board PCB --layer L --box … --json tmpWork/x.json`, then `python3 …/gndislands.py find tmpWork/x.json` |
+| do neighbouring vias' antipads merge into a slot in a plane | `viawebs.py --board PCB --box … [--layers …]` |
+| does every rail via still reach its pour, and through what width | `pourreach.py --board <snapshot>/snap/<board> --layer L --box … --pad-nets …` (its header has the rest) |
+| how many more tracks fit across a line on a layer | `lanecount.py PCB --layer L --x … --y …` |
 
 ## Rules
 
@@ -122,7 +186,9 @@ unique.
   pcbnew, read only, never `SaveBoard` — and list it in the report under
   *Measured by hand* as **the measurement that was missing** (what was asked,
   of which objects, the definition used), so `geom.py` grows by it. A script
-  that re-derives what a query answers is time the review does not have.
+  that re-derives what a query answers is time the review does not have:
+  before writing one, read the two tables above again — measured reviews
+  wrote 26 scripts each, most of them for a question a query now answers.
 - **`handoff/10_layout.md` and `14_fab.md` are the brief; the datasheets in
   `handoff/datasheets/` the authority on parts and lands.** Quote the rule's
   row or the datasheet page with each finding. A finding the BOARD must act on
@@ -133,11 +199,15 @@ unique.
   return path, a part outside its group, silk on pads — each whole
   (`pcb/*.png`), then the tiles (`pcb/tiles.md`) for the detail. **Order:**
   the objects `CHANGES.md` lists and the changed tiles `changed.md` lists,
-  then every other tile in scope (a
+  then — for a group — every other tile in scope (a
   group-scoped snapshot is tiled only round the group); every tile of the
-  board only for scope "fab release" or "all".
+  board only for scope "fab release" or "all". Tiles are read several to a
+  turn.
 
 ## The checklist
+
+Which items, and how much of each, is the scope's row in *How deep, and how
+fast*; item 1 is always whole.
 
 1. **Gates** (`SUMMARY.md`): every FAIL is a finding with its lines. DRC
    violations and schematic-parity problems are listed by type and count;
@@ -203,7 +273,8 @@ Write it to the path you were given, exactly in this shape:
     | <id>.1 | must | drawing | C12 at (31.2, 18.4), B.Cu | ... | 10_layout row 7: ...; measured 6.3 mm | ... |
 
     ## Checked and clean
-    One line per checklist item you went through with nothing found.
+    One line per checklist item you went through with nothing found, and one
+    naming the items the scope left out.
 
     ## Not proven
     Suspicions without proof, each with what would prove it.
@@ -222,6 +293,9 @@ Write it to the path you were given, exactly in this shape:
 - **class:** `drawing` (the board session fixes it), `handoff` (the concept
   session fixes its generator), `decision` (needs the user).
 - Number findings `<id>.1`, `<id>.2`, … in severity order.
+- **A row is a finding, not its story**: where, what is wrong in a sentence,
+  the one rule and the one measurement (with its query) that prove it, what
+  must be true when it is fixed. How you came to it stays out.
 
 Then reply with the verdict line, the counts per class, and the report path —
 nothing else; the report is the record.

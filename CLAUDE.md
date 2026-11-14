@@ -198,7 +198,7 @@ The concept venv is `.venv` (`./setup.sh install`); matplotlib uses `Agg`.
     .venv/bin/python tools/handoff/publish.py --check --all    # fresh = the folder is what the sources render to now
     python3 kicad_project/tools/template/giveback.py status  # template-owned files changed here and not given back
     python3 tools/review/snapshot.py --board board1 --kind schematic|pcb --id RVn   # a board change, frozen and gated
-    python3 tools/review/geom.py <snapshot> <query>     # a PCB snapshot's geometry, measured (gaps, lengths, what is near)
+    python3 tools/review/geom.py <snapshot> <query>     # a PCB snapshot's geometry, measured (gaps, lengths, coupled and overlapping length, a net in one piece, what is near)
     python3 tools/review/changes.py <old snapshot> <new snapshot>   # what moved between two PCB snapshots
     python3 tools/review/rulecheck.py --board board1    # prove the custom DRC rules on the PCB; a new or changed rule does not publish without it
     .venv/bin/python tools/measure/sessions.py [--since YYYY-MM-DD]   # where the sessions' time went (out/sessions/report.md)

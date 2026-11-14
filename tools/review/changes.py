@@ -361,13 +361,31 @@ def reviewed_base(out, reviews):
     return best
 
 
-def base_geometry(base, out, kpy):
-    """The geometry.json of an earlier snapshot; one taken before snapshots carried it is dumped
-    now, from its frozen board (through kpy -- this is the only place this file starts pcbnew).
-    Returns (path or None, note)."""
+def base_geometry(base, out, kpy, schema=0):
+    """The geometry.json of an earlier snapshot; one taken before snapshots carried it -- or
+    with an older dump format than `schema` (dump.SCHEMA of the new one: an object kind the old
+    dump did not hold would read as added) -- is dumped now, from its frozen board (through kpy:
+    this is the only place this file starts pcbnew).  Returns (path or None, note)."""
     g = Path(base) / "geometry.json"
+    old = None
     if g.exists():
-        return g, ""
+        try:
+            have = json.loads(g.read_text()).get("source", {}).get("schema", 0)
+        except (OSError, ValueError):
+            have = -1
+        if have >= schema:
+            return g, ""
+        old = g if have >= 0 else None
+    try:
+        got = _redump(base, out, kpy, g)
+    except Exception as e:                                   # noqa: BLE001 -- the old dump still diffs
+        got = (None, str(e))
+    if got[0] is None and old is not None:
+        return old, ""
+    return got
+
+
+def _redump(base, out, kpy, g):
     try:
         board = json.loads((Path(base) / "manifest.json").read_text())["board"]
     except (OSError, ValueError, KeyError):
@@ -442,7 +460,11 @@ def diff(old, new):
     copper    per (net, layer): segments and length added and removed, and the box of both; a
               track is the SAME track when net, layer, both ends, width (and an arc's midpoint)
               agree to 1 um, whatever its UUID
-    vias      added / removed, the same via being one of the same net, centre, pad, drill and span
+    vias      added / removed, the same via being one of the same net, centre, pad, drill and span;
+              reflashed: such a via whose pad is now drawn on other layers (unused pads removed
+              or restored -- its antipad in every plane changes with it)
+    shapes    graphics on copper layers (a plan's copper polygon, a net tie) added / removed,
+              the same shape being one of the same net, layer and outline to 1 um
     zones     added, removed, changed (what: net, layers, priority, outline, clearance, min_width,
               keepout, and per layer the fill's islands and area), matched by UUID
     texts     moved (position, rotation, layer), changed (the text shown, visibility, size),
@@ -517,6 +539,19 @@ def diff(old, new):
     vo, vn = _multi(old.get("vias", []), _via_key), _multi(new.get("vias", []), _via_key)
     c["vias"] = dict(added=_only(vn, vo), removed=_only(vo, vn))
     c["vias"]["kept"] = len(new.get("vias", [])) - len(c["vias"]["added"])
+    refl = []
+    for k in vo.keys() & vn.keys():
+        for a, b in zip(vo[k], vn[k]):
+            fa, fb = a.get("flashed", a["layers"]), b.get("flashed", b["layers"])
+            if fa != fb:
+                refl.append(dict(uuid=b["uuid"], net=b["net"], at=b["at"], d=b["d"], drill=b["drill"], layers=b["layers"],
+                                 was=fa, flashed=fb))
+    c["vias"]["reflashed"] = sorted(refl, key=lambda v: (v["net"], v["at"]))
+    # copper shapes
+    skey = lambda g: (g["net"], g["layer"], _k([[q["outline"], q["holes"]] for q in g["polys"]]))
+    so, sn = _multi(old.get("shapes", []), skey), _multi(new.get("shapes", []), skey)
+    sbrief = lambda g: {k: g[k] for k in ("uuid", "net", "layer", "kind", "box")}
+    c["shapes"] = dict(added=[sbrief(g) for g in _only(sn, so)], removed=[sbrief(g) for g in _only(so, sn)])
     # zones
     zo, zn = {z["uuid"]: z for z in old.get("zones", [])}, {z["uuid"]: z for z in new.get("zones", [])}
     zbrief = lambda z: dict(uuid=z["uuid"], net=z["net"], name=z.get("name", ""), layers=z["layers"], box=z.get("box"),
@@ -614,6 +649,8 @@ def counts(c):
         length_removed=round(sum(e["removed"]["length"] for e in cu["per_net"]), 4),
         nets_with_copper_changes=len({e["net"] for e in cu["per_net"]}),
         vias_added=len(c["vias"]["added"]), vias_removed=len(c["vias"]["removed"]),
+        vias_reflashed=len(c["vias"]["reflashed"]),
+        shapes_added=len(c["shapes"]["added"]), shapes_removed=len(c["shapes"]["removed"]),
         zones_added=len(c["zones"]["added"]), zones_removed=len(c["zones"]["removed"]),
         zones_changed=len(c["zones"]["changed"]),
         texts_moved=len(c["texts"]["moved"]), texts_changed=len(c["texts"]["changed"]),
@@ -650,6 +687,10 @@ def one_line(c):
                     f"(+{n['length_added']:.2f} / -{n['length_removed']:.2f} mm)")
     if n["vias_added"] or n["vias_removed"]:
         bits.append(f"vias +{n['vias_added']} / -{n['vias_removed']}")
+    if n.get("vias_reflashed"):
+        bits.append(f"{n['vias_reflashed']} via(s) with their pads on other layers")
+    if n.get("shapes_added") or n.get("shapes_removed"):
+        bits.append(f"copper shapes +{n['shapes_added']} / -{n['shapes_removed']}")
     z = n["zones_added"] + n["zones_removed"] + n["zones_changed"]
     if z:
         bits.append(f"{z} zone(s) added, removed or changed")
@@ -724,6 +765,14 @@ def markdown(c, base_note, sbox=None, scope_label=""):
                  [[v["net"] or "(no net)", _pt(v["at"]), f"{v['d']:g} / {v['drill']:g}",
                    f"{v['layers'][0]}..{v['layers'][-1]}", mark(v["at"]) if side == "added" else ""]
                   for v in c["vias"][side]])
+    span = lambda f: ", ".join(f) if len(f) < 4 else f"{f[0]}..{f[-1]} ({len(f)})"
+    B += tab("Vias whose pads moved to other layers", ["net", "at", "pad / drill", "pad was on", "pad is on", ""],
+             [[v["net"] or "(no net)", _pt(v["at"]), f"{v['d']:g} / {v['drill']:g}", span(v["was"]) or "no layer",
+               span(v["flashed"]) or "no layer", mark(v["at"])] for v in c["vias"].get("reflashed", [])])
+    for side, title in (("added", "Copper shapes added"), ("removed", "Copper shapes removed")):
+        B += tab(title, ["net", "layer", "kind", "box", ""],
+                 [[g["net"] or "(no net)", g["layer"], g["kind"], " ".join(f"{v:.2f}" for v in g["box"]),
+                   mark(g["box"][:2], g["box"][2:]) if side == "added" else ""] for g in (c.get("shapes") or {}).get(side, [])])
     Z = c["zones"]
     zname = lambda z: (("rule area " if z["keepout"] else "") + (z["name"] or z["net"] or "(no net)"))
     zbox = lambda z: " ".join(f"{v:.2f}" for v in z["box"]) if z.get("box") else ""
@@ -779,7 +828,7 @@ def objects(out, root, board, kpy, scope=None):
     prev = previous(out, "pcb")
     note = ""
     if base:
-        gpath, how = base_geometry(base[1], out, kpy)
+        gpath, how = base_geometry(base[1], out, kpy, (new.get("source") or {}).get("schema", 0))
         if gpath is None:
             note, base = (f"`{base[1].name}` is the last reviewed PCB snapshot ({base[3]}), but it cannot be "
                           f"diffed: {how}."), None

@@ -12,7 +12,10 @@ Two parts, on temporary files only:
      far away, on a layer where a via has only its hole), a label's own and
      other pad, joint angles (45, 90, a tee, an arc met on its tangent, a
      26.57-degree one flagged, one inside its own pad left alone), via to
-     pad, hole to hole, a net's copper, a box.
+     pad, hole to hole, a net's copper, a box; a copper shape; the length a
+     track runs beside another net and over one on another layer; a net in
+     three pieces with its loose ends; the nearest via of a net; every net's
+     length by width, layer and box; a probe at a point; `added:`.
   2. AGAINST PCBNEW. tests/fixture_pcb.py's board, with tracks, an arc, vias
      and a refilled pour added (this file re-run under kicad_project/tools/kpy),
      dumped by tools/review/dump.py -- and every pair of copper objects on a
@@ -82,6 +85,16 @@ def kpy_side(work):
     # SIG3: a wide track under the GND pour and a via beside it (the refill bends round the via)
     track("SIG3", pn.F_Cu, (12, 5), (26, 5), 0.25)
     via("SIG3", 13.5, 2.5)
+    # a copper polygon with a net (what a plan's "polys" become), and a line drawn on copper without one
+    poly = pn.PCB_SHAPE(b)
+    poly.SetShape(pn.SHAPE_T_POLY)
+    poly.SetPolyPoints([V(30, 15), V(33, 15), V(33, 17), V(31.5, 18), V(30, 17)])
+    poly.SetFilled(True); poly.SetWidth(0); poly.SetLayer(pn.F_Cu); poly.SetNet(nets["SIG3"])
+    b.Add(poly)
+    line = pn.PCB_SHAPE(b)
+    line.SetShape(pn.SHAPE_T_SEGMENT)
+    line.SetStart(V(30, 19)); line.SetEnd(V(33, 19.5)); line.SetWidth(MM(0.3)); line.SetLayer(pn.B_Cu)
+    b.Add(line)
     pn.ZONE_FILLER(b).Fill(b.Zones())
     pn.SaveBoard(str(pcb), b)
 
@@ -105,6 +118,8 @@ def kpy_side(work):
                 keep.append(s)
                 fills[lid] = s
         objs.append(("uuid:" + z.m_Uuid.AsString(), z.GetNetname(), fills))
+    for g in (poly, line):
+        objs.append(("uuid:" + g.m_Uuid.AsString(), g.GetNetname(), {g.GetLayer(): g.GetEffectiveShape(g.GetLayer())}))
 
     def clearance(s0, s1):
         """The distance between two shapes: the clearance at which they start to collide."""
@@ -150,7 +165,8 @@ def kpy_side(work):
     hole_gaps = sorted(math.dist(h[:2], g[:2]) - h[2] / 2 - g[2] / 2 for i, h in enumerate(holes) for g in holes[i + 1:])
     (Path(work) / "ref.json").write_text(json.dumps(dict(
         pairs=pairs, lengths=lengths, labels=labels, hole_gaps=[g for g in hole_gaps if g < 3.0],
-        arc=dict(uuid=arc.m_Uuid.AsString(), length=mm(arc.GetLength()), radius=mm(arc.GetRadius())))))
+        arc=dict(uuid=arc.m_Uuid.AsString(), length=mm(arc.GetLength()), radius=mm(arc.GetRadius())),
+        shapes=sorted([poly.m_Uuid.AsString(), line.m_Uuid.AsString()]))))
     return 0
 
 
@@ -189,13 +205,27 @@ def hand_board():
             tr("I", "F.Cu", (1, 12), (2, 12)),              # inside the pour's copper
             tr("K", "B.Cu", (18.5, 17), (18.5, 19)), tr("L", "F.Cu", (17.3, 17), (17.3, 19)),
             tr("M", "F.Cu", (17, 13), (17, 15)),            # meets the arc on its tangent
+            # x >= 30, far from everything above: the queries along a track and across a net
+            tr("P", "F.Cu", (30, 0), (40, 0)), tr("P", "B.Cu", (40, 0), (40, -3)),
+            tr("P", "F.Cu", (44, 5), (44.5, 5)),            # a stub 0.1 short of its pad: a piece of its own
+            tr("Q", "F.Cu", (32, 0.5), (36, 0.5)),          # beside P for 4 mm, copper 0.3 apart
+            tr("R", "B.Cu", (35, -2), (35, 2), 0.4),        # crosses under P
+            tr("S", "B.Cu", (31, 0.25), (33, 0.25)),        # under P's edge: plan-view gap 0.05
+            tr("U", "In9.Cu", (34.9, -2), (34.9, 2)),       # a third layer, crossing P too
+            tr("X", "F.Cu", (33, 10), (33, 12)),            # 0.9 from the copper shape of net W
         ],
+        shapes=[dict(uuid="s1", net="W", layer="F.Cu", kind="poly", box=[30, 10, 32, 12],
+                     polys=[dict(outline=rect(31, 11, 2, 2), holes=[])])],
         arcs=[dict(uuid="arc-M", net="M", layer="F.Cu", a=[17, 15], mid=[15 + s2, 15 + s2], b=[15, 17], w=0.2,
                    centre=[15, 15], radius=2.0, angle=90.0, length=math.pi, pts=arc_pts)],
         vias=[dict(uuid="v1", net="A", at=[12, 0], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
                    flashed=["F.Cu", "B.Cu"]),
               dict(uuid="v3", net="J", at=[18, 18], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
-                   flashed=["F.Cu"])],
+                   flashed=["F.Cu"]),
+              dict(uuid="vP", net="P", at=[40, 0], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
+                   flashed=["F.Cu", "B.Cu"]),
+              dict(uuid="vG", net="GNDX", at=[40, 3], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
+                   flashed=["F.Cu", "B.Cu"])],
         pads=[
             pad("R1", "1", "B", (12, 1.0), rect(12, 1.0, 1.0, 0.5), 0.0),
             pad("R1", "2", "A", (12, -1.0), [[12, -1.0]], 0.4),
@@ -207,6 +237,9 @@ def hand_board():
             pad("J1", "2", "O", (4.54, 15), [[4.54, 15]], 0.8, ("F.Cu", "B.Cu"), "pth", drill=[1.0, 1.0],
                 hole=dict(core=[[4.54, 15]], r=0.5)),
             pad("H1", "", "", (2, 17), [[2, 17]], 0.5, (), "npth", drill=[1.0, 1.0], hole=dict(core=[[2, 17]], r=0.5)),
+            pad("P1", "1", "P", (30, 0), [[30, 0]], 0.3),
+            pad("P2", "1", "P", (40, -3), [[40, -3]], 0.3, ("B.Cu",)),
+            pad("P3", "1", "P", (45, 5), [[45, 5]], 0.3),
         ],
         zones=[dict(uuid="z-gnd", net="GND", name="", layers=["F.Cu"], priority=0, box=[0, 10, 10, 14],
                     outline=[dict(outline=rect(5, 12, 10, 4), holes=[])],
@@ -316,6 +349,96 @@ def hand_checks(geom, path, c):
     c.eq("box: a track only reaching it", len(G.in_box([10.1, -0.05, 10.5, 0.05])), 1)
     c.eq("box: just past it", len(G.in_box([10.1001, -0.05, 10.5, 0.05])), 0)
     c.eq("box: parts", [p["ref"] for p in G.others_in_box([11, -2, 13, 3])["parts"]], [])
+    # ---- the measurements reviewers used to script ------------------------------------------
+    STEP = 0.021                                          # two ends of a counted stretch, one 0.01 station each
+    # the centre column is pad position to via centre, not the first corner of a pad's core
+    c.eq("gap via / rect pad: centre", gap("via:12,0", "R1.1")["centre"], 1.0)
+    # a copper shape (a 2 x 2 square of net W) is copper: a 0.2 track 1.0 from its edge
+    c.eq("gap shape / track", gap("uuid:s1", "track:33,11")["gap"], 0.9)
+    c.eq("nearest to track X: the shape", near("track:33,11")[0]["other"].kind, "shape")
+    c.eq("net:W selects its shape", [i.kind for i in one("net:W")], ["shape"])
+    # patterns
+    c.eq("net pattern", G.net_list("GND*"), ["GND", "GNDX"])
+    c.eq("net pattern in a selection", sorted({i.net for i in one("net:GND?")}), ["GNDX"])
+    # coupled: A and B run side by side for all 10 mm, copper 0.3 apart
+    cp = G.coupled(one("net:A"), 0.35)
+    c.eq("coupled A: beside", [(r["other"], r["layer"]) for r in cp["rows"]], [("B", "F.Cu")])
+    c.eq("coupled A: length", cp["rows"][0]["length"], 10.0, 1e-9)
+    c.eq("coupled A: least gap", cp["rows"][0]["gap"], 0.3)
+    c.eq("coupled A within 0.25: nothing", G.coupled(one("net:A"), 0.25)["rows"], [])
+    # P runs beside Q for Q's 4 mm, and past each of Q's ends while hypot(dx, 0.5) - 0.2 < 0.35
+    want = 4 + 2 * math.sqrt(0.55 ** 2 - 0.5 ** 2)
+    cp = G.coupled(one("net:P"), 0.35)
+    c.eq("coupled P: beside", [(r["other"], r["layer"]) for r in cp["rows"]], [("Q", "F.Cu")])
+    c.eq("coupled P: length", cp["rows"][0]["length"], want, STEP)
+    c.eq("coupled P: least gap", cp["rows"][0]["gap"], 0.3)
+    tot = {t["layer"]: t for t in cp["totals"]}
+    c.eq("coupled P: routed F.Cu / B.Cu", (round(tot["F.Cu"]["length"], 6), round(tot["B.Cu"]["length"], 6)), (10.5, 3.0))
+    c.eq("coupled P: near anything", (tot["F.Cu"]["near"], tot["B.Cu"]["near"]), (cp["rows"][0]["length"], 0.0))
+    c.eq("coupled P, Q ignored", G.coupled(one("net:P"), 0.35, ignore=["Q"])["rows"], [])
+    # overlap: R (0.4 wide, B.Cu) crosses under P (0.2): 0.6 mm of P lies over it; S is 0.05 off P's edge
+    ov = G.overlap(one("net:P", "F.Cu"))
+    c.eq("overlap P: over", [(r["other"], r["other_layer"]) for r in ov["rows"]], [("R", "B.Cu")])
+    c.eq("overlap P / R: length", ov["rows"][0]["length"], 0.6, STEP)
+    c.eq("overlap P: one other layer, no 'both'", ov["totals"][0]["both"], None)
+    ov = G.overlap(one("net:P", "F.Cu"), margin=0.1)       # S: 2 mm and past each end while hypot(dx, 0.25) <= 0.3
+    got = {r["other"]: r["length"] for r in ov["rows"]}
+    c.eq("overlap P / S at margin 0.1", got.get("S"), 2 + 2 * math.sqrt(0.3 ** 2 - 0.25 ** 2), STEP)
+    c.eq("overlap P / R at margin 0.1", got.get("R"), 0.8, STEP)
+    ov = G.overlap(one("net:P", "F.Cu"), adjacent=["B.Cu", "In9.Cu"])
+    t = ov["totals"][0]
+    c.eq("overlap P, two layers: over B.Cu", t["over"]["B.Cu"], 0.6, STEP)
+    c.eq("overlap P, two layers: over In9.Cu", t["over"]["In9.Cu"], 0.4, STEP)
+    c.eq("overlap P: copper on both sides (x 34.7 .. 35.1)", t["both"], 0.4, STEP)
+    c.eq("overlap P, R ignored", [r["other"] for r in G.overlap(one("net:P", "F.Cu"), ignore=["R"])["rows"]], [])
+    # stitch: centre to centre, farthest first
+    st = G.stitch(one("net:P"), "GNDX")
+    c.eq("stitch P via to GNDX", [(r["via"].src["uuid"], r["centre"], r["other"].src["uuid"]) for r in st], [("vP", 3.0, "vG")])
+    c.eq("stitch: layers both span", st[0]["shared"], ["F.Cu", "B.Cu"])
+    c.eq("stitch to a net with no via", G.stitch(one("via:12,0"), "B")[0]["centre"], None)
+    c.eq("stitch to its own net: not itself", G.stitch(one("via:12,0"), "A")[0]["centre"], None)
+    # conn: P1 - track - via - track - P2 is one piece; the pad P3 and the stub 0.1 short of it are two more
+    cn = G.conn("P")
+    c.eq("conn P: pieces", [(p["pads"], p["tracks"], p["vias"]) for p in cn["pieces"]],
+         [(["P1.1", "P2.1"], 2, 1), (["P3.1"], 0, 0), ([], 1, 0)])
+    c.eq("conn P: the routed piece's length", cn["pieces"][0]["length"], 13.0)
+    c.eq("conn P: loose ends", [(e["at"], e["layer"]) for e in cn["loose"]], [((44.0, 5.0), "F.Cu"), ((44.5, 5.0), "F.Cu")])
+    c.eq("conn P: far end, nothing within 0.5", cn["loose"][0]["gap"], None)
+    c.eq("conn P: near end, copper 0.1 from the pad", cn["loose"][1]["gap"], 0.1)
+    cn = G.conn("C")                                       # six tracks and the pad R5.1 they pass through
+    c.eq("conn C: one piece", [(p["pads"], p["tracks"]) for p in cn["pieces"]], [(["R5.1"], 6)])
+    c.eq("conn C: its three open ends", sorted(e["at"] for e in cn["loose"]), [(0.0, 5.0), (4.0, 9.0), (6.0, 8.5)])
+    c.eq("conn M: the arc joins its track; two open ends", (len(G.conn("M")["pieces"]), len(G.conn("M")["loose"])), (1, 2))
+    # lengths
+    ln = {r["net"]: r for r in G.lengths()}
+    c.eq("lengths P", (round(ln["P"]["total"], 9), ln["P"]["layers"], ln["P"]["segments"], ln["P"]["vias"]),
+         (13.5, {"F.Cu": 10.5, "B.Cu": 3.0}, 3, 1))
+    c.eq("lengths M: the arc by its length", ln["M"]["total"], 2 + math.pi)
+    c.eq("lengths, longest first", G.lengths()[0]["net"], "P")
+    c.eq("lengths C, 0.25 wide or narrower", G.lengths("C", max_width=0.25)[0]["total"], 7 + math.sqrt(2))
+    r = G.lengths("P", box=[35, -1, 41, 1])[0]             # 5 mm of the F.Cu track, 1 mm of the B.Cu one, the via
+    c.eq("lengths P in a box", (r["layers"], r["vias"]), ({"F.Cu": 5.0, "B.Cu": 1.0}, 1))
+    c.eq("lengths P on B.Cu", G.lengths("P", layers=["B.Cu"])[0]["total"], 3.0)
+    c.eq("lengths by pattern", [r["net"] for r in G.lengths("GND*")], [])
+    r = G.lengths("M", box=[14, 14, 18, 18])[0]            # the arc whole (chords: within 1e-6) and 1 mm of the track
+    c.eq("lengths M in a box: arc by chords", r["total"], 1 + math.pi, 1e-3)
+    # probe: a 0.05 disc at (35, 0.2) -- P's edge at y 0.1, Q's at 0.4, R under it
+    pr = G.probe((35, 0.2), radius=0.05, drill=0.3)
+    by = {w["layer"]: w for w in pr["layers"]}
+    c.eq("probe F.Cu: gap", by["F.Cu"]["gap"], 0.05)
+    c.eq("probe F.Cu: who", by["F.Cu"]["other"].net, "P")
+    c.eq("probe B.Cu: over R", (by["B.Cu"]["gap"], by["B.Cu"]["other"].net), (0.0, "R"))
+    c.eq("probe: hole to hole", pr["hole"]["gap"], math.hypot(5, 0.2) - 0.3)
+    c.eq("probe: no outline in the dump", pr["edge"], None)
+    pr = G.probe((35, 0.2), radius=0.05, net="P")
+    c.eq("probe as net P: Q is the nearest", (round(pr["layers"][0]["gap"], 9), pr["layers"][0]["other"].net), (0.15, "Q"))
+    # added: what changes.json lists (written beside the dump, as in a snapshot folder)
+    (Path(path).parent / "changes.json").write_text(json.dumps(dict(
+        base=dict(id="RV0"), copper=dict(added=[dict(uuid="t-Q-32-0.5")], removed=[]), vias=dict(added=[dict(uuid="vP")], removed=[]))))
+    G2 = geom.load(path)
+    c.eq("added:", sorted(i.kind + " " + i.net for i in G2.select("added:")), ["track Q", "via P"])
+    c.eq("added:NET", [i.name for i in G2.select("added:Q")], [one("track:34,0.5")[0].name])
+    c.eq("nearest added:", G2.nearest(G2.select("added:Q"))[0]["gap"], 0.3)
     # the command line prints the same number
     r = subprocess.run([sys.executable, str(ROOT / "tools" / "review" / "geom.py"), str(path), "gap", "track:5,0", "track:5,0.5"],
                        capture_output=True, text=True)
@@ -324,7 +447,13 @@ def hand_checks(geom, path, c):
                        capture_output=True, text=True)
     c.eq("CLI joints", "5 joint(s), 1 flagged" in r.stdout and "26.57" in r.stdout, True)
     for q in (["info"], ["show", "R1"], ["nearest", "net:C"], ["label"], ["joints", "--all-nets", "--all"], ["via-pad"],
-              ["holes"], ["copper", "C"], ["box", "0,0,20,20"], ["nearest", "net:A", "--json"]):
+              ["holes"], ["copper", "C"], ["box", "0,0,20,20"], ["nearest", "net:A", "--json"],
+              ["lengths"], ["lengths", "?", "--max-width", "0.25", "--layer", "F.Cu,B.Cu", "--over", "1"],
+              ["lengths", "P", "--box", "35,-1,41,1", "--json"], ["conn", "P"], ["conn", "GND", "--json"],
+              ["stitch", "net:P", "--to", "GNDX", "--over", "1.27"], ["coupled", "net:P", "--within", "0.35"],
+              ["coupled", "added:", "--within", "0.35", "--json"], ["overlap", "net:P", "--adjacent", "B.Cu,In9.Cu"],
+              ["probe", "35,0.2", "--radius", "0.05", "--drill", "0.3", "--net", "P"], ["show", "added:"],
+              ["nearest", "added:", "--within", "0.5", "--ignore", "GND*"]):
         r = subprocess.run([sys.executable, str(ROOT / "tools" / "review" / "geom.py"), str(path)] + q,
                            capture_output=True, text=True)
         c.eq(f"CLI {' '.join(q)} runs", (r.returncode, r.stderr.strip()), (0, ""))
@@ -385,6 +514,9 @@ def pcbnew_checks(geom, work, c):
     c.eq("the flagged turn", flagged[0]["turns"] if flagged else None, [round(math.degrees(math.atan2(1.73, 3.0)), 2)])
     c.eq("SIG1 through its arc: straight on at both ends", [j["turns"] for j in G.joints("SIG1")], [[0.0], [0.0]])
     c.eq("pads modelled exactly", G.d["source"]["pad_models"].get("exact"), len(G.d["pads"]))
+    c.eq("copper shapes dumped", sorted(s["uuid"] for s in G.d["shapes"]), ref["shapes"])
+    c.eq("a shape's net and layer", sorted((s["net"].rsplit("/", 1)[-1], s["layer"]) for s in G.d["shapes"]),
+         [("", "B.Cu"), ("SIG3", "F.Cu")])
     return n_pairs, zero, worst, worst_near
 
 
