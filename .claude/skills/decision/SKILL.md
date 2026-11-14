@@ -21,6 +21,17 @@ question, from a study result that would commit the design, or from your own
 recommendation, put the options and your recommendation in front of the user
 and stop until they choose (relay on: `RELAY_PROTOCOL.md` §5).
 
+**A part that replaces another, or removes a circuit, is checked against
+what the old one did, not only against the problem it solves.** List every
+job the old part did, the implicit ones included (a start-up or fallback
+clock, a default state at power-up, a level or edge its loads relied on),
+and check the new one against each: every load's input spec (levels, edge
+rate, timing), the power-up and reset sequence it sits in, and the fab's
+and assembler's rules for its package (pitch, mask web, cleaning). One
+oscillator chosen for its accuracy alone lost the PMIC's start-up clock,
+broke a buffer's input edge-rate limit and fell under the mask web; it was
+reversed an hour later.
+
 ## 1. `design/STATUS.md`
 
 - Add a row to the **Decided** table: `| D<n> | YYYY-MM-DD | **THE DECISION
