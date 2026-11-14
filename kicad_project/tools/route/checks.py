@@ -13,7 +13,8 @@ carries (`handoff/findings.json`, `route.py audit --findings`):
                                                      over each other for more than this per net pair;
                                                      a square crossing is free |
   | stitch via    | Pairs: GND within 1.27 mm     | every via of a net in the class has a via of the
-                                                     named net within the distance |
+                                                     named net within the distance; ", except NET (x, y)
+                                                     1.6 mm" gives one via a decision excepted its own |
   | neck length   | 4 mm   or   Fast: 4 mm        | a run of track narrower than the net's width (its
                                                      class's, or the narrowest its custom rules give
                                                      on that layer) is no longer than this |
@@ -41,6 +42,7 @@ class RuleError(ValueError):
 def parse(rule, val, s, G):
     """One guide row into G (guide._parse calls this for the rules above)."""
     mmnum = r"(\d+(?:\.\d+)?)\s*mm"
+    mmnum0 = r"(-?\d+(?:\.\d+)?)"
     if rule == "cap reach":
         m = re.fullmatch(r"\s*([A-Za-z]+\d+)\s*:\s*" + mmnum + r"\s*\(([^)]+)\)\s*", val)
         caps = [x.strip() for x in m.group(3).split(",") if x.strip()] if m else []
@@ -54,10 +56,18 @@ def parse(rule, val, s, G):
             raise RuleError("'layers apart' takes 'In4.Cu / In5.Cu: 0 mm' (the shared length a net pair may have)")
         G.setdefault("layers_apart", []).append(dict(s, a=m.group(1), b=m.group(2), max=float(m.group(3))))
     elif rule == "stitch via":
-        m = re.fullmatch(r"\s*([A-Za-z0-9_]+)\s*:\s*(\S+)\s+within\s+" + mmnum + r"\s*", val)
+        head, *excs = [t.strip() for t in re.split(r",\s*except\s+", val)]
+        m = re.fullmatch(r"\s*([A-Za-z0-9_]+)\s*:\s*(\S+)\s+within\s+" + mmnum + r"\s*", head)
         if not m:
-            raise RuleError("'stitch via' takes 'Pairs: GND within 1.27 mm'")
-        G.setdefault("stitch", []).append(dict(s, **{"class": m.group(1)}, net=m.group(2), within=float(m.group(3))))
+            raise RuleError("'stitch via' takes 'Pairs: GND within 1.27 mm' (, except NET (x, y) 1.6 mm ...)")
+        exc = []
+        for e in excs:                                   # one via a decision excepts: its net, where it stands, its own distance
+            me = re.fullmatch(r"([A-Za-z0-9_/]+)\s*(?:\(\s*" + mmnum0 + r"\s*,\s*" + mmnum0 + r"\s*\))?\s*" + mmnum, e)
+            if not me:
+                raise RuleError(f"'stitch via' exception {e!r}: takes 'NET (x, y) 1.6 mm' or 'NET 1.6 mm'")
+            exc.append({"net": me.group(1), "at": (float(me.group(2)), float(me.group(3))) if me.group(2) else None,
+                        "within": float(me.group(4))})
+        G.setdefault("stitch", []).append(dict(s, **{"class": m.group(1)}, net=m.group(2), within=float(m.group(3)), exc=exc))
     elif rule == "neck length":
         m = re.fullmatch(r"\s*(?:([A-Za-z0-9_]+)\s*:\s*)?" + mmnum + r"\s*", val)
         if not m:
@@ -203,9 +213,13 @@ def stitch(geo, rule, classes_of):
         if rule["class"] not in classes_of(net) or leaf(net) == leaf(rule["net"]):
             continue
         d = min((math.hypot(x - gx, y - gy) for gx, gy in gnd), default=None)
-        if d is None or d > rule["within"] + EPS:
+        lim = rule["within"]
+        for e in rule.get("exc", ()):                    # a via a decision excepted keeps its own distance, no other
+            if leaf(net) == leaf(e["net"]) and (e["at"] is None or math.hypot(x - e["at"][0], y - e["at"][1]) < 0.01):
+                lim = e["within"]
+        if d is None or d > lim + EPS:
             out.append(f"{leaf(net)} via at ({x:.3f}, {y:.3f}): " + ("no " + leaf(rule["net"]) + " via on the board" if d is None
-                       else f"nearest {leaf(rule['net'])} via {d:.3f} mm, over {rule['within']} mm"))
+                       else f"nearest {leaf(rule['net'])} via {d:.3f} mm, over {lim} mm"))
     return out
 
 
