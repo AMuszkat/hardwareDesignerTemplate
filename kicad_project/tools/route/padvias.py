@@ -34,13 +34,17 @@ import route as R  # noqa: E402
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--board")
-    ap.add_argument("--pads", required=True, help="REF.PAD[:N],... (N missing: as many as fit)")
+    ap.add_argument("--pads", default="", help="REF.PAD[:N],... (N missing: as many as fit)")
+    ap.add_argument("--map", default=None, help="x0,y0,x1,y1 with --net: print where a via of that net may stand in the box (# free board, o inside a pad of the net)")
+    ap.add_argument("--net", default=None, help="the net of --map (its short name)")
+    ap.add_argument("--boxes", default="", help="NET@x0,y0,x1,y1:N;... -- N vias of NET in the box, on free board or inside its pads (a patch of a net-tied polygon beside a pad)")
     ap.add_argument("--via", default="0.4/0.2", help="pad / drill, mm")
     ap.add_argument("--pitch", type=float, default=0.5, help="mm between two vias of one pad, centre to centre")
     ap.add_argument("--hole-gap", type=float, default=0.28, help="hole edge to hole edge (14_fab)")
     ap.add_argument("--hole-cu", type=float, default=0.1778, help="hole edge to another net's copper (14_fab)")
     ap.add_argument("--gap", type=float, default=None, help="via copper to any other pad (default: the guide's via-to-pad gap)")
     ap.add_argument("--step", type=float, default=0.05)
+    ap.add_argument("--ignore-refs", default="", help="REF,...: footprints whose pads do not count (what if these parts move?) -- a survey: the plan is then judged on a board without them")
     ap.add_argument("--overhang", type=float, default=0.0, help="mm the via's pad may reach past the pad's edge (0: wholly inside)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--group", default="padvias")
@@ -71,7 +75,7 @@ def main():
         return 0.1016
 
     want = []
-    for spec in a.pads.split(","):
+    for spec in [s for s in a.pads.split(",") if s]:
         rp, _, n = spec.partition(":")
         ref, _, num = rp.partition(".")
         f = b.FindFootprintByReference(ref)
@@ -83,7 +87,17 @@ def main():
 
     tracks = [t for t in b.GetTracks() if t.Type() != pn.PCB_VIA_T]
     vias = [t for t in b.GetTracks() if t.Type() == pn.PCB_VIA_T]
-    allpads = [p for f in b.Footprints() for p in f.Pads()]
+    shapes = []                                               # net-tied copper polygons (PCB_SHAPE on a copper layer with a net): copper like a track
+    for d in b.GetDrawings():
+        try:
+            if d.Type() == pn.PCB_SHAPE_T and d.IsOnCopperLayer() and d.GetNetCode() > 0:
+                shapes.append(d)
+        except Exception:
+            pass
+    gone = {s for s in a.ignore_refs.split(",") if s}
+    allpads = [p for f in b.Footprints() if f.GetReference() not in gone for p in f.Pads()]
+    if a.map:
+        return via_map(a, B, r, hr, gap, clr, tracks, vias, allpads, cu, err, shapes)
     placed = []                                                # (x, y, net) of this run, every pad
     out, short = [], 0
     for rp, pad, n in want:
@@ -105,6 +119,11 @@ def main():
             c = max(own_c, clr(t))
             t.TransformShapeToPolygon(forbid[t.GetLayer()], t.GetLayer(), FM(r + c), err, pn.ERROR_OUTSIDE)
             t.TransformShapeToPolygon(holecu[t.GetLayer()], t.GetLayer(), FM(hr + a.hole_cu), err, pn.ERROR_OUTSIDE)
+        for d in shapes:
+            if d.GetNetname() == net or d.GetLayer() not in forbid:
+                continue
+            d.TransformShapeToPolygon(forbid[d.GetLayer()], d.GetLayer(), FM(r + max(own_c, clr(d))), err, pn.ERROR_OUTSIDE)
+            d.TransformShapeToPolygon(holecu[d.GetLayer()], d.GetLayer(), FM(hr + a.hole_cu), err, pn.ERROR_OUTSIDE)
         for z in b.Zones():
             if z.GetIsRuleArea() or z.GetNetname() == net:
                 continue
@@ -191,6 +210,27 @@ def main():
             for x, y in pick:
                 placed.append((x, y, net))
                 out.append({"net": net, "at": [x, y], "pad": pad_d, "drill": drill})
+    for spec in [s for s in a.boxes.split(";") if s]:
+        nb, _, rest = spec.partition("@")
+        bx, _, n = rest.partition(":")
+        box = tuple(float(v) for v in bx.split(","))
+        full, cells = via_map(a, B, r, hr, gap, clr, tracks, vias, allpads, cu, err, shapes, box=box, netname=nb, extra=placed)
+        left, got, n = sorted(cells["#"] + cells["o"]), [], (int(n) if n else None)
+        while left and (n is None or len(got) < n):
+            c = min(left, key=lambda c: (c[0] + c[1], c)) if not got else \
+                max(left, key=lambda c: (round(min(math.dist(c, p) for p in got), 3), -c[0] - c[1]))
+            got.append(c)
+            left = [q for q in left if math.dist(q, c) >= a.pitch - 1e-6]
+        tag = ""
+        if n is not None and len(got) < n:
+            short += 1
+            tag = f"  <-- {n} asked"
+        print(f"box {bx:26s} {nb:18s}: {len(cells['#']) + len(cells['o'])} legal centre(s); kept {len(got)}: "
+              + " ".join(f"({x:.2f}, {y:.2f})" for x, y in got) + tag)
+        if not a.count:
+            for x, y in got:
+                placed.append((x, y, full))
+                out.append({"net": full, "at": [x, y], "pad": pad_d, "drill": drill})
     if a.count:
         return 0
     plan = {"group": a.group, "why": a.why, "tracks": [], "vias": out, "zones": []}
@@ -199,6 +239,83 @@ def main():
         p.write_text(json.dumps(plan, indent=1))
         print(f"wrote {p}: {len(out)} via(s) in {len(want)} pad(s)")
     return 1 if short else 0
+
+
+def via_map(a, B, r, hr, gap, clr, tracks, vias, allpads, cu, err, shapes=(), box=None, netname=None, extra=()):
+    """--map: every centre of the box where a via of --net is legal -- '#' on free board (the via-to-pad gap from every
+    pad), 'o' wholly inside a pad of the net; the largest set --pitch apart is counted for each kind."""
+    pn, b, mm, FM = B.pn, B.b, B.pn.ToMM, B.pn.FromMM
+    x0, y0, x1, y1 = box if box else (float(v) for v in a.map.split(","))
+    want_net = netname or a.net
+    full = next((str(n) for n in b.GetNetsByName().keys() if R.short(str(n)) == want_net), None)
+    if full is None:
+        sys.exit(f"no net {want_net} on the board")
+    own_c = next((clr(p) for p in allpads if p.GetNetname() == full), 0.1016)
+    near = lambda q, m=1.5: x0 - m <= mm(q.x) <= x1 + m and y0 - m <= mm(q.y) <= y1 + m          # noqa: E731
+    forbid = {l: pn.SHAPE_POLY_SET() for l in cu}
+    own_gap, own_in = pn.SHAPE_POLY_SET(), pn.SHAPE_POLY_SET()
+    for t in tracks:
+        if t.GetNetname() == full or not (near(t.GetStart()) or near(t.GetEnd())):
+            continue
+        t.TransformShapeToPolygon(forbid[t.GetLayer()], t.GetLayer(), FM(max(r + max(own_c, clr(t)), hr + a.hole_cu)), err, pn.ERROR_OUTSIDE)
+    for d in shapes:
+        if d.GetNetname() != full and d.GetLayer() in forbid:
+            d.TransformShapeToPolygon(forbid[d.GetLayer()], d.GetLayer(), FM(max(r + max(own_c, clr(d)), hr + a.hole_cu)), err, pn.ERROR_OUTSIDE)
+    for p in allpads:
+        if not near(p.GetPosition(), 3.0):
+            continue
+        for l in cu:
+            if not p.IsOnLayer(l):
+                continue
+            if p.GetNetname() == full:
+                p.TransformShapeToPolygon(own_gap, l, FM(r + gap), err, pn.ERROR_OUTSIDE)
+                one = pn.SHAPE_POLY_SET()
+                p.TransformShapeToPolygon(one, l, 0, err, pn.ERROR_INSIDE)
+                one.Deflate(FM(max(r - a.overhang, 0.0)), pn.CORNER_STRATEGY_ROUND_ALL_CORNERS, err)
+                own_in.Append(one)
+            else:
+                p.TransformShapeToPolygon(forbid[l], l, FM(r + max(gap, own_c, clr(p))), err, pn.ERROR_OUTSIDE)
+    for l in cu:
+        forbid[l].Simplify()
+    own_gap.Simplify()
+    vn = [(mm(v.GetPosition().x), mm(v.GetPosition().y), mm(v.GetWidth(pn.F_Cu)) / 2, mm(v.GetDrillValue()) / 2, v.GetNetname(), clr(v))
+          for v in vias if near(v.GetPosition())] + [(x_, y_, r, hr, n_, 0.1016) for x_, y_, n_ in extra]
+
+    def kind(x, y):
+        v = pn.VECTOR2I(FM(x), FM(y))
+        for vx, vy, vr, vh, vnet, vc in vn:
+            d = math.hypot(vx - x, vy - y)
+            if d - vh - hr < a.hole_gap - 1e-6 or (vnet != full and d - vr - r < max(own_c, vc) - 1e-6):
+                return "."
+        if any(forbid[l].Contains(v) for l in cu):
+            return "."
+        if own_in.Contains(v):
+            return "o"
+        return "." if own_gap.Contains(v) else "#"
+
+    cells = {"#": [], "o": []}
+    ny, nx = int(round((y1 - y0) / a.step)), int(round((x1 - x0) / a.step))
+    for j in range(ny + 1):
+        y = round(y0 + j * a.step, 4)
+        row = ""
+        for i in range(nx + 1):
+            x = round(x0 + i * a.step, 4)
+            k = kind(x, y)
+            row += k
+            if k != ".":
+                cells[k].append((x, y))
+        if not box:
+            print(f"{y:7.2f} {row}")
+    if box:
+        return full, cells
+    print(f"        x {x0} .. {x1}, {a.step} mm a column; # a legal centre on free board, o inside a pad of {a.net}")
+    for k, name in (("o", "in a pad"), ("#", "on free board")):
+        left, got = sorted(cells[k]), []
+        while left:
+            got.append(left[0])
+            left = [q for q in left if math.dist(q, got[-1]) >= a.pitch - 1e-6]
+        print(f"{name}: {len(cells[k])} centre(s), {len(got)} at {a.pitch} mm apart")
+    return 0
 
 
 if __name__ == "__main__":

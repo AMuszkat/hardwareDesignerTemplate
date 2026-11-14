@@ -30,6 +30,25 @@ folder name or a path; left out, it is this session's board (`HW_BOARD`), and
 another session's board is refused. A plan, spec or zone file is taken as
 typed, else inside the board folder (`routing/R1.json`).
 
+- **`rowfan.py` -- a via for every signal pin of a fine-pitch row, found together** (a QFN's rows, a connector's):
+  at 0.4 mm pitch a 0.4 mm via fits only `gap + r` (0.30 mm) beyond its own tip, and two neighbours' vias are then
+  0.4 apart -- the row fans out in two staggered rows, and which pin gets which depends on what stands beyond the tips.
+  It lists each pin's legal axis (and, `--diag`, 45-degree) sites against the board and a `--plan` (planned power
+  copper), then searches one per pin with every pair legal; `ROWFAN FAIL` names the pin without which the rest close.
+  Run it on each row BEFORE drawing the power copper round a QFN, and again with that copper as `--plan`: board1's
+  first PMIC stage drew the switch nodes sideways under seven signal pins and `route.py check` passed it (pins with no
+  copper yet have nothing for DRC to see). Its candidates start EXACTLY at `gap + r` beyond the tip and step by
+  `--step`: a 0.025 grid missed every site of a stagger that fits by 0.002 mm (use 0.005). A 45-degree link out of a
+  0.2 mm pin leaves a wedge at the tip that the shape gate calls a notch -- a via in the pin (0.02 mm off its centre
+  line where a neighbour needs it) is the way out.
+- **`padvias.py` also maps** (`--map x0,y0,x1,y1 --net N`: where a via of the net may stand, in its pads or on free
+  board), places vias in boxes beside a pad (`--boxes NET@box:N`), counts net-tied polygons as copper, and
+  `--ignore-refs` asks what a part move would free. A via on the bottom of a 0.4 mm board-to-board connector's span
+  is only legal between its two pad rows: map before choosing a pin's via.
+- **The shape gate judges a net on a layer only once it has a track there** (`shape.py`: 'a net with no track on this
+  layer has only pads'). A plan that gives a net its FIRST track on a layer can be failed for a notch that was there
+  before (board1: a ring capacitor's unlinked power via 0.10 mm from its pad, shown when C63's link went in). Fix the
+  old site in the same plan (link it), do not route round the gate with a polygon.
 - **`padvias.py` -- vias IN a pad** (a regulator's output or input capacitor, an exposed pad): `--pads REF.PAD[:N],...`
   keeps N centres (or as many as fit) inside each pad, legal on every copper layer (the other nets' copper by the larger
   class clearance, holes by 14_fab's hole gaps, the via-to-pad gap from every OTHER pad), `--pitch` apart, spread from a
