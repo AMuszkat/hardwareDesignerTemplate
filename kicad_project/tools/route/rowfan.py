@@ -105,7 +105,11 @@ def main():
                 pass
         return clr
 
-    pads = [p for fp in b.Footprints() if fp.GetReference() not in gone for p in fp.Pads() if near(p.GetPosition())]
+    def near_box(p):                 # a pad by its COPPER, not its centre: a QFN's exposed pad is centred far from a row
+        bb = p.GetBoundingBox()      # whose heel side it bounds (board1: the inward search stood vias in U100's EP)
+        return mm(bb.GetLeft()) <= x1 and mm(bb.GetRight()) >= x0 and mm(bb.GetTop()) <= y1 and mm(bb.GetBottom()) >= y0
+
+    pads = [p for fp in b.Footprints() if fp.GetReference() not in gone for p in fp.Pads() if near_box(p)]
     tracks = [t for t in b.GetTracks() if t.Type() != pn.PCB_VIA_T and (near(t.GetStart()) or near(t.GetEnd()))]
     vias = [t for t in b.GetTracks() if t.Type() == pn.PCB_VIA_T and near(t.GetPosition())]
     shapes = []
