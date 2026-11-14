@@ -345,3 +345,11 @@ API answering. When that path is closed:
   `os._exit(0)` is lost unless stdout is flushed.
 
 Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
+
+- **"KiCad has the board open" with no KiCad running is a stale lock.** A tool run that dies after it has started kicad-cli
+  (a plan naming a net the board does not have, an interrupt) leaves `~<board>.kicad_pro.lck` in the board folder, and every
+  later `apply` refuses. The message now says which it is: with no `kicad` / `kicad-cli` process alive the lock is stale --
+  remove it and run again (board1's RV29: refused twice). Never remove a lock while a KiCad process is alive.
+- **After a redraw, read the board's net names before writing a plan.** A net that now runs between two sheets takes the
+  ROOT's name (`/BT_HOST_WAKE`, no sheet path); `schupdate.py` renames it on the board and the copper follows, but a plan
+  or a build script that still spells the old path stops with "net not on the board".

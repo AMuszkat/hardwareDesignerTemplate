@@ -720,6 +720,29 @@ def locks(pcb):
     return [p for p in (pcb.parent / f"~{pcb.name}.lck", pcb.parent / f"~{pcb.stem}.kicad_pro.lck") if p.exists()]
 
 
+def kicad_alive():
+    """is a kicad or kicad-cli process running (by its own name: never a pattern match on a command line)"""
+    import os
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            try:
+                if open(f"/proc/{d}/comm").read().strip() in ("kicad", "kicad-cli", "pcbnew", "eeschema"):
+                    return True
+            except OSError:
+                pass
+    return False
+
+
+def lock_msg(pcb):
+    """what to say when a lock file is there: KiCad has it open, or the lock is STALE (a run that died after starting kicad-cli
+    leaves ~<board>.kicad_pro.lck behind; board1's RV29 was refused twice with no KiCad running)"""
+    held = ", ".join(p.name for p in locks(pcb))
+    if kicad_alive():
+        return f"KiCad has the board open ({held}); close it first"
+    return (f"lock file {held} but no kicad / kicad-cli process is running: a STALE lock, left by a run that died -- "
+            f"remove it (it is in your own board folder) and run again")
+
+
 def cmd_apply(a):
     B = Board(a.board)
     held = locks(B.pcb)
@@ -880,7 +903,7 @@ def cmd_labels(a):
     pn = B.pn
     pcb = B.pcb
     if not a.dry_run and locks(pcb):
-        die("KiCad has the board open; close it first", 3)
+        die(lock_msg(pcb), 3)
     H, T = B.text_h, B.text_t
     if H <= 0 or T <= 0:
         die("Board Setup has no silkscreen text minimums yet: run "
@@ -1310,7 +1333,7 @@ def cmd_park(a):
     legality check applies to them; KiCad must be closed."""
     B = Board(a.board)
     if locks(B.pcb) and not a.dry_run:
-        die("KiCad has the board open; close it first", 3)
+        die(lock_msg(B.pcb), 3)
     keep = set((a.refs or "").split(",")) - {""}
     spec = json.loads(Path(a.moves).read_text()) if a.moves else {}
     keep |= set(spec.get("keep", []))
@@ -1470,7 +1493,7 @@ def cmd_silk(a):
     refresh.py -- so `sync` stays exact; this refuses to touch one. KiCad closed."""
     B = Board(a.board)
     if locks(B.pcb) and not a.dry_run:
-        die("KiCad has the board open; close it first", 3)
+        die(lock_msg(B.pcb), 3)
     floor, thin = thin_silk(B)
     own = sorted({r for r, o, _, _ in thin if o})
     if own:

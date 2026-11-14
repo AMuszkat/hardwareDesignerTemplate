@@ -1143,7 +1143,7 @@ def cmd_check(a, quiet=False, gate=True):
 def cmd_apply(a):
     B = RBoard(a.board)
     if P.locks(B.pcb):
-        die("KiCad has the board open; close it first", 3)
+        die(P.lock_msg(B.pcb), 3)
     stale_gate(a, B, "applied")
     sha_before = origin.sha_file(B.pcb)
     if cmd_check(a, quiet=False, gate=False) != 0:
@@ -1208,7 +1208,7 @@ def cmd_apply(a):
 def cmd_rip(a):
     B = RBoard(a.board)
     if P.locks(B.pcb):
-        die("KiCad has the board open; close it first", 3)
+        die(P.lock_msg(B.pcb), 3)
     man = manifest_path(a.board, a.plan)
     if not man.exists():
         die(f"no manifest for {a.plan} ({man})")
