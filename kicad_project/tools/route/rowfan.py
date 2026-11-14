@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--ref", required=True)
     ap.add_argument("--pins", required=True, help="pad numbers, comma separated")
     ap.add_argument("--diag", default="", help="pins that may take a 45-degree link (or 'all')")
+    ap.add_argument("--inward", action="store_true", help="also the axis INWARD (a connector's two rows: the room between them)")
     ap.add_argument("--reach", type=float, default=1.2, help="mm from the pad's centre along the axis")
     ap.add_argument("--step", type=float, default=0.025)
     ap.add_argument("--width", type=float, default=0.1016)
@@ -187,6 +188,8 @@ def main():
         # the pad's outward axis: away from the footprint's centre, along its long side
         ux, uy = (1.0 if cx > mm(fc.x) else -1.0, 0.0) if hw > hh else (0.0, 1.0 if cy > mm(fc.y) else -1.0)
         dirs = [(ux, uy, "axis")]
+        if a.inward:
+            dirs.append((-ux, -uy, "axis"))
         if pad.GetNumber() in diag:
             s2 = math.sqrt(0.5)
             if ux:

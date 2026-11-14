@@ -976,6 +976,12 @@ docstring.
   between the connectors' centres) over the nets with exactly one pad on
   each connector and none elsewhere: a net through a series part is not in
   the count.
+- **A two-row connector has two `rows` entries, one a row** (`"pads": "odd"` / `"even"` with each row's own
+  `side`): `"outer"` counts only the row nearest the edge. board1 configured J1's outer row alone; its inner row
+  ran under the PMIC (U100's pins and exposed pad on the top over every inner-row pad) and was found at RV31 with
+  17 of 25 pins and no via site -- after the stage was drawn over it. Count every row of a connector that a part on
+  the other side covers, with that part's copper (`rowfan.py --inward`, `padvias.py --map` per net) before
+  placing or routing the part above it.
 - `tests/fixture_pcb.py --kind prelayout` is the three historical failures;
   each must FAIL.
 - A waiver's `target` is a part (every check on it) or, for `rows`, `REF:SIDE`
