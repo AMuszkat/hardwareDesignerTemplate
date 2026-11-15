@@ -891,6 +891,7 @@ SCRIPT_STAGES = [
     ("rule-gate", "test_rule_gate.py", False),
     ("topic", "test_answer_topic.py", False),
     ("sessions", "test_sessions.py", False),
+    ("milp", "test_cpsat_milp.py", False),
 ]
 
 

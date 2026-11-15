@@ -155,6 +155,10 @@ def venvs():
         if py.exists() else (1, "missing")
     add("ok" if rc == 0 else "FAIL", "concept venv (.venv)", "numpy, scipy, matplotlib"
         if rc == 0 else out.splitlines()[-1], "./setup.sh install")
+    rc, out = run([str(py), "-c", "import ortools; print(ortools.__version__)"]) if py.exists() else (1, "missing")
+    add("ok" if rc == 0 else "WARN", "OR-Tools in .venv (integer programs on every core)",
+        f"ortools {out.strip()}" if rc == 0 else "missing: kicad_project/tools/cpsat_milp.py falls back to scipy's "
+        "HiGHS, one core", "./setup.sh install")
     py = KP / "tools" / ".venv" / "bin" / "python"
     rc, out = run([str(py), "-c", "import fitz, easyeda2kicad, PIL, matplotlib; print('ok')"]) \
         if py.exists() else (1, "missing")

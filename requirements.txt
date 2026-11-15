@@ -4,3 +4,4 @@
 numpy
 scipy
 matplotlib
+ortools            # kicad_project/tools/cpsat_milp.py: integer programs on every core (CP-SAT); without it, scipy's HiGHS

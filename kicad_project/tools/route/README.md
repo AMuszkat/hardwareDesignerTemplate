@@ -1045,7 +1045,7 @@ net out on three layers. `fanout.py plan` proposes that model;
   vias, and the router does not see it either (each source keeps its own pad):
   KiCad's DRC on the routed escape found 14 such pairs. What worked on board1,
   in this order:
-  1. the sites as ONE integer program (scipy `milp`): options = each ball's
+  1. the sites as ONE integer program (`tools/cpsat_milp.py`, scipy's call on every core): options = each ball's
      adjacent empty sites + its pad; one via a site; one diagonal stub a
      square; each same-inner-layer orthogonal pair a soft constraint at a large
      cost (pairs left are printed -- a layer move);
@@ -1216,6 +1216,35 @@ either session goes through it -- but the router is where the waiting happens:
   on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is declared in both
   sessions' `.claude/settings.json`, beside the wall.
 - **Several specs of one group at once are a race, not three background runs:** `race.py`, below.
+
+## An integer program: `tools/cpsat_milp.py` -- scipy's `milp` call, on every core
+
+A fanout, an assignment of nets to sites or lanes, an order: a board's `build/` script that writes ONE integer
+program (all variables integer) imports the solver from here instead of scipy:
+
+    sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
+    from cpsat_milp import milp                    # was: from scipy.optimize import milp
+    from scipy.optimize import LinearConstraint, Bounds
+
+The call, the result and scipy's status codes are unchanged; the search is Google OR-Tools' CP-SAT, a
+portfolio of workers on every core (`HW_JOBS=N` to share the machine). scipy's HiGHS searches one core,
+and is slowest where these models live -- 0/1 variables and big-M order rows -- above all when the answer
+is that there is none. Board1's U500 fanout (2,200-2,400 binaries, 14,000-16,000 rows), eight cases:
+HiGHS took 459 s to prove one infeasible, 1,193 s to an optimum, and 3,000 s to its time limit with
+nothing found for three; CP-SAT took 5-24 s for each, every answer equal to HiGHS's where HiGHS had one.
+
+- **The same answer, not an approximation**: each row is scaled by a power of ten to integers and its
+  bounds rounded inward, every answer is re-checked against the original rows, and "optimal" is HiGHS's
+  1e-4 relative gap (`mip_rel_gap: 0` for the proof). A coefficient no power of ten carries (1/3) is
+  refused, not guessed.
+- **A continuous variable goes to HiGHS** (CP-SAT has none), as does everything when OR-Tools is not
+  installed in the interpreter (`./setup.sh install` at the root), and `HW_MILP=highs` forces it -- one
+  line on stderr says which.
+- ⚠ **Several workers, several equal answers**: two runs may return two different fanouts of the same
+  cost (16-22 of 91 balls' choices differed). `HW_JOBS=1` is deterministic and was still 10-30 times
+  faster than HiGHS. The `--json` a run writes is the record to draw from -- never re-solve to reproduce.
+- A model that HiGHS needed `--half` or a short `--time` to finish is worth solving whole again: the limit
+  was HiGHS's.
 
 ## `race.py` — spec variants raced as processes, one table, one winner
 
