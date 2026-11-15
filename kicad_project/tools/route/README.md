@@ -385,6 +385,17 @@ its docstring. What the spec has to be told:
   `to_path` on a ring just outside the courtyard (each net anywhere on it). It
   runs in minutes and says whether the field lets N nets out on a layer before
   an hour of routing to the far part says nothing clearer.
+- **Can the escape leave in a GIVEN order? Ordered intervals, not fixed exits.**
+  Give each net a `to_path` segment of its own on that ring, the segments in the
+  order asked (net k gets the k-th slice of the edge): the router picks the
+  point, and the order holds because the slices do. Fixed `to_xy` exits at the
+  escape's own pitch at the courtyard line prove nothing -- board1's U1 east
+  block did not route its DRAWN order that way at 1/24 or 1/48 mm (a point on
+  the line rounds outside the field, where the clearance doubles, and the drawn
+  escape had been compacted onto a 1/98 grid afterwards); the ordered ring
+  routed it in 8 s. A swap A/B of the drawn order then costs one run each, all
+  in parallel (`xargs -P`): 10 of 61 drew there. A failing run sits to its
+  `--timeout`, a passing one ends in seconds -- set the timeout from that.
 - **An escape that will not converge: bound it before re-splitting.**
   `escape_bound.py --ref U1 --layer In2.Cu --spec <escape spec> --vias <fanout
   model> --width W --clearance C [--nfp]` -- a planar cut relaxation over the
