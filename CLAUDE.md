@@ -213,7 +213,10 @@ The concept venv is `.venv` (`./setup.sh install`); matplotlib uses `Agg`.
 
 Sweeps run on all cores through `studies/par.py` (fork, results in job order);
 `HW_JOBS=1` forces serial — the first thing to try when a parallel number
-disagrees with a published one.
+disagrees with a published one. An integer program (a study's or a board's
+`build/` script) goes through `kicad_project/tools/cpsat_milp.py`: scipy's
+`milp` call, solved by OR-Tools' CP-SAT on every core — seconds where HiGHS
+took up to an hour; `HW_MILP=highs` for scipy's own.
 
 ## Working rules that have earned their place
 
