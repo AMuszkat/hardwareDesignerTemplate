@@ -154,7 +154,10 @@ Concept does **not** answer alone, and instead escalates, when:
   change, a spec value, a net name, a part, a hard line, an accepted deviation;
 - the answer spends money (a part, a fab option, a service tier);
 - the question comes back after being answered twice — two sessions trading the
-  same misunderstanding is a loop only a third party breaks.
+  same misunderstanding is a loop only a third party breaks;
+- a problem has held a group off copper for a working day across answers
+  (each answer a new allowance, the count still short): the next term is
+  the user's, with every count so far, even before the third answer.
 
 Escalation is four steps, then **stop**: tell the board session
 `boardN Qn waits on the user`; send the user a `PushNotification` with the
@@ -198,7 +201,9 @@ terminal and does not choose.
   board's `QUESTIONS.md` and a request still `requested` in its `REVIEW.md`.
   If there is one, it handles it. If there is none, it does **nothing**: the
   board session stopped for the user, and that stop is not concept's to push
-  past.
+  past. (A board session does not stop to ask for a go-ahead —
+  `kicad_project/CLAUDE.md`, "End your turn only for what is not yours" — so
+  a stop with nothing pending is one the user owes.)
 - **Never poll** `ListAgents` in a loop and never send "are you done?".
 
 ## 8. Preconditions and failure modes

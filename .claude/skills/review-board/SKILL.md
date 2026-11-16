@@ -112,6 +112,10 @@ Append to `tools/handoff/reviews/boardN.md`:
     | id | severity | where | finding | evidence | fix |
     |---|---|---|---|---|---|
 
+A `|` inside a cell, code spans included, is written `\|`: the publisher and
+the board split the table on bare pipes (one verdict broke on a rule text in
+backticks).
+
 **A must-fix finding a number decides carries its check**, one line under
 the table for each:
 

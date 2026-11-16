@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-PreToolUse hook on Bash -- refuses ONE pattern: a loop that waits for a
-process by NAME.
+PreToolUse hook on Bash -- refuses TWO patterns: a loop that waits for a
+process by NAME, and a foreground `sleep` of a minute or more.
 
     python3 <kicad_project>/tools/session/bashguard.py      (stdin: hook JSON)
 
@@ -36,6 +36,20 @@ here-documents, command substitution); a loop it cannot see passes.  It is a
 guard against a known mistake, not a wall: any error in this script exits 0,
 so it can never block Bash by failing.  Bash's `run_in_background` and plain
 `&` are untouched -- how a job is STARTED is free; how it is WAITED ON is not.
+
+THE LONG SLEEP.  Also blocked, in the foreground: `sleep N` with N >= 60 s
+(`sleep 300`, `sleep 5m`, `sleep 1m 30s`, `sleep inf`; before a check --
+`sleep 300; tail log`, `sleep 120 && cat x` -- or in a loop, `while ...; do
+sleep 90; done`), and inside a script handed to a shell.  Why: a sleep is
+sized before the job's end is known.  A board session slept 9 min on a job
+that had ended in 42 s and 6.7 min on one that had failed in 2 s (at least
+26 min in 8 h), and half its waits were `sleep N; check` -- each "still
+running" a full turn at the session's whole context.  The replacement is
+ONE wait for all the jobs, run as a BACKGROUND Bash command
+(run_in_background), which returns when they end and so wakes the session:
+`bgwait.py wait A B C --timeout S`.  These pass: a sleep under 60 s, a sleep
+in a command run with run_in_background or ended by a lone `&`, a duration
+the guard cannot read (`sleep $T`, a quoted word), and the word as text.
 
 Exit 2 = block, with the reason on stderr (Claude Code shows it to the model).
 """
@@ -210,16 +224,48 @@ def loops(text):
         yield m.group(1), text[m.start(1):end]
 
 
-def verdict(command, depth=0):
+LONG_SLEEP = 60                              # seconds: a foreground sleep this long is refused
+SLEEP = re.compile(r"(?<![\w./$-])sleep((?:[ \t]+(?:\d+(?:\.\d*)?|\.\d+)[smhd]?|[ \t]+inf(?:inity)?)+)(?![\w.])")
+UNIT = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def long_sleep(text):
+    """The first foreground `sleep` of LONG_SLEEP seconds or more in the
+    scanned text, as (its words, seconds), or None.  GNU sleep adds its
+    arguments (`sleep 1m 30s` = 90 s); a sleep ended by a lone `&` runs in
+    the background and is free."""
+    for m in SLEEP.finditer(text):
+        rest = text[m.end():].lstrip(" \t")
+        if rest.startswith("&") and not rest.startswith("&&"):
+            continue
+        total = 0.0
+        for a in m.group(1).split():
+            if a.startswith("inf"):
+                total = float("inf")
+                break
+            unit = a[-1] if a[-1] in UNIT else ""
+            total += float(a[:-1] if unit else a) * UNIT[unit]
+        if total >= LONG_SLEEP:
+            return "sleep" + m.group(1), total
+    return None
+
+
+def verdict(command, depth=0, background=False):
     """The reason this command is refused, or None."""
     sc = Scan(command)
     for word, seg in loops(sc.text):
         probe = name_probe(seg)
         if probe and re.search(r"(?<![\w./-])sleep\b", seg):
             return f"a `{word}` loop that polls `{probe}` and sleeps"
+    if not background:
+        hit = long_sleep(sc.text)
+        if hit:
+            words, sec = hit
+            span = "forever" if sec == float("inf") else (f"{sec / 60:.1f} min" if sec >= 120 else f"{sec:.0f} s")
+            return ("sleep", f"a foreground `{' '.join(words.split())}` ({span})")
     if depth < 3:
         for body in sc.inner:
-            why = verdict(body, depth + 1)
+            why = verdict(body, depth + 1, background)
             if why:
                 return why
     return None
@@ -233,12 +279,25 @@ def main():
         command = (event.get("tool_input") or {}).get("command")
         if not isinstance(command, str) or not command.strip():
             return 0
-        why = verdict(command)
+        why = verdict(command, background=bool((event.get("tool_input") or {}).get("run_in_background")))
     except Exception:                       # a guard that fails must not block Bash
         return 0
     if not why:
         return 0
     bg = KP / "tools" / "bgwait.py"
+    if isinstance(why, tuple):
+        print(f"Blocked: {why[1]} -- a sleep sized before the job's end is known. It runs on after a job that "
+              "ended early (a board session slept 9 min on one that ended in 42 s), and a check that finds "
+              "it still running costs a whole turn at the session's context.\n"
+              "Start each job so that its pid and exit code are recorded:\n"
+              f"    python3 {bg} run --name NAME -- cmd ...\n"
+              "then wait on ALL of them with ONE Bash call run in the BACKGROUND (run_in_background: true) -- "
+              "it returns when they have ended, and the harness wakes the session then:\n"
+              f"    python3 {bg} wait NAME [NAME ...] --timeout 3600\n"
+              "It prints each job's state, exit code, CPU used and log tail. A sleep under "
+              f"{LONG_SLEEP} s, and a sleep run with run_in_background or a lone `&`, are not blocked.",
+              file=sys.stderr)
+        return 2
     print(f"Blocked: {why} -- a wait for a process by NAME. `pgrep -f` matches whole command lines, and this "
           "loop's own shell carries the pattern, so it matches ITSELF and never ends (a board session sat "
           "4 h 52 min on three runs that had finished within 3 minutes); a name also matches any other "

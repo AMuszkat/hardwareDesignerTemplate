@@ -957,6 +957,20 @@ would pass with the nets that are NOT in conflict lifted — then another `--see
 detector reads the grid and changes nothing: a run that converges gives the same plan
 with it on or off.
 
+**PLATEAU** (`--plateau N`, default 0: off; `--plateau-pct X`, default 2) stops a
+negotiation whose overlaps keep MOVING without shrinking — which STUCK lets run, since
+it needs the same cells: when the best overlap count of the last N iterations is not
+X % below the best before them (`maze.plateau_reached`), the leg ends with `PLATEAU at
+this leg: best B contested cell(s) at iteration I ...`, exit 1, `"state": "plateau"`
+in the partial; `--repair` still runs. board1's In2 legs (2026-11-15) are what it is
+for: four runs to a 1500 s `--timeout`, NOT ROUTED, each within 0–11 % of its
+iteration-40 best after 121–300 iterations (rIn2s: 1297 cells at 20, 1292 at 170) —
+about 155 minutes of one 8-hour stretch. It is OFF by default because a flat count is
+no proof (the harness's fixture sits flat from iteration 2 and converges at 14:
+`--plateau 10` cuts it, 20 does not; `tests/test_router_plateau.py`). On a long leg
+whose iterations take seconds, ask for `--plateau 40` (or 60) instead of waiting for
+the `--timeout`; it reads the counts and changes nothing in a run that converges.
+
 `<plan>.partial.json` carries the same diagnosis as data: `"state": "blocked"` with
 a `"blocked"` list, or `"state": "stuck"` with `"stuck"` (nets, boxes per layer in
 mm, every cell). `tests/test_router_stall.py` holds all of this on board-free
@@ -1309,6 +1323,38 @@ check, new DRC, rule failures, vias, track length -- and `<race>/race.json` hold
   variant's processes with it.
 - A spec whose `"plan"` is an absolute path, or leaves the board folder, is refused: a variant writes only
   into its own copy.
+
+## A bus between two BGAs: test cheaply, use the cores, prove the chain whole (board1's U1-U500 DRAM)
+
+One bus took three questions, four answers and a day with no copper; a measured week of it showed
+where the hours went. What would have saved them:
+
+- **Ask the cheap question before the joint run.** Before a joint model of every net (a 3-hour solve,
+  a 21-order sweep), run the variant that drops the hard constraint -- no order, one candidate net
+  admitted alone, one half of the bus -- which answers in seconds and names the bind: a 5-second
+  `--no-order` run showed where a 3-hour joint solve was stuck. In a router run, the same question is
+  one net routed alone into the jam (with every settled net frozen) before the whole half is
+  re-negotiated: if it does not close alone, no negotiation of the half will.
+- **A negotiation that has stopped improving is over.** Best overlap at iteration 40 was within 0-11 % of
+  the best after 121-300 iterations in ten logs, while each run waited out its 25-minute `--timeout`.
+  Read the overlap curve, not the clock: `netgroup.py --plateau 40` (above) ends such a run.
+- **The cores are idle while the router runs.** A negotiation is one process on one core; a chain of
+  runs on one board copy is serial. Independent chains (the bus's two halves, two layers) go on
+  separate copies, at once -- `race.py`, or `bgwait.py run` on two scratch copies. Never two writers on
+  one copy: they clobber each other's plan and partial.
+- **A solve is tied to the board it was solved on.** A model computed from the board (exits, slots,
+  orders, a fanout) names the board file's hash in its input, and the script that reads it back
+  refuses a model whose hash is not the board's -- one fanout was applied and reviewed, then found
+  solved from an older snapshot's exits.
+- **Prove the chain whole before part of it goes to copper.** The fanout at one end, the escape at the
+  other and the channel between are one problem: closing one end's fanout on copper (and through a
+  review) before the channel was shown to close at the counts it needs cost a re-solve of the whole.
+  On the scratch copy, take every stage to a count -- fanout, escape, the channel's via strips at their
+  real clearances -- then lay it.
+- **A model's caps are checked against the board before they are believed.** Five times a count from
+  the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
+  and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
+  question.
 
 ## `corners.py` — the angle rule for a polyline
 

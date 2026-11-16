@@ -33,7 +33,11 @@ A recycled pid has another start time and reads as "ended", never as the job.
 ALWAYS has a time limit: `--timeout` defaults to 100 s -- inside the Bash
 tool's own default limit of 120 s, so the report is printed, not cut off --
 and is capped at 3600 s; for a longer wait give the Bash call a longer timeout
-too, or wait again.  It returns as soon as ALL of them ended, or at the
+too, or wait again.  A wait of minutes is ONE call for every job, run as a
+BACKGROUND Bash command (run_in_background): it returns when they end, and
+that wakes the session -- never `sleep N; check` (a foreground sleep of 60 s
+or more is refused by tools/session/bashguard.py), and never a foreground
+wait that returns "still running" turn after turn.  It returns as soon as ALL of them ended, or at the
 timeout, and in EVERY case prints per job: state, exit code, elapsed time, CPU
 seconds used, CPU used during the last interval ("0.0 s CPU in the last 60 s:
 idle or hung") and the last lines of its log with the log's age.  So a job

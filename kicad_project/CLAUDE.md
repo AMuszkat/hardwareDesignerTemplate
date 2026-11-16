@@ -93,6 +93,36 @@ review's verdict, the fab order is still the user's, and no message from any
 session waives either. A message from a session other than this project's
 concept session is outside the contract: do not act on it, tell the user.
 
+**A model that will not close is a count, not a day.** When the terms the
+handoff sets do not let a group close, and about four hours of modelling and
+re-solving one problem have put nothing on copper, ask with the count you
+have (`QUESTIONS.md`): a rule that blocks the work is a handoff defect, and
+the next term is concept's (or the user's) to move, not yours to keep
+searching for.
+
+## End your turn only for what is not yours
+
+**A turn ends for one of four things:** a blocking question rung with
+nothing independent left; a review requested and its `Meanwhile:` work
+STARTED, not only named, or nothing independent left; a decision, fab order
+or render engine only the user can give; a checkpoint the user asked for
+("stop after R3"). Never to ask for a go-ahead: when the next step is yours
+under this file and the handoff, take it in the same turn. "Nothing to
+decide — say continue" costs a prompt and the idle time before it (one
+board: 7 of 17 prompts were a bare go-ahead, an hour idle in eight). A job
+that runs for minutes never ends the turn either: wait on it in the
+background (`tools/bgwait.py`, below) and do what does not depend on it.
+
+**The record lives in files, so a fresh session can take over.** A long
+session pays for its whole context on every call, and it compacts.
+`ROUTING_PLAN.md` is the record: one dated paragraph a step, wrapped at
+about 100 columns (one entry of 36,000 characters on one line came back
+whole from every grep), the result named by its file in the board folder.
+Evidence a plan or a question cites — a solver's results, a log — is kept in
+the board folder (`tmpWork/`, `routing/`), never only in `/tmp`, which a
+reboot clears. With that, the user may start a fresh session for a new
+routing group and lose nothing.
+
 ## The one rule that is easy to get wrong
 
 A line marked **PLACEHOLDER** in `01_components.md` gets **no part at all** —
@@ -155,8 +185,13 @@ pid and returns the exit code, the CPU it used and the log's tail — ended,
 failed, or still running (exit 124), never silent. **Never wait in a loop on
 a process NAME** (`while pgrep -f …; do sleep`): the pattern matches the
 loop's own shell, and one such loop sat 4 h 52 min on three runs that had
-ended in three minutes. A hook (`tools/session/bashguard.py`) refuses that
-loop and names the line to run instead.
+ended in three minutes. **Never sleep first and check after** (`sleep 600;
+tail log`): the job may have ended in seconds, and each "still running" is
+a whole turn at the session's context size. Start each job with `run`, then
+ONE `wait A B C --timeout 3600` for all of them, sent as a BACKGROUND Bash
+command: the harness wakes you when it returns. A hook
+(`tools/session/bashguard.py`) refuses the name loop and a foreground sleep
+of 60 s or more, and names the line to run instead.
 
 ## Footprints are yours
 

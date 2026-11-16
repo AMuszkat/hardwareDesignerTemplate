@@ -127,7 +127,7 @@ nets one at a time with the rest hard.
 renamed over it): the legs that closed, the open leg's latest iteration, its
 contested cells and, from iteration 3 of a leg, the `reach` table -- so a run
 killed by a timeout keeps all of it.  "state" says how the run left it:
-"running" (still going, or killed), "stalled", "stopped" (--timeout),
+"running" (still going, or killed), "stalled", "stopped" (--timeout), "plateau" (--plateau),
 "walled", "stuck", "blocked".  For a look with view.py --plan, never for a
 gate; a run that writes its plan removes it.  --timeout S stops between
 iterations when the next would not finish inside S seconds and leaves the
@@ -153,6 +153,10 @@ or the --timeout; 3 stuck; 4 blocked):
     one another layer, move the via, widen the window.  Before this a run
     like that used every one of its --iters (board1's R2 on In2.Cu: two nets,
     six cells, 433 iterations).
+  PLATEAU (exit 1), `--plateau N` (default 0: off): the best overlap count of
+    the last N iterations is not --plateau-pct (2 %) below the best before
+    them -- the overlaps move without shrinking.  The best iteration and both
+    counts are printed and the partial written; repair still runs.
   A net with no path that is NOT shut in (the 45-degree rule at an end, or
     --limit) and a run out of --iters stay exit 1, as does the --timeout.
 
@@ -251,6 +255,12 @@ def main():
                     help="stop a leg as STUCK (exit 3) when its overlaps have sat on the same cells for this "
                          "many iterations -- no new cell, no fewer -- and no net on them has a way round the "
                          "others; the nets and the place are printed.  0: never (run to --iters)")
+    ap.add_argument("--plateau", type=int, default=0,
+                    help="stop a leg (exit 1, state 'plateau') when the best overlap count of the last N "
+                         "iterations is not --plateau-pct below the best before them -- overlaps that move "
+                         "without shrinking, which --stall lets run.  0 (default): off; try 40-60 on a long leg")
+    ap.add_argument("--plateau-pct", type=float, default=2.0,
+                    help="percent the last --plateau iterations must improve the best count by (default 2)")
     a = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)   # a killed run's log ends at its last line, not its last buffer
     print(f"router core: {maze.CORE}")
@@ -1107,7 +1117,7 @@ def main():
         opts = dict(iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
                     hist_decay=a.hist_decay, layer_cost=S.get("layer_cost"), limit=a.limit,
                     rip="full" if a.full else "conflict", corridor=a.corridor or None, jacobi=a.jacobi,
-                    stuck=a.stall)
+                    stuck=a.stall, plateau=a.plateau, plateau_pct=a.plateau_pct)
         won = None
         if a.seeds > 1:
             # each seed negotiates in a forked child against the same frozen copper; the lowest seed
@@ -1185,6 +1195,12 @@ def main():
             if stopped:
                 state = "stopped"
                 print("STOPPED at the timeout")
+            elif getattr(G, "plateau", None):
+                state, found = "plateau", dict(plateau=G.plateau)
+                pl = G.plateau
+                print(f"PLATEAU at this leg: best {pl['best']} contested cell(s) at iteration {pl['best_it']}; "
+                      f"the last {pl['n']} iterations' best {pl['window_best']} is not {pl['pct']:g} % below it "
+                      f"(--plateau {a.plateau}; --plateau 0 runs to --iters / --timeout)")
             elif G.stuck:
                 state, code, found = "stuck", 3, dict(stuck=G.stuck)
                 print("\n".join(G.stuck_lines()))

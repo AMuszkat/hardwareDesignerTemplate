@@ -77,7 +77,10 @@ For **every** generator in `tools/diagrams/`:
 
 For each board the decision touches: edit `tools/handoff/boards/boardN.py`
 (nets, connectors, layout rules, open/deliberate text), set `RELEASE_NOTE`
-saying **which drawn work is now wrong**, then
+saying **which drawn work is now wrong**. A layout rule or a drawing the
+decision adds is tried on the board's newest PCB snapshot first, with the
+board's own copper in place (`answer-question` step 2, "A geometric rule or
+a drawing"). Then
 
     .venv/bin/python tools/handoff/publish.py --board boardN
     .venv/bin/python tools/handoff/publish.py --check --all

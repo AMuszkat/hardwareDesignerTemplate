@@ -139,6 +139,19 @@ VIA_R = 0.3       # via it lays (0.6 / 0.3)
 VIA_SEP = 0.8     # centre spacing of its vias (spec "via_sep"): keep a plane's web between antipads
 
 
+def plateau_reached(counts, n, pct):
+    """True when the negotiation has stopped improving: the best (lowest) overlap count of the
+    last n iterations is not a new minimum at least pct % below the best of every iteration
+    before them (at pct 0: no new minimum at all).  counts: the overlap count of each iteration
+    so far, oldest first.  Needs more than n of them; n <= 0 never stops.  A count of 0
+    converges before this is asked."""
+    n = int(n or 0)
+    if n <= 0 or len(counts) <= n:
+        return False
+    before, window = min(counts[:-n]), min(counts[-n:])
+    return window >= before or window > before * (1.0 - float(pct) / 100.0)
+
+
 class Grid:
     def __init__(self, x0, y0, x1, y1, layers, step=0.1, strict=False):
         self.x0, self.y0, self.step = x0, y0, step
@@ -1167,7 +1180,7 @@ class Grid:
 
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
                   log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4,
-                  corridor=None, jacobi=False, stuck=20, **kw):
+                  corridor=None, jacobi=False, stuck=20, plateau=0, plateau_pct=2.0, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
         Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
         after every iteration; a truthy return (a reason) stops an unconverged run there.
@@ -1214,6 +1227,17 @@ class Grid:
         finds no path there tries again in a box twice as wide, up to the whole window, so a
         corridor never walls a net in that the window would not.  None: the whole window.
 
+        plateau=N (default 0: off): stop -- None, with the report in self.plateau -- when the
+        best overlap count of the last N iterations is not at least plateau_pct % below the
+        best before them (plateau_reached()).  A cheap stop for a run whose overlaps keep
+        moving without shrinking, which `stuck` lets run (it needs the SAME cells): board1's
+        In2 legs sat within 0-11 % of their iteration-40 best for 121-300 iterations and ran
+        to a 1500 s --timeout (rIn2s: 1297 cells at iteration 20, 1292 at 170).  Off by
+        default because the count alone is no proof: it sits flat for dozens of iterations
+        in runs that then converge (see `stuck`; the harness's router fixture is flat from
+        iteration 2 and converges at 14, so plateau=10 cuts it and 20 does not) -- ask for it
+        on a long leg.
+
         jacobi=True: the nets of one iteration are routed in parallel (tools/par.py, forked),
         each against the congestion the iteration STARTED with -- not against the nets routed
         before it in the same iteration (Gauss-Seidel, the default).  A different convergence:
@@ -1221,6 +1245,8 @@ class Grid:
         result with HW_JOBS=1: a net routed in-process restores its old path before the next."""
         self.walled = None
         self.stuck = None
+        self.plateau = None
+        counts = []                           # the overlap count of every iteration, for plateau_reached()
         if rip not in ("conflict", "full"):
             raise ValueError(f"rip must be 'conflict' or 'full', got {rip!r}")
         bad, best, since, full_next = {}, None, 0, False
@@ -1289,6 +1315,15 @@ class Grid:
                 return paths
             if stop:
                 log(f"   iteration {it}: stopped -- {stop}")
+                return None
+            counts.append(ncell)
+            if plateau and plateau_reached(counts, plateau, plateau_pct):
+                b_it = min(range(len(counts)), key=lambda k: (counts[k], k)) + 1
+                self.plateau = dict(it=it, n=plateau, pct=plateau_pct, best=counts[b_it - 1], best_it=b_it,
+                                    window_best=min(counts[-plateau:]))
+                log(f"   iteration {it}: plateau -- best {counts[b_it - 1]} cell(s) at iteration {b_it}; "
+                    f"the last {plateau} iterations' best {min(counts[-plateau:])} is not "
+                    f"{plateau_pct:g} % below it")
                 return None
             if stuck:
                 cur = {n: frozenset(v) for n, v in bad.items() if v}
