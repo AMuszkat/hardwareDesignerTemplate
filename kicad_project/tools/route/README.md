@@ -420,7 +420,9 @@ its docstring. What the spec has to be told:
   "Time limit reached: no assignment found" -- the loop must re-solve with more
   time, never read it as "no answer left" (board1's loop r ended "infeasible"
   after 6 cuts on a 180 s miss; the same model with time found an answer).
-  Print which one ended a loop.
+  Print which one ended a loop. The same holds for the check: a check that crashed
+  printed no verdict, so the loop stops on it and never reads it as "does not fit"
+  (board1's loop e1 "proved" the pairs alone could not fit, on an empty object list).
 - **An escape that will not converge: bound it before re-splitting.**
   `escape_bound.py --ref U1 --layer In2.Cu --spec <escape spec> --vias <fanout
   model> --width W --clearance C [--nfp]` -- a planar cut relaxation over the
