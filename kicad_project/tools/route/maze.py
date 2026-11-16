@@ -1072,7 +1072,7 @@ class Grid:
             for r in out:
                 r["cells"] = len(r["cells"])
             return out
-        return dict(net=net, end=end, at=pts[0] if end == "source" else self.xy(min(goals)),
+        return dict(net=net, end=end, at=(pts[0] if pts else None) if (end == "source" or not goals) else self.xy(min(goals)),   # an end with no cell at all: at None
                     layers=sorted(by_layer, key=self.layers.index), cells=len(region), by_layer=by_layer,
                     goals=len(gs), free_goals=len(gfree), other=other, other_closed=oclosed,
                     edge=sorted(edge), wall=rows(wall), via=rows(viaw), no_via=no_via)
@@ -1082,7 +1082,8 @@ class Grid:
         """blocked_end()'s report as the block a run prints (netgroup.py, the tests)."""
         end, other = d["end"], ("goal" if d["end"] == "source" else "source")
         where = ", ".join(f"{d['by_layer'][k]} on {k}" for k in d["layers"]) or "none"
-        out = [f"BLOCKED {end.upper()}: {d['net']} is shut in at its {end}, near ({d['at'][0]:.3f}, {d['at'][1]:.3f}) mm"]
+        near = f"near ({d['at'][0]:.3f}, {d['at'][1]:.3f}) mm" if d['at'] else "with NO cell of its own on the grid (its pads / goals lie off the window or under fixed copper)"
+        out = [f"BLOCKED {end.upper()}: {d['net']} is shut in at its {end}, {near}"]
         if end == "source":
             out.append(f"   from its source it reaches {d['cells']} cell(s) ({where}) and none of its "
                        f"{d['goals']} goal cell(s)")
