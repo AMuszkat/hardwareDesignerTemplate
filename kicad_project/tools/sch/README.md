@@ -68,6 +68,9 @@ reason, exactly as a DRC exclusion is recorded:
 
 `key` is printed with every finding (`--json` shows it). A waiver without a
 `why` is refused. `plan` applies the same waivers when it checks its preview.
+A waived symbol rebuilt from its pin table keeps its one unit:
+`symgen.py ... --rows-per-side 51`. It refuses without the board's pins-side
+waiver for that symbol (board1 rev 121: the 2 x 50 plug gained pin MP).
 
 ## The plan (`plan`)
 

@@ -186,8 +186,19 @@ def main():
     ap.add_argument("--footprint", default="")
     ap.add_argument("--datasheet", default="")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--rows-per-side", type=int, default=PER_SIDE,
+                    help="a symbol the board WAIVES pins-side for (schematic.json 'waive', with its reason): more rows "
+                         "a side in one unit, e.g. a 2 x 50 connector kept pin N beside pin N+1")
     a = ap.parse_args()
     board = Path(boardsel.resolve(a.board))
+    if a.rows_per_side != PER_SIDE:
+        import json as _json
+        sj = board / "schematic.json"
+        waived = [w for w in (_json.loads(sj.read_text()).get("waive", []) if sj.exists() else [])
+                  if w.get("rule") == "pins-side" and str(w.get("key", "")).split(":")[1:2] == [a.name] and w.get("why")]
+        if not waived:
+            die(f"--rows-per-side: {board.name}/schematic.json has no pins-side waiver (with its 'why') for {a.name}")
+        globals()["PER_SIDE"] = a.rows_per_side
     rows = read_table(a.table)
     us = units(rows)
     text, geo = symbol_text(a.name, a.ref, us, a.footprint, a.datasheet)
