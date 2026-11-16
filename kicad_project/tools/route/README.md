@@ -396,6 +396,25 @@ its docstring. What the spec has to be told:
   routed it in 8 s. A swap A/B of the drawn order then costs one run each, all
   in parallel (`xargs -P`): 10 of 61 drew there. A failing run sits to its
   `--timeout`, a passing one ends in seconds -- set the timeout from that.
+- **Re-lay an escape from its via, never from a kept stub at the courtyard.**
+  A drawn escape ends inside the courtyard at the FIELD's pitch (board1's U1
+  In2: 0.204 mm at x 36.14); beyond the courtyard line the class pitch holds
+  (0.305), and 0.16 mm of run cannot widen a cluster of four to it at 45
+  degrees. Every relay that kept those stubs jammed at the line; ripping the
+  whole escape back to the vias routed the same set in 3 s. A 1-D check of the
+  strip beyond (vias in columns) must test that line too, at class pitch,
+  with the parts' fixed copper there (the pairs left drawn, the dog-bones at the
+  edge at the field's clearance) -- and test a line where it SLANTS past a
+  column via, not only where it crosses the column.
+- **A model and a geometric check in a loop: cut on a deletion filter.**
+  When the check (a strip placement, a relay) refuses the model's answer, drop
+  its objects one at a time and keep each drop that still fails: dropping an
+  object only relaxes the check, so what remains fails whatever the rest is.
+  The nogood is every literal of the remaining objects' state in the model
+  (layer, via or not, entry variables), at most len - 1 to hold. Cutting on
+  "undo a layer move" or on vias alone is NOT valid -- the moved net goes back
+  to a layer that may be fuller -- and board1's loop declared "no answer" on
+  such cuts before this was found.
 - **An escape that will not converge: bound it before re-splitting.**
   `escape_bound.py --ref U1 --layer In2.Cu --spec <escape spec> --vias <fanout
   model> --width W --clearance C [--nfp]` -- a planar cut relaxation over the
