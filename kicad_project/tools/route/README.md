@@ -415,6 +415,12 @@ its docstring. What the spec has to be told:
   "undo a layer move" or on vias alone is NOT valid -- the moved net goes back
   to a layer that may be fuller -- and board1's loop declared "no answer" on
   such cuts before this was found.
+  **"No answer" from the model is a proof only when the solver says
+  infeasible.** `cpsat_milp` reports a time limit with no assignment as
+  "Time limit reached: no assignment found" -- the loop must re-solve with more
+  time, never read it as "no answer left" (board1's loop r ended "infeasible"
+  after 6 cuts on a 180 s miss; the same model with time found an answer).
+  Print which one ended a loop.
 - **An escape that will not converge: bound it before re-splitting.**
   `escape_bound.py --ref U1 --layer In2.Cu --spec <escape spec> --vias <fanout
   model> --width W --clearance C [--nfp]` -- a planar cut relaxation over the
