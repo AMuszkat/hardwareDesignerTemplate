@@ -125,7 +125,10 @@ def main():
         f = fps[r]
         if (f.GetPath().AsString(), f.GetSheetname(), f.GetSheetfile()) != (c["path"], c["sheetname"], c["sheetfile"]):
             count["path"] += 1
-            if not a.dry_run:
+            if a.dry_run:                  # name what would change: a count alone hides a surprise
+                print(f"   re-link {r}: {f.GetSheetname() or '-'} -> {c['sheetname']}"
+                      + ("" if f.GetPath().AsString() == c["path"] else " (path)"))
+            else:
                 f.SetPath(pn.KIID_PATH(c["path"]))
                 f.SetSheetname(c["sheetname"])
                 f.SetSheetfile(c["sheetfile"])
@@ -133,7 +136,9 @@ def main():
             want = c["pads"].get(p.GetNumber(), "")
             if p.GetNetname() != want:
                 count["pads"] += 1
-                if not a.dry_run:
+                if a.dry_run:
+                    print(f"   pad {r}.{p.GetNumber()}: {p.GetNetname() or '(none)'} -> {want or '(none)'}")
+                else:
                     p.SetNet(net(want) if want else b.FindNet(0))
         if f.GetValue() != c["value"]:
             count["value"] += 1
