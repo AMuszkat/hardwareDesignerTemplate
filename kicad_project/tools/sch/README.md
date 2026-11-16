@@ -282,7 +282,9 @@ pin tables — once, in this form:
      "pwr_flags": ["+1V8", ...]}
 
 Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
-`--from-sch` reads the same from a drawn schematic (and KiCad's netlist of it).
+`--from-sch` reads the same from a drawn schematic (and KiCad's netlist of it), and the frames
+(group / caption / home) from `<board>/schematic.json` "symbols", as `--handoff` does: a drawing
+does not carry them, and a redraw without them titled every frame by a Value (board1 RV45.1).
 **Parts that leave** (the handoff deleted them): `plan --from-sch --drop TP2,R65,R67 --nc
 U1.J23,U1.AF18` takes the named parts out of that source and no-connects the named pins --
 the plan is then proven against the drawing minus those parts, and `draw` proves it against

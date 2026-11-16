@@ -206,7 +206,26 @@ class Source:
             tb = sh.title_block
             if sh.hpath == "/" and tb.get("title"):
                 src.title = tb["title"]
+        src._board_frames()
         return src
+
+    def _board_frames(self):
+        """The board's frames, as from_handoff reads them: <board>/schematic.json "symbols"
+        (a refdes or a glob) -> group / caption / home. A drawing does not carry them, and a
+        --from-sch redraw without them titles every frame by a part's Value (board1 RV45.1:
+        3 of 18 groups left, a decoupling cap outside its IC's frame)."""
+        import fnmatch
+        sj = Path(self.board) / "schematic.json"
+        syms = (json.loads(sj.read_text()).get("symbols") or {}) if sj.exists() else {}
+        n = 0
+        for ref, part in self.parts.items():
+            sym = syms.get(ref) or next((v for k, v in syms.items() if fnmatch.fnmatchcase(ref, k)), None) or {}
+            for k in ("group", "caption", "home"):
+                v = sym.get(k, sym.get("section") if k == "caption" else None)
+                if v is not None and getattr(part, k) is None:
+                    setattr(part, k, v); n += 1
+        if syms:
+            print(f"   schematic.json: {n} group / caption / home entries on the drawn parts")
 
     # -- read a netlist JSON (a new board) -------------------------------------
     @classmethod
