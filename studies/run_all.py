@@ -3,7 +3,7 @@ Run the studies, check the headline numbers, or lint the docs.
 
     python studies/run_all.py                 # every study, in order
     python studies/run_all.py --list          # what each study answers
-    python studies/run_all.py --only s02_divider_tolerance   # or just: --only s02
+    python studies/run_all.py --only sNN_<name>   # or just: --only sNN
     python studies/run_all.py --check         # headline numbers vs baseline
     python studies/run_all.py --check --bless # accept them (a claim you looked)
     python studies/run_all.py --docs          # tools/lint_docs.py

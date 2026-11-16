@@ -387,6 +387,18 @@ def parts_table(root, out):
     return sum(1 for r in rows if r[4])
 
 
+def unit_sheets(out):
+    """{(ref, unit number): sheet file} from the frozen sheets -- the netlist names ONE sheet per
+    part, so a multi-unit part's pins (U1's 12 units on 8 sheets) would all read as one sheet."""
+    pat = re.compile(r'\(symbol\s*\(lib_id "[^"]+"\)(.*?)\(property "Reference" "([^"]+)"', re.S)
+    where = {}
+    for f in sorted((out / "snap").glob("*/*.kicad_sch")):
+        for m in pat.finditer(f.read_text()):
+            u = re.search(r"\(unit (\d+)\)", m.group(1))
+            where[(m.group(2), int(u.group(1)) if u else 1)] = f.name
+    return where
+
+
 def pin_table(out):
     """pins.csv (every placed part's every pin: name, type, no-connect flag, net) and nets.csv
     (every net and its pins), from netlist.xml -- what a reviewer otherwise parses by hand."""
@@ -401,7 +413,7 @@ def pin_table(out):
                      " ".join(f"{d.get('ref')}.{d.get('pin')}" for d in nodes)))
         for d in nodes:
             at[(d.get("ref"), d.get("pin"))] = (n.get("name"), d.get("pintype") or "", d.get("pinfunction") or "")
-    rows, refs = [], set()
+    rows, refs, units = [], set(), unit_sheets(out)
     for c in root.iter("comp"):
         ref, src = c.get("ref"), c.find("libsource")
         refs.add(ref)
@@ -411,11 +423,15 @@ def pin_table(out):
             if r == ref and num not in pins:
                 pins[num] = (nm, ty.replace("+no_connect", ""))
         sheet = next((p.get("value") for p in c.iter("property") if p.get("name") == "Sheetfile"), "")
+        pin_sheet = {}
+        for i, u in enumerate(c.iter("unit"), 1):
+            for q in u.iter("pin"):
+                pin_sheet[q.get("num")] = units.get((ref, i), sheet)
         for num in sorted(pins, key=natural):
             nm, ty = pins[num]
             net, nty, _ = at.get((ref, num), ("", "", ""))
             rows.append((ref, num, nm or "", ty or "", "yes" if "no_connect" in nty.split("+")[1:] else "",
-                         net, c.findtext("value") or "", sheet))
+                         net, c.findtext("value") or "", pin_sheet.get(num, sheet)))
     rows.sort(key=lambda r: (natural(r[0]), natural(r[1])))
     with open(out / "pins.csv", "w", newline="") as f:
         csv.writer(f).writerows([("ref", "pin", "name", "type", "nc_flag", "net", "value", "sheet")] + rows)

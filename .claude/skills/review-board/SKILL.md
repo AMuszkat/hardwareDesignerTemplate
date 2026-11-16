@@ -129,7 +129,15 @@ and writes them all to `handoff/findings.json`. The board runs them with
 `route.py audit --findings` before it asks again, and the next snapshot runs
 them as its `findings` gate — closed findings included, so the one that
 comes back fails in seconds. Never delete a Check line when its finding
-closes. A rule that belongs to the whole design and not to one finding goes
+closes. **Run every new Check line before you publish it**:
+`route.py audit --findings --board <a copy>` on a copy of the snapshot with
+the new `findings.json`. It must pass on the reviewed board as it stands,
+or it fails work that already passed (board 1's RV50: a proposed `cap
+reach` over six caps failed three of them on today's board). A plan
+review checks both states, today's board and the rebuilt plan. And when a
+plan moves a block, an existing check that names a position (a `stitch
+via` exception) carries the old and the new place until the move is
+applied. A rule that belongs to the whole design and not to one finding goes
 into the board's `WORKMANSHIP` rows instead (the same forms), so every
 `route.py audit` runs it.
 
