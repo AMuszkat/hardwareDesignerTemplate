@@ -130,13 +130,13 @@ def esc(s):
     return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def symbol_text(name, ref, us, footprint, datasheet):
+def symbol_text(name, ref, us, footprint, datasheet, value=None, hide_names=False):
     """The symbol, KiCad library coordinates (y up): each body x 0..W, y 0..-H."""
     eff = "(effects (font (size 1.27 1.27)) (justify left bottom))"
     hid = "(effects (font (size 1.27 1.27)) (hide yes))"
-    L = [f"\t(symbol {esc(name)}", "\t\t(pin_names (offset 0.508))", "\t\t(exclude_from_sim no) (in_bom yes) (on_board yes)",
+    L = [f"\t(symbol {esc(name)}", "\t\t(pin_names (offset 0.508)" + (" (hide yes))" if hide_names else ")"), "\t\t(exclude_from_sim no) (in_bom yes) (on_board yes)",
          f"\t\t(property \"Reference\" {esc(ref)} (at 0 3.81 0) {eff})",
-         f"\t\t(property \"Value\" {esc(name)} (at 0 1.27 0) {eff})",
+         f"\t\t(property \"Value\" {esc(value or name)} (at 0 1.27 0) {eff})",
          f"\t\t(property \"Footprint\" {esc(footprint)} (at 0 -2.54 0) {hid})",
          f"\t\t(property \"Datasheet\" {esc(datasheet)} (at 0 -5.08 0) {hid})",
          "\t\t(property \"Description\" \"\" (at 0 -7.62 0) " + hid + ")"]
@@ -144,8 +144,8 @@ def symbol_text(name, ref, us, footprint, datasheet):
     for k, (uname, pins) in enumerate(us, 1):
         left, right = sides(pins)
         ll, rl = pin_len(left), pin_len(right)
-        wl = max([0.0] + [model.text_w(p["name"]) for p in left])
-        wr = max([0.0] + [model.text_w(p["name"]) for p in right])
+        wl = 0.0 if hide_names else max([0.0] + [model.text_w(p["name"]) for p in left])
+        wr = 0.0 if hide_names else max([0.0] + [model.text_w(p["name"]) for p in right])
         w = max(5.08, math.ceil((wl + wr + 2 * NAME_OFF + 2.54) / ROW) * ROW)
         rows = max(len(left), len(right))
         h = (rows + 1) * ROW
@@ -186,6 +186,9 @@ def main():
     ap.add_argument("--footprint", default="")
     ap.add_argument("--datasheet", default="")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--value", help="the library Value (default: the symbol's name) -- e.g. the part number")
+    ap.add_argument("--hide-pin-names", action="store_true",
+                    help="pins whose name is their number (a connector): names hidden, the body as narrow as 5.08")
     ap.add_argument("--rows-per-side", type=int, default=PER_SIDE,
                     help="a symbol the board WAIVES pins-side for (schematic.json 'waive', with its reason): more rows "
                          "a side in one unit, e.g. a 2 x 50 connector kept pin N beside pin N+1")
@@ -201,7 +204,7 @@ def main():
         globals()["PER_SIDE"] = a.rows_per_side
     rows = read_table(a.table)
     us = units(rows)
-    text, geo = symbol_text(a.name, a.ref, us, a.footprint, a.datasheet)
+    text, geo = symbol_text(a.name, a.ref, us, a.footprint, a.datasheet, a.value, a.hide_pin_names)
     for uname, nl, nr, ll, rl, w, h in geo:
         print(f"  unit {uname}: {nl} left / {nr} right, pins {ll:g} / {rl:g} mm, body {w:g} x {h:g} mm")
     nick = a.lib or board.name
