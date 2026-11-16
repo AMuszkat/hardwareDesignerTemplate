@@ -286,7 +286,10 @@ Symbols come from the board's `sym-lib-table` and KiCad's own libraries.
 **Parts that leave** (the handoff deleted them): `plan --from-sch --drop TP2,R65,R67 --nc
 U1.J23,U1.AF18` takes the named parts out of that source and no-connects the named pins --
 the plan is then proven against the drawing minus those parts, and `draw` proves it against
-the handoff (board1, rev 68). On the PCB afterwards: the parts' copper out through its group
+the handoff (board1, rev 68). **A pin the handoff moved**: `--move U1.AC27=,U1.AG11=ENET_MDC
+--nc U1.AC27` takes each named pin off its net (`REF.PIN=`) or onto NET, then no-connects what
+the handoff says is unused -- a pin move is a plan, then a draw, never a Konnect edit on the sheet
+(board1, rev 117). On the PCB afterwards: the parts' copper out through its group
 (a plan's `ripvias`), `tools/place/rmfp.py REF…`, `schupdate.py`, `place.py drc` parity 0.
 **Two text rules the ladder block keeps by itself** (both were hand moves after a draw, and
 `draw` refuses a plan with a finding): a one-pin part whose own Reference / Value reach back

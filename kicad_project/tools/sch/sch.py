@@ -144,6 +144,25 @@ def cmd_plan(a):
         src = plan.Source.from_json(board, boardsel.in_board(board, a.netlist))
     else:
         src = plan.Source.from_sch(board)
+    if a.move:
+        # a pin the handoff moved (board1 rev 117: ENET_MDC AC27 -> AG11): REF.PIN=NET takes the
+        # pin off whatever net or no-connect holds it and onto NET; REF.PIN= takes it off only
+        # (no-connect it with --nc if the handoff says so)
+        for t in (x for x in a.move.split(",") if x):
+            pinref, net = t.split("=", 1)
+            ref, pin = pinref.split(".", 1)
+            if ref not in src.parts:
+                sys.exit(f"sch: --move {t}: the source holds no part {ref}")
+            for n in list(src.nets):
+                if (ref, pin) in src.nets[n] or [ref, pin] in src.nets[n]:
+                    src.nets[n] = [p for p in src.nets[n] if tuple(p) != (ref, pin)]
+                    print(f"   --move: {ref}.{pin} leaves {n}")
+            src.nc.discard((ref, pin))
+            if net:
+                if net not in src.nets:
+                    sys.exit(f"sch: --move {t}: no net {net} in the source")
+                src.nets[net].append((ref, pin))
+                print(f"   --move: {ref}.{pin} joins {net}")
     if a.drop or a.nc:
         # a small edit after an answer, on a board whose source is its own drawing: parts the
         # handoff deleted leave the source, and the pins they leave alone are no-connected
@@ -433,6 +452,7 @@ def main():
     p.add_argument("--out")
     p.add_argument("--drop", help="REF,REF: parts to leave out of the source (deleted by the handoff)")
     p.add_argument("--nc", help="REF.PIN,...: pins to no-connect (the handoff's 'unused: no connect')")
+    p.add_argument("--move", help="REF.PIN=NET,...: pins the handoff moved onto NET (REF.PIN= takes a pin off its net)")
     p.set_defaults(fn=cmd_plan)
     dr = sub.add_parser("drawn")
     dr.add_argument("--board")
