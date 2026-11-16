@@ -1257,6 +1257,11 @@ either session goes through it -- but the router is where the waiting happens:
   on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is declared in both
   sessions' `.claude/settings.json`, beside the wall.
 - **Several specs of one group at once are a race, not three background runs:** `race.py`, below.
+- **`cores` says how much of the machine the jobs used**: `python3 tools/bgwait.py cores [--since
+  YYYY-MM-DD]` prints, per script, the runs, the wall hours, the core-hours, the cores a run used and
+  how many ran at once, then the machine's average -- and names the scripts that left most of it idle.
+  Read it at the end of a routing day: board1's said 12.8 of 24 cores busy over 15 h, a router at one
+  core a run and 2.8 runs at once.
 
 ## An integer program: `tools/cpsat_milp.py` -- scipy's `milp` call, on every core
 
@@ -1286,6 +1291,37 @@ nothing found for three; CP-SAT took 5-24 s for each, every answer equal to HiGH
   faster than HiGHS. The `--json` a run writes is the record to draw from -- never re-solve to reproduce.
 - A model that HiGHS needed `--half` or a short `--time` to finish is worth solving whole again: the limit
   was HiGHS's.
+- **Beside another solve it takes a share, not every core**: the default worker count is `par.grant()`
+  (below), and the solve holds a claim while it runs.
+
+## A loop that solves, checks and cuts: where its hours go, and three tools for them
+
+A model whose answer a slower tool must confirm (a fanout, then the strips routed) becomes a loop: solve,
+check the answer, turn each failure into a cut, solve again. Board1's ran 266 rounds in 14.5 h on a
+24-core machine that was half idle (12.8 cores busy). Measured, round by round:
+
+- **64 % was the solve, and every solve ended at its time limit.** CP-SAT found an answer in seconds and
+  kept improving it slowly until the 180 s were up; the optimum was never proven, so the limit WAS the
+  solve time, every round. `cpsat_milp`'s options for a solve that is one of many:
+  `hint` (the last round's `res.x`: after one more cut it is nearly feasible), `stall` (seconds without
+  a better answer, then stop with the best) and `first` (any answer). On board1's model (18,760 variables,
+  51,754 rows) `hint` + `stall: 15` ended a round's solve in 85 s where the limit took 180, for 27
+  channel vias against 28 -- one sample each; CP-SAT's answers differ run to run. A stall too short costs
+  quality (`stall: 15` with no hint: 28 vias against 23 at the limit), and a worse answer fails more
+  checks: set it from the solve's own log (`disp`), where the improvements thin out. Infeasible is still
+  PROVEN under all three -- the loop's `INFEASIBLE` keeps meaning what it says.
+- **36 % was the checks, on one core.** Three strips checked one after another, then a deletion filter
+  for each failing strip: one router run per net, up to 18 minutes a round. Two tools:
+  `tools/minset.py` -- `minimal(items, fails)` returns the SAME smallest failing set as the deletion
+  filter, asking a wave of tests at once (985 waves where the serial filter ran 4,662 tests, on 300
+  random cases); and `par.cmap(cmds)` -- independent commands (the three strips) a grant at a time,
+  results in the order given. The test a filter calls must be safe to run beside itself: its own
+  scratch file each call, never one shared `objs.json`.
+- **Two loops at once each took every core.** `par.grant()` is the cores no other job has claimed, and
+  never less than an even share; `with par.claim(n):` holds them. `cpsat_milp`, `minset` and `cmap`
+  ask and claim by themselves; a script's own pool should too. `HW_JOBS=N` still overrides.
+- **Log each phase's seconds in the loop** (solve, build, each check): the split above had to be
+  rebuilt from file times, and it decides which of these to reach for.
 
 ## `race.py` — spec variants raced as processes, one table, one winner
 

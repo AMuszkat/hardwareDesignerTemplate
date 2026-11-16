@@ -51,7 +51,10 @@ job is printed every `--every` seconds (default 30) on the way.
     exit 2    usage: no such job, a job of that name still running, ...
 
 `status` is the same report without waiting (running jobs are sampled for
-`--sample` seconds, default 1, to say whether they use CPU).  `kill` sends
+`--sample` seconds, default 1, to say whether they use CPU).  `cores` reads the
+ended jobs' records and prints, per script, runs, wall hours, core-hours, cores
+a run and runs at once, then how much of the machine was busy on average --
+the scripts that left it idle are named (`--since YYYY-MM-DD`, `--dir`).  `kill` sends
 SIGTERM to the job's process group, SIGKILL after `--grace` seconds (default
 5) to whatever is left in its session.  `clean` forgets the ended jobs.
 
@@ -635,6 +638,71 @@ def cmd_clean(_a):
     return 0
 
 
+def cores_table(jobs, total=None, since=None):
+    """Ended jobs -> (rows, overall): how much of the machine each script used.
+
+    rows: [script, runs, wall hours, core-hours, mean cores while it ran, mean runs of it at once, longest minutes];
+    overall: (hours with any job running, core-hours, mean cores busy, cores).  A script is the first *.py / *.sh of
+    the command after an interpreter or a wrapper (tools/kpy tools/route/netgroup.py -> netgroup.py)."""
+    import re
+    total = total or os.cpu_count() or 1
+    fam, spans = {}, []
+    for j in jobs:
+        st, en, cpu = j.get("started"), j.get("ended"), j.get("cpu_s")
+        if st is None or en is None or cpu is None or (since is not None and st < since) or en <= st:
+            continue
+        cmd = j.get("cmd") or []
+        text = " ".join(map(str, cmd)) if isinstance(cmd, list) else str(cmd)
+        names = [m for m in re.findall(r"([\w.-]+\.(?:py|sh))\b", text) if m not in ("kpy",)]
+        key = names[0] if names else (os.path.basename(str(cmd[0])) if cmd else "?")
+        fam.setdefault(key, []).append((st, en, cpu))
+        spans.append((st, en, cpu))
+
+    def union(iv):
+        iv, wall, cur = sorted(iv), 0.0, None
+        for a_, b_ in iv:
+            if cur is None or a_ > cur[1]:
+                wall += (cur[1] - cur[0]) if cur else 0.0
+                cur = [a_, b_]
+            else:
+                cur[1] = max(cur[1], b_)
+        return wall + ((cur[1] - cur[0]) if cur else 0.0)
+    rows = []
+    for key, v in fam.items():
+        busy, job_s, cpu = union([(a_, b_) for a_, b_, _ in v]), sum(b_ - a_ for a_, b_, _ in v), sum(c for *_, c in v)
+        rows.append([key, len(v), busy / 3600, cpu / 3600, cpu / job_s, job_s / busy, max(b_ - a_ for a_, b_, _ in v) / 60])
+    rows.sort(key=lambda r: -r[2])
+    busy = union([(a_, b_) for a_, b_, _ in spans])
+    cpu = sum(c for *_, c in spans)
+    return rows, (busy / 3600, cpu / 3600, (cpu / busy) if busy else 0.0, total)
+
+
+def cmd_cores(a):
+    """Where the cores went: per script, from the ended jobs' records (CPU seconds over elapsed seconds)."""
+    since = None
+    if a.since:
+        try:
+            since = time.mktime(time.strptime(a.since, "%Y-%m-%d"))
+        except ValueError:
+            die(f"--since {a.since}: a date as YYYY-MM-DD")
+    dirs = [Path(d) for d in a.dir] if a.dir else [Path(jobs_dir())]
+    jobs = [j for d in dirs for p in sorted(d.glob("*.json")) for j in [load(p)] if j]
+    rows, (busy, cpu, mean, total) = cores_table(jobs, since=since)
+    if not rows:
+        print(f"bgwait: no ended job with a CPU record in {', '.join(map(str, dirs))}")
+        return 0
+    print(f"{'script':28} {'runs':>5} {'wall h':>7} {'core-h':>7} {'cores a run':>11} {'runs at once':>12} {'longest min':>11}")
+    for k, n, wall, ch, per, conc, longest in rows[:a.top]:
+        print(f"{k[:28]:28} {n:5d} {wall:7.2f} {ch:7.1f} {per:11.1f} {conc:12.1f} {longest:11.1f}")
+    print(f"a job was running for {busy:.1f} h and used {cpu:.1f} core-hours: {mean:.1f} of {total} cores busy on average")
+    idle = [r for r in rows if r[2] >= 0.25 and r[4] * r[5] < 0.5 * total]
+    for k, n, wall, ch, per, conc, longest in idle[:3]:
+        print(f"  {k}: {wall:.1f} h at {per * conc:.1f} cores -- "
+              + ("one core a run and few at once: start the independent runs together (route/race.py, par.cmap)"
+                 if per < 1.6 else "under half the machine: serial steps between its parallel ones (minset.py, par.cmap)"))
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["_exec"] and len(argv) == 2:
@@ -666,6 +734,11 @@ def main(argv=None):
     p.set_defaults(fn=cmd_kill)
     p = sub.add_parser("clean", help="forget the ended jobs (their job files and default logs)")
     p.set_defaults(fn=cmd_clean)
+    p = sub.add_parser("cores", help="how much of the machine each script used, from the ended jobs' records")
+    p.add_argument("--since", metavar="YYYY-MM-DD", help="jobs started on or after this day")
+    p.add_argument("--dir", action="append", help="a jobs folder (default: this session's); may repeat")
+    p.add_argument("--top", type=int, default=12)
+    p.set_defaults(fn=cmd_cores)
     a = ap.parse_args(argv)
     if a.verb == "run" and a.cmd[:1] == ["--"]:
         a.cmd = a.cmd[1:]

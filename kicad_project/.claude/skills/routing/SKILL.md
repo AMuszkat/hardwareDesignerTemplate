@@ -109,6 +109,15 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    each other (a layer, a window, a seed) are one `race.py` call, not three
    runs.
 
+   **Use the machine, and check that you did.** What-if counts that do not
+   depend on each other start TOGETHER (`race.py`, or `par.cmap` in your own
+   script), not two or three at a time. A loop that solves, checks and cuts
+   gives its solve `hint` and `stall` (`cpsat_milp`), runs its checks at once
+   and finds its smallest failing set with `tools/minset.py` — the README's
+   "A loop that solves, checks and cuts". `bgwait.py cores --since <today>`
+   at the end of a routing day says how many cores were busy and which
+   script left the rest idle; a script it names is a retro row.
+
    **Waiting on a long job.** Start every job with `bgwait.py run --name N
    -- <command>`, then wait on ALL of them with ONE call, `bgwait.py wait A B
    C --timeout 3600`, run as a **background** Bash command

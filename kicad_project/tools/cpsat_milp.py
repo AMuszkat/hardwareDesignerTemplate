@@ -39,8 +39,24 @@ and still 10-30 times faster than HiGHS there (14 s and 110 s).  The JSON a run 
 record a board draws from; re-solving is not how a result is reproduced.
 
 options (scipy's names): time_limit (s), disp (CP-SAT's search log on stdout), mip_rel_gap;
-and this file's: workers (default: $HW_JOBS, else every core).  presolve and node_limit are
-accepted and ignored.  Running beside other solves, give each a share: HW_JOBS=8.
+and this file's: workers (default: $HW_JOBS, else par.grant() -- every core when this is the only
+solve, an even share beside other solves and pools that hold a claim; par.py).  presolve and
+node_limit are accepted and ignored.
+
+A SOLVE THAT IS ONE OF MANY (a loop that solves, checks the answer elsewhere, adds a cut and
+solves again) seldom needs the proven optimum, and a model CP-SAT cannot prove optimal runs to its
+time limit EVERY round (the first project's fanout loop: 266 rounds, 9.3 h of 14.5 in solves that
+all ended at their 180 s limit).  Three options of this file's for that, none changing what an
+answer is -- each answer still meets every original row:
+  * hint: a vector (the last round's x; NaN where there is none) CP-SAT starts from.  After one
+    more cut the old answer is nearly feasible, so the first answer comes in seconds;
+  * stall: seconds.  Once an answer exists and none better has come for this long, stop with the
+    best (status 1, "no better answer for ... s") -- the time limit only bounds a search that is
+    still improving;
+  * first: True stops at the first answer (status 1) -- for a loop that wants any answer, or to
+    learn fast that one exists.  With no objective every solve already does.
+An infeasible model is still PROVEN infeasible (status 2) under all three; they only end an
+optimisation early.  HiGHS (HW_MILP=highs, or a continuous variable) ignores them.
 
 status as scipy's: 0 optimal (or every row met, with no objective), 1 the time limit (x is the
 best found, or None when none was), 2 infeasible -- PROVEN, 4 anything else.  The result also
@@ -97,7 +113,7 @@ def _highs(why, c, integrality, bounds, constraints, options):
     from scipy.optimize import milp as highs
     if why:
         print(f"cpsat_milp: {why}; HiGHS solves this one", file=sys.stderr)
-    opts = {k: v for k, v in (options or {}).items() if k != "workers"}
+    opts = {k: v for k, v in (options or {}).items() if k not in ("workers", "hint", "stall", "first")}
     return highs(c, integrality=integrality, bounds=bounds, constraints=constraints, options=opts)
 
 
@@ -163,14 +179,69 @@ def milp(c, *, integrality=None, bounds=None, constraints=None, options=None):
 
     solver = cp.CpSolver()
     P = solver.parameters
-    workers = options.get("workers") or (int(os.environ["HW_JOBS"]) if os.environ.get("HW_JOBS") else os.cpu_count() or 1)
+    try:                                                   # a share of the machine, beside other solves and pools
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import par
+    except ImportError:
+        par = None
+    workers = options.get("workers") or (par.grant() if par else
+                                         int(os.environ.get("HW_JOBS") or 0) or os.cpu_count() or 1)
     P.num_workers = max(1, int(workers))
     if options.get("time_limit") is not None:
         P.max_time_in_seconds = float(options["time_limit"])
     gap = options.get("mip_rel_gap")
     P.relative_gap_limit = 1e-4 if gap is None else float(gap)
     P.log_search_progress = bool(options.get("disp"))
-    st = solver.solve(model)
+    hint = options.get("hint")
+    if hint is not None:
+        hint = np.asarray(hint, float)
+        if hint.shape != (n,):
+            raise ValueError(f"cpsat_milp: hint has shape {hint.shape}, the model has {n} variables")
+        for j in np.nonzero(np.isfinite(hint))[0]:
+            model.add_hint(xs[j], int(round(hint[j])))
+    stall, first, why = options.get("stall"), bool(options.get("first")), ""
+    held = par.claim(P.num_workers) if par else None
+    if held:
+        held.__enter__()
+    if first and len(nz):
+        P.stop_after_first_solution = True
+        why = "the first answer (first)"
+    if stall is not None and len(nz):
+        import threading
+
+        class _Watch(cp.CpSolverSolutionCallback):        # the time of the last better answer
+            def __init__(self):
+                super().__init__()
+                self.last = None
+
+            def on_solution_callback(self):
+                self.last = time.time()
+        watch, done, hit = _Watch(), threading.Event(), []
+
+        def _guard():
+            while not done.wait(min(0.2, float(stall) / 4 or 0.05)):
+                if watch.last is not None and time.time() - watch.last >= float(stall):
+                    hit.append(1)
+                    solver.stop_search()
+                    return
+        th = threading.Thread(target=_guard, daemon=True)
+        th.start()
+        try:
+            st = solver.solve(model, watch)
+        finally:
+            done.set()
+            th.join()
+        if hit:
+            why = f"no better answer for {float(stall):g} s (stall)"
+    else:
+        try:
+            st = solver.solve(model)
+        finally:
+            if held:
+                held.__exit__(None, None, None)
+                held = None
+    if held:
+        held.__exit__(None, None, None)
     name = solver.status_name(st)
     tail = (f"(CP-SAT {name}: {P.num_workers} worker(s), {solver.wall_time:.1f} s solving, {build:.1f} s building "
             f"{n} variables x {nrows} rows)")
@@ -188,7 +259,9 @@ def milp(c, *, integrality=None, bounds=None, constraints=None, options=None):
     if st == cp.OPTIMAL:
         status, msg = 0, f"Optimization terminated successfully. {tail}"
     elif st == cp.FEASIBLE:
-        status, msg = 1, f"Time limit reached. {tail}"
+        limit = options.get("time_limit")
+        early = why and (limit is None or solver.wall_time < float(limit) - 0.5)
+        status, msg = 1, (f"Stopped at {why}. {tail}" if early else f"Time limit reached. {tail}")
     elif st == cp.INFEASIBLE:
         status, msg = 2, f"The problem is infeasible. {tail}"
     elif st == cp.UNKNOWN:

@@ -81,6 +81,24 @@ def main():
     if not BG.is_file():
         print(f"FAIL: {BG} is missing")
         return 1
+    # 0 ---------------------------------------------------------------- the cores table, by hand
+    sys.path.insert(0, str(BG.parent))
+    import bgwait
+    H = 3600.0
+    jobs = [{"cmd": ["tools/kpy", "tools/route/netgroup.py", "a.json"], "started": 0, "ended": H, "cpu_s": H},
+            {"cmd": ["tools/kpy", "tools/route/netgroup.py", "b.json"], "started": 0, "ended": H, "cpu_s": H},
+            {"cmd": ["python3", "build/loop.py"], "started": H, "ended": 3 * H, "cpu_s": 24 * H},
+            {"cmd": ["python3", "build/loop.py"], "started": 0, "ended": None, "cpu_s": None}]      # still running: left out
+    rows, (busy, cpu, mean, total) = bgwait.cores_table(jobs, total=24)
+    r = {x[0]: x for x in rows}
+    expect([round(v, 6) for v in r["netgroup.py"][1:6]] == [2, 1.0, 2.0, 1.0, 2.0],
+           "cores: two 1 h router runs side by side -- 1 h of wall, 2 core-hours, 1 core a run, 2 at once", str(rows))
+    expect([round(v, 6) for v in r["loop.py"][1:6]] == [1, 2.0, 24.0, 12.0, 1.0],
+           "cores: one 2 h loop at 24 core-hours -- 12 cores a run", str(rows))
+    expect((round(busy, 6), round(cpu, 6), round(mean, 6), total) == (3.0, 26.0, round(26 / 3, 6), 24),
+           "cores: 3 h with a job running, 26 core-hours, 8.67 of 24 busy", str((busy, cpu, mean, total)))
+    expect(bgwait.cores_table(jobs, total=24, since=H)[0][0][0] == "loop.py" and len(bgwait.cores_table(jobs, since=H)[0]) == 1,
+           "cores: --since keeps the jobs started on or after it")
     tmp = Path(tempfile.mkdtemp(prefix="test_bgwait_"))
     env = dict(os.environ, HW_BGWAIT_DIR=str(tmp / "jobs"))
     env.pop("HW_BOARD", None)

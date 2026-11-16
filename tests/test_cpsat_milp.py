@@ -9,7 +9,8 @@
      by 100, its bound rounded inward); an equality with a negative bound; an infinite bound held
      by a row; an infeasible pair of rows; no objective (status 0, the row met); a big-M row; a
      continuous variable (handed to HiGHS); a row no power of ten makes integral (refused, not
-     guessed); HW_JOBS=1 is one worker.
+     guessed); HW_JOBS=1 is one worker; hint / stall / first on a market-split program nobody
+     proves fast (an early stop still meets every row; infeasible is still proven).
   3. RANDOM: 200 programs, each built round a known integer point so most are feasible (every
      seventh made infeasible), coefficients of 0-2 decimals, both bound kinds, every fifth with no
      objective -- solved by HiGHS and by CP-SAT to a zero gap: the same status, the same optimum,
@@ -121,6 +122,41 @@ os.environ["HW_JOBS"] = "1"
 eq("HW_JOBS=1: one worker", milp(**KNAP).workers, 1)
 os.environ.pop("HW_JOBS")
 eq("options workers", milp(**KNAP, options={"workers": 3}).workers, 3)
+# hint, stall, first: an optimisation ended early is still an answer that meets every row
+eq("hint: the optimum itself", milp(**KNAP, options={"hint": [0, 1, 1]}).fun, -9.0)
+eq("hint: a wrong start, the same optimum", milp(**KNAP, options={"hint": [1, 1, 1]}).fun, -9.0)
+eq("hint: NaN is no hint", milp(**KNAP, options={"hint": [np.nan, 1, np.nan]}).fun, -9.0)
+try:
+    milp(**KNAP, options={"hint": [0, 1]})
+    bad.append("hint of the wrong length: no error raised")
+except ValueError as e:
+    eq("hint of the wrong length: refused", "hint has shape" in str(e), True)
+INF = dict(c=[1, 1], constraints=LinearConstraint([[1, 1], [1, 1]], [3, -np.inf], [np.inf, 2]), integrality=[1, 1],
+           bounds=Bounds(0, 5))
+eq("stall + first: infeasible is still proven", milp(**INF, options={"stall": 0.1, "first": True}).status, 2)
+# a market-split program (Cornuejols & Dawande): equalities nobody proves fast, any x with its slack is an answer
+rs = np.random.default_rng(7)
+ms, ns = 4, 30
+Am = rs.integers(0, 100, (ms, ns)).astype(float)
+dm = np.floor(Am.sum(1) / 2)
+A_ = np.hstack([Am, np.eye(ms), -np.eye(ms)])                    # A x + s - t = d, minimise s + t
+HARD = dict(c=np.r_[np.zeros(ns), np.ones(2 * ms)], constraints=LinearConstraint(A_, dm, dm),
+            integrality=np.ones(ns + 2 * ms), bounds=Bounds(0, np.r_[np.ones(ns), np.full(2 * ms, 5000)]))
+
+
+def meets(r):
+    return r.x is not None and np.allclose(A_ @ r.x, dm) and abs(float(HARD["c"] @ r.x) - r.fun) < 1e-9
+
+
+r1 = milp(**HARD, options={"first": True, "time_limit": 60, "workers": 4})
+eq("first: an answer that meets the rows", meets(r1), True)
+eq("first: stopped at once", r1.status in (0, 1) and r1.wall_time < 20, True)
+r2 = milp(**HARD, options={"stall": 1.0, "time_limit": 60, "workers": 4})
+eq("stall: an answer that meets the rows", meets(r2), True)
+eq("stall: ended before the time limit", r2.wall_time < 45 and (r2.status == 0 or "stall" in r2.message), True)
+eq("stall: no worse than the first answer", r2.fun <= r1.fun + 1e-9, True)
+r3 = milp(**HARD, options={"hint": r2.x, "first": True, "time_limit": 60, "workers": 4})
+eq("hint + first: starts from the hinted answer", meets(r3) and r3.fun <= r2.fun + 1e-9, True)
 
 # ---- 3. random, against HiGHS ------------------------------------------------------------------
 rng = np.random.default_rng(20261115)
