@@ -69,6 +69,17 @@ relaxing it is a decision, not an answer. Commit
 read well was wrong on the board (it missed the DRAM's pair names; it
 outranked the BGA area classes).
 
+**A geometric rule or a drawing** an answer publishes — a keep-out, a guard,
+"no other net inside", an escape "as drawn by concept" — is tried on the
+board's NEWEST PCB snapshot before the publish, with the board's own copper
+in place: every pad, via and track of another net the rule's area holds, and
+the board's gates on a scratch copy with the drawing applied. A drawing
+carries the proof as `"checked": {"snapshot": "<id>-pcb", "gates": "PASS"}`;
+the publisher refuses a new or changed one without it, or on an older
+snapshot. Three such publishes came back within 5-24 minutes: a guard over
+a connector's fixed pads, a drawing that broke hole-to-edge, a part that lost
+another's start-up job.
+
 ## 3. Fix the generator, then answer
 
 - The fact goes where the handoff should have carried it: the value bus, a

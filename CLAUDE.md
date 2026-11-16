@@ -97,7 +97,8 @@ in its own folder, a hook on THIS side that blocks edits to generated files
 and to the board sessions' files, the board tools refusing another session's
 board, the SendMessage guard, and a Bash guard on both sides
 (`kicad_project/tools/session/bashguard.py`) that refuses a loop waiting on a
-process by name. **Bash bypasses the hooks and rules**, so
+process by name and a foreground `sleep` of 60 s or more (wait on a job with
+`bgwait.py wait`, sent to the background). **Bash bypasses the hooks and rules**, so
 the contract carries the boundary too: never write into a board folder or
 `kicad_project/tools/` from here except through `publish.py`, `new_board.py`
 and the template merge that `giveback.py` runs.

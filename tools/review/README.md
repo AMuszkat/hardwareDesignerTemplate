@@ -125,7 +125,10 @@ it by (to the Edge.Cuts stroke) among them -- and from the layout rows that
 name pins (a pin that may not join a pad). Its last step is the board's own
 gates on a scratch copy with the drawing applied; until then its result is
 "drawn in the model", never "closes". One decision rested on a drawing whose
-typed rule list missed three of them.
+typed rule list missed three of them. A drawing published through a board's
+`DRAWINGS` records that last step as `"checked": {"snapshot": "<id>-pcb",
+"gates": "PASS"}` -- the board's newest PCB snapshot -- and `publish.py`
+refuses a new or changed drawing without it.
 
 ## What it does
 

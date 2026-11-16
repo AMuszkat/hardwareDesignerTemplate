@@ -10,6 +10,10 @@ What must hold:
     `bgwait.py wait`), and so are its relatives: `until`, `pgrep` without
     -f, `ps | grep`, `pidof`, the bracket trick, the loop inside `bash -c`,
     inside a here-document fed to a shell, inside `$( )`;
+  * a FOREGROUND sleep of a minute or more is BLOCKED (`sleep 300`,
+    `sleep 5m`, `sleep 1m 30s`, `sleep inf`, before a check, in a loop,
+    inside `bash -c`), and short sleeps, a sleep ended by `&`, `sleep $T`
+    and a sleep in a command run with run_in_background PASS;
   * the legitimate forms PASS (exit 0, nothing printed): a one-shot pgrep, a
     loop on a pid (`kill -0`, `ps -p`, `pgrep -P`), `wait`, `tail --pid`, a
     loop on a file, and the pattern as TEXT (a commit message, an echo, a
@@ -56,6 +60,24 @@ BLOCKED = [
     'bash <<EOF\nwhile pgrep -f foo; do sleep 1; done\nEOF',
     'while `pgrep -f foo >/dev/null`; do sleep 1; done',
     'sleep 2; while pgrep -f "route.py check" >/dev/null; do sleep 15; done; echo done',
+    # the long foreground sleep
+    'sleep 300',
+    'sleep 5m',
+    'sleep 1m 30s',
+    'sleep 60; tail -5 routing/R2_a.log',
+    'sleep 120 && python3 tools/bgwait.py status',
+    'cd kicad_project && sleep 600 ; cat build/out.log',
+    'while [ ! -f done.flag ]; do sleep 90; done',
+    'for i in 1 2 3; do sleep 2m; tail -1 a.log; done',
+    'sleep infinity',
+    "bash -c 'sleep 400; tail a.log'",
+    'tools/kpy x.py > a.log 2>&1 &\nsleep 300\ntail a.log',
+]
+
+# run with run_in_background: true -- a long sleep there blocks nothing
+BACKGROUND_PASSES = [
+    'sleep 300; tail -5 routing/R2_a.log',
+    'python3 kicad_project/tools/bgwait.py wait R2_a R2_b --timeout 3600',
 ]
 
 PASSES = [
@@ -86,6 +108,16 @@ PASSES = [
     'while pgrep -f foo >/dev/null; do echo still; break; done',
     '# while pgrep -f foo; do sleep 1; done\nls',
     'x=1 # note\nwhile [ $x -lt 3 ]; do x=$((x+1)); sleep 1; done; pgrep foo',
+    'sleep 59',
+    'sleep 30; tail a.log',
+    'sleep 0.5m',
+    'while [ ! -f done.flag ]; do sleep 30; done',
+    'sleep 300 &',
+    'sleep $T; tail a.log',
+    'git commit -m "never sleep 300; tail a.log"',
+    "grep -n 'sleep 600' README.md",
+    '# sleep 600\nls',
+    'timeout 100 python3 tools/route/netgroup.py a.json',
 ]
 
 # (label, raw stdin): the hook must exit 0 on every one -- it may not block by failing
@@ -105,9 +137,12 @@ def hook(stdin):
     return r.returncode, r.stdout, r.stderr, time.perf_counter() - t
 
 
-def event(command):
+def event(command, background=False):
+    ti = {"command": command}
+    if background:
+        ti["run_in_background"] = True
     return json.dumps({"session_id": "test", "hook_event_name": "PreToolUse", "tool_name": "Bash",
-                       "cwd": str(ROOT / "kicad_project"), "tool_input": {"command": command}})
+                       "cwd": str(ROOT / "kicad_project"), "tool_input": ti})
 
 
 def wiring():
@@ -168,6 +203,11 @@ def main():
         slowest = max(slowest, dt)
         if rc != 0 or out or err:
             bad.append(f"refused (exit {rc}): {cmd!r}")
+    for cmd in BACKGROUND_PASSES:
+        rc, out, err, dt = hook(event(cmd, background=True))
+        slowest = max(slowest, dt)
+        if rc != 0 or out or err:
+            bad.append(f"refused in the background (exit {rc}): {cmd!r}")
     for label, raw in HARMLESS:
         rc, out, err, dt = hook(raw)
         slowest = max(slowest, dt)
@@ -180,11 +220,11 @@ def main():
     for b in bad:
         print("  BAD " + b)
     if bad:
-        print(f"FAIL: {len(bad)} check(s) of {len(BLOCKED) + len(PASSES) + len(HARMLESS)} events and the wiring; "
+        print(f"FAIL: {len(bad)} check(s) of {len(BLOCKED) + len(PASSES) + len(BACKGROUND_PASSES) + len(HARMLESS)} events and the wiring; "
               f"first: {bad[0]}")
         return 1
-    print(f"PASS: {len(BLOCKED)} name-wait loops blocked (the incident's among them), {len(PASSES)} legitimate "
-          f"commands passed, {len(HARMLESS)} malformed events exit 0; both settings.json declare the hook, "
+    print(f"PASS: {len(BLOCKED)} name-wait loops and long sleeps blocked (the incident's among them), "
+          f"{len(PASSES)} legitimate commands and {len(BACKGROUND_PASSES)} background ones passed, {len(HARMLESS)} malformed events exit 0; both settings.json declare the hook, "
           f"and it passes everything when the script is missing; slowest hook call {slowest * 1000:.0f} ms")
     return 0
 

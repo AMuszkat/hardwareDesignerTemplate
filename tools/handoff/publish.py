@@ -50,6 +50,7 @@ import shutil
 import sys
 import subprocess
 import tempfile
+import textwrap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -221,6 +222,31 @@ PASSIVE_REF = re.compile(r"^(FB|LK|[RC])[_0-9]")
 
 # Reference designators the lint looks for in net text.
 REFDES = re.compile(r"\b(?:RN|FB|LK|SW|TP|[UJPRCLDQYXFKT])\d+\b")
+
+# A layout row is published wrapped at this width, continuation lines
+# indented under the row's text: one rule of 24,000 characters on one line
+# came back whole from every grep for a word in it, on both sides.
+LAYOUT_WRAP = 100
+
+
+def _decision_ids():
+    """The Decided ids (D1, D2, ...) of design/STATUS.md. A decision id in
+    net text ('by D83') reads like a diode's designator; the refdes lint
+    skips it. A real diode on the board is a COMPONENTS line and is never
+    flagged, so only a deleted diode whose number is also a decision id
+    goes unseen."""
+    p = os.path.join(ROOT, "design", "STATUS.md")
+    if not os.path.exists(p):
+        return set()
+    return set(re.findall(r"^\|\s*(D\d+)\s*\|", open(p).read(), re.M))
+
+
+def _stray_designators(text, known):
+    """Designator-shaped tokens of `text` that are none of `known`: the
+    COMPONENTS designators, pin numbers, and -- since D0, T1, ... are also
+    ordinary signal names -- the published nets and signals, and the
+    Decided rows' ids."""
+    return sorted(set(REFDES.findall(text)) - set(known))
 
 
 class Board:
@@ -544,7 +570,10 @@ class Board:
              "layout starts — if routing raises a constraint not on it, that "
              "is a question.", ""]
         for i, (con, srcs) in enumerate(self.get("LAYOUT", []), 1):
-            L += [f"{i}. {con}  *({_joined(srcs)})*", ""]
+            head = f"{i}. "
+            L += [textwrap.fill(f"{con}  *({_joined(srcs)})*", width=LAYOUT_WRAP,
+                                initial_indent=head, subsequent_indent=" " * len(head),
+                                break_long_words=False, break_on_hyphens=False), ""]
         if not self.get("LAYOUT"):
             L += ["None published yet — layout must not start until this "
                   "list exists.", ""]
@@ -1197,11 +1226,8 @@ class Board:
         signames = ({r["Signal Name"] for r in rows if r["Signal Name"]}
                     | {r["Pin Name"] for r in rows})
         grounds = set(self.get("GROUND_NETS") or ("GND",))
-        for m in sorted(set(REFDES.findall(flat)) - pins):
-            # D0, T1, ... are also ordinary signal names: a token that IS a
-            # published net or signal is not a designator.
-            if m not in refs and m not in netnames and m not in signames:
-                prob.append(f"net text references {m}, which has no COMPONENTS line")
+        for m in _stray_designators(flat, refs | pins | netnames | signames | _decision_ids()):
+            prob.append(f"net text references {m}, which has no COMPONENTS line")
         for cname, _, _, pinlist in self.get("CONNECTORS", []):
             for _, net, _, _ in pinlist:
                 if net not in netnames and net not in grounds and net not in signames:
@@ -1512,10 +1538,40 @@ class Board:
             for name, rel, what in drw:
                 if not os.path.exists(os.path.join(ROOT, rel)):
                     die(f"{self.id} DRAWINGS names {rel}, which does not exist")
+                self._drawing_checked(name, rel)
                 copies["drawings/" + name] = rel
                 L.append(f"| `drawings/{name}` | {what} |")
             files["16_drawings.md"] = "\n".join(L) + "\n"
         return files, copies, ds
+
+    def _drawing_checked(self, name, rel):
+        """A drawing that is new or changed since the published copy carries
+        its proof: "checked": {"snapshot": "<id>-pcb", "gates": "PASS"} --
+        the board's own gates, run on a scratch copy of that snapshot with
+        the drawing applied (tools/review/README.md, 'A what-if drawing') --
+        and that snapshot is the board's newest PCB snapshot when the
+        snapshots are on this machine. Two drawings published on a typed rule
+        list broke a fab rule the board's own copper showed within minutes."""
+        src = os.path.join(ROOT, rel)
+        pub = os.path.join(self.handoff, "drawings", name)
+        if os.path.exists(pub) and open(pub, "rb").read() == open(src, "rb").read():
+            return
+        try:
+            chk = (json.load(open(src)) or {}).get("checked") if rel.endswith(".json") else None
+        except (ValueError, AttributeError):
+            chk = None
+        if not isinstance(chk, dict) or str(chk.get("gates", "")).upper() != "PASS" or not chk.get("snapshot"):
+            die(f"{self.id} drawing {name} is new or changed and has no \"checked\": "
+                "{\"snapshot\": \"<id>-pcb\", \"gates\": \"PASS\"} -- apply it to a scratch copy of the "
+                "board's newest PCB snapshot and run the board's gates first (tools/review/README.md)")
+        snaps = os.path.join(ROOT, "out", "reviews", self.board)
+        if os.path.isdir(snaps):
+            pcb = [d for d in os.listdir(snaps) if d.endswith("-pcb")]
+            if pcb:
+                newest = max(pcb, key=lambda d: os.path.getmtime(os.path.join(snaps, d)))
+                if chk["snapshot"] != newest:
+                    die(f"{self.id} drawing {name} was checked on {chk['snapshot']}; the board's newest "
+                        f"PCB snapshot is {newest} -- re-run its gates there")
 
     def page_hashes(self, files, copies, ds):
         """name -> hash of every page as it will sit in the folder."""

@@ -892,6 +892,8 @@ SCRIPT_STAGES = [
     ("topic", "test_answer_topic.py", False),
     ("sessions", "test_sessions.py", False),
     ("milp", "test_cpsat_milp.py", False),
+    ("pub-gates", "test_publish_gates.py", False),
+    ("plateau", "test_router_plateau.py", False),
 ]
 
 

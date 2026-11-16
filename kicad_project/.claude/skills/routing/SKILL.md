@@ -107,7 +107,20 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    tail. Never a `while pgrep …; do sleep` loop — it matches its own shell and
    never ends (a hook refuses it). Variants of one spec that do not depend on
    each other (a layer, a window, a seed) are one `race.py` call, not three
-   runs. **A run that fails says why, and the exit code is the next move:**
+   runs.
+
+   **Waiting on a long job.** Start every job with `bgwait.py run --name N
+   -- <command>`, then wait on ALL of them with ONE call, `bgwait.py wait A B
+   C --timeout 3600`, run as a **background** Bash command
+   (`run_in_background`): it returns when they have ended, and the harness
+   wakes the session then. Never `sleep N; check` — a sleep is sized before
+   the job's end is known, so it runs on after a job that ended early, and
+   every check that answers "still running" costs a whole turn at the
+   session's full context (a hook refuses a foreground sleep of 60 s or more).
+   Meanwhile work on what does not depend on the job; with nothing else to
+   do, end the turn and let the wait's return start the next one.
+
+   **A run that fails says why, and the exit code is the next move:**
    `4 BLOCKED` — a net is shut in at one end: move the nearest blocker it
    lists; `3 STUCK` — the named nets need the same channel at the cells
    printed: another layer, a moved via, a wider window. Neither is answered
@@ -185,6 +198,12 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   `ROUTING_PLAN.md` §4.
 - **A rule that blocks the layout is a QUESTIONS.md item.** Never loosen a fab
   number or a gate to make a route fit; never tighten one on a guess.
+- **A bus between two parts is proved whole on a scratch copy before any of it
+  goes to copper** — one end's fanout, the other end's escape, the channel's
+  vias at their real clearances, each to a count. A cheap variant first (no
+  order, one net alone, one half) names the bind in seconds; independent
+  chains run on separate copies at once; a solve's input names the board's
+  hash. `tools/route/README.md`, "A bus between two BGAs".
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
