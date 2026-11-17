@@ -101,6 +101,22 @@ def main():
            "cores: --since keeps the jobs started on or after it")
     tmp = Path(tempfile.mkdtemp(prefix="test_bgwait_"))
     env = dict(os.environ, HW_BGWAIT_DIR=str(tmp / "jobs"))
+    env.pop("HW_MEM_FLOOR_GB", None)
+    if bgwait.LINUX:
+        # 0b -------------------------------------------------------------- memory: the floor, the kernel's first choice, the peak
+        rc, out, _ = bg(dict(env, HW_MEM_FLOOR_GB="99999"), "run", "--name", "nomem", "--", sys.executable, "-c", "print(1)")
+        expect(rc == 75 and "NOT STARTED" in out and not (tmp / "jobs" / "nomem.json").exists(),
+               "memory: under the floor `run` refuses (exit 75) and starts nothing", out)
+        code = ("import time; a = bytearray(300 * 2 ** 20); a[::4096] = b'x' * len(a[::4096]); "
+                "print(open('/proc/self/oom_score_adj').read().strip()); time.sleep(4.5)")
+        rc, out, _ = bg(env, "run", "--name", "mem", "--", sys.executable, "-c", code)
+        rc, out, _ = bg(env, "wait", "mem", "--timeout", "20", timeout=30)
+        job = json.loads((tmp / "jobs" / "mem.json").read_text())
+        expect("| 900" in out, "memory: a job runs at oom_score_adj 900 -- the kernel takes it before the session", out)
+        expect(0.25 <= job.get("peak_gb", 0) <= 0.6 and "peak 0." in out,
+               f"memory: a job that held 300 MB records its peak ({job.get('peak_gb')} GB) and the report shows it", out)
+        rows, _ = bgwait.cores_table([job])
+        expect(rows and rows[0][7] == job["peak_gb"], "memory: `cores` carries the peak of a run", str(rows))
     env.pop("HW_BOARD", None)
     numbers = {}
     loose = []

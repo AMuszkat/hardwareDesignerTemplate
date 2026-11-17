@@ -1257,6 +1257,14 @@ either session goes through it -- but the router is where the waiting happens:
   on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is declared in both
   sessions' `.claude/settings.json`, beside the wall.
 - **Several specs of one group at once are a race, not three background runs:** `race.py`, below.
+- **Memory runs out before cores do, and it kills.** On board1's 30 GB machine six router runs forking 4-12
+  workers each beside a 24-worker solve took the board session, the concept session and the editor with
+  them (2026-11-16, the kernel's OOM killer). Now: `run` refuses a job while less than the floor is
+  available (exit 75; 15 % of the machine, 3 GB at least, `HW_MEM_FLOOR_GB`); every job runs at
+  `oom_score_adj` 900, so the kernel takes a job before a session; `wait` and `status` show each job's
+  resident memory; an ended job records `peak_gb`, which `cores` prints per script with how many such runs
+  the machine holds. `par.workers()` (every `pmap`) and `par.cmap` cap their workers to what fits in memory,
+  `HW_JOBS` or not. Size `--seeds` and `HW_JOBS` from `cores`' peak column, not from the core count.
 - **`cores` says how much of the machine the jobs used**: `python3 tools/bgwait.py cores [--since
   YYYY-MM-DD]` prints, per script, the runs, the wall hours, the core-hours, the cores a run used and
   how many ran at once, then the machine's average -- and names the scripts that left most of it idle.

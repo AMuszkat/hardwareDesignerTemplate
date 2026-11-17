@@ -5,6 +5,8 @@
 
   1. grant: alone it is the whole machine; beside claims it is the free cores and never less than
      an even share; HW_JOBS overrides; a dead claimant's file counts for nothing and is removed.
+  1b. memory: mem_jobs keeps a floor free and is never under 1; workers() and grant(mem_gb_each)
+     are capped by it, HW_JOBS or not; cmap under the floor runs one command at a time.
   2. cmap: results in the order given whatever order they end in; N at a time (measured); a
      timeout is exit 124; `stop` cancels the commands not yet started.
   3. minset.minimal against minset.serial (the deletion filter) on 300 random monotone oracles and
@@ -68,6 +70,24 @@ with par.claim(6):
     eq("our claim is on file", len(list(D.glob("*.json"))), 1)
 eq("the claim is gone after the block", len(list(D.glob("*.json"))), 0)
 
+# ---- 1b. memory -------------------------------------------------------------------------------
+eq("mem_jobs: 30 GB machine, 19.5 available, floor 4.5, 2.5 GB a job -> 6", par.mem_jobs(2.5, avail=19.5, total=30.0), 6)
+eq("mem_jobs: never under 1 (the floor already broken)", par.mem_jobs(2.5, avail=3.0, total=30.0), 1)
+eq("mem_jobs: the floor is 3 GB at least (8 GB machine: 15 % is 1.2)", par.mem_jobs(1.0, avail=5.0, total=8.0), 2)
+os.environ["HW_MEM_FLOOR_GB"] = "10"
+eq("HW_MEM_FLOOR_GB sets the floor", par.mem_jobs(2.0, avail=19.0, total=30.0), 4)
+os.environ.pop("HW_MEM_FLOOR_GB")
+real_mem, real_own = par.mem_gb, par._own_gb
+par.mem_gb, par._own_gb = (lambda: (12.0, 30.0)), (lambda: 2.5)       # 12 available, floor 4.5: three 2.5 GB workers
+os.environ["HW_JOBS"] = "16"
+eq("workers: HW_JOBS=16 does not lift the memory cap", par.workers(16), 3)
+os.environ.pop("HW_JOBS")
+eq("grant with mem_gb_each: capped by memory", par.grant(total=24, mem_gb_each=2.5), 3)
+eq("grant without it: the cores", par.grant(total=24), 24)
+par.mem_gb = lambda: (None, None)
+eq("no /proc/meminfo: no cap", par.workers(4) >= 1 and par.mem_jobs() is None, True)
+par.mem_gb, par._own_gb = real_mem, real_own
+
 # ---- 2. cmap -----------------------------------------------------------------------------------
 PY = sys.executable
 cmds = [[PY, "-c", f"import time; time.sleep({d}); print({i})"] for i, d in enumerate((0.5, 0.1, 0.3, 0.0))]
@@ -84,6 +104,20 @@ eq("cmap: each command is one core", r[0][2].strip(), "1")
 seen = []
 r = par.cmap([[PY, "-c", f"print({i})"] for i in range(6)], jobs=1, stop=lambda i, x: seen.append(i) or i == 2)
 eq("cmap stop: the rest are not started", [x is None for x in r], [False, False, False, True, True, True])
+
+# cmap and memory: under the floor only one runs at a time, however many jobs were asked for
+state = {"low": True}
+par.mem_gb = lambda: ((1.0, 30.0) if state["low"] else (25.0, 30.0))
+t0 = time.time()
+r = par.cmap([[PY, "-c", "import time; time.sleep(0.4)"] for _ in range(3)], jobs=3)
+eq("cmap under the memory floor: one at a time (3 x 0.4 s serial)", time.time() - t0 >= 1.2 and [x[0] for x in r] == [0, 0, 0], True)
+state["low"] = False
+t0 = time.time()
+r = par.cmap([[PY, "-c", "import time; time.sleep(0.4)"] for _ in range(3)], jobs=3)
+eq("cmap with room: all three at once", time.time() - t0 < 1.1, True)
+par.mem_gb = lambda: (12.0, 30.0)
+eq("cmap mem_gb_each: 12 available, floor 4.5, 3 GB each -> 2 at once", par._mem_capped(8, 3.0), 2)
+par.mem_gb = real_mem
 
 # ---- 3. minset ---------------------------------------------------------------------------------
 calls = []
@@ -137,6 +171,7 @@ if bad:
     print("\n".join(bad[:30]))
     print(f"FAIL: {len(bad)} wrong; first: {bad[0]}")
     sys.exit(1)
-print(f"PASS: grant shares the machine (free cores, never under an even share, dead claims dropped); cmap returns in "
+print(f"PASS: grant shares the machine (free cores, never under an even share, dead claims dropped); workers, grant "
+      f"and cmap never take more jobs than fit in memory with the floor free, HW_JOBS or not; cmap returns in "
       f"job order, N at a time, timeout 124, stop cancels; minset equals the serial deletion filter on 300 random "
       f"monotone oracles at 1, 3, 8 and 64 workers -- {waves} waves where the serial filter runs {tests} tests")

@@ -51,7 +51,20 @@ job is printed every `--every` seconds (default 30) on the way.
     exit 2    usage: no such job, a job of that name still running, ...
 
 `status` is the same report without waiting (running jobs are sampled for
-`--sample` seconds, default 1, to say whether they use CPU).  `cores` reads the
+`--sample` seconds, default 1, to say whether they use CPU).
+
+MEMORY IS THE OTHER LIMIT, AND THE ONE THAT KILLS.  Cores oversubscribed are a
+slow run; memory oversubscribed is the kernel killing processes -- on the first
+project it took the board session, the concept session and the editor with it
+(six router runs, each forking 4-12 workers, beside a 24-worker solve on a
+30 GB machine).  So: `run` refuses (exit 75, nothing started) while less than
+the floor is available -- 15 % of the machine, 3 GB at least, HW_MEM_FLOOR_GB
+to set it -- and names the running jobs and what each holds; every job runs
+at oom_score_adj 900, so when memory does run out the kernel takes a JOB, not
+the session that started it; `status` and `wait` print each running job's
+resident memory and the machine's line; an ended job records `peak_gb`, the
+most the whole job held (sampled every 3 s), and `cores` shows it per script
+with how many such runs the machine holds at once.  `cores` reads the
 ended jobs' records and prints, per script, runs, wall hours, core-hours, cores
 a run and runs at once, then how much of the machine was busy on average --
 the scripts that left it idle are named (`--since YYYY-MM-DD`, `--dir`).  `kill` sends
@@ -398,7 +411,10 @@ def report(t, tail):
             rc = job["exit"]
             sig = f", signal {job['signal']}" if job.get("signal") else ""
             head = (f"ended, exit {rc}{sig}, after {dur(job.get('ended', now) - started)}"
-                    f" ({dur(now - job.get('ended', now))} ago); {job.get('cpu_s', 0):.1f} s CPU")
+                    f" ({dur(now - job.get('ended', now))} ago); {job.get('cpu_s', 0):.1f} s CPU"
+                    + (f", peak {job['peak_gb']:.1f} GB" if job.get("peak_gb") is not None else "")
+                    + (" -- KILLED (signal 9): out of memory is the usual cause; fewer at once, or fewer workers"
+                       if job.get("signal") == 9 else ""))
         elif not t.pid:
             head = "never started (the wrapper did not register: read the log)"
         else:
@@ -417,6 +433,8 @@ def report(t, tail):
         iv = t.last_interval()
         if iv:
             head += ", " + idle_note(*iv)
+        if LINUX and t.pid:
+            head += f"; {rss_gb(session_pids(t.pid) or [t.pid]):.1f} GB resident"
     print(f"{t.label}: {head}")
     if job is not None:
         log = job.get("log")
@@ -445,6 +463,55 @@ def summary(results, waited=None):
 
 
 # ---------------------------------------------------------------------------
+# memory: the machine's, and a job's
+# ---------------------------------------------------------------------------
+OOM_ADJ = 900                 # a job is the kernel's first choice when memory runs out -- not the session
+
+
+def mem_gb():
+    """(available, total) in GB from /proc/meminfo; (None, None) where there is none."""
+    try:
+        with open("/proc/meminfo") as f:
+            kv = {ln.split(":")[0]: float(ln.split()[1]) for ln in f if ":" in ln}
+        return kv["MemAvailable"] / 1048576, kv["MemTotal"] / 1048576
+    except (OSError, KeyError, ValueError, IndexError):
+        return None, None
+
+
+def mem_floor_gb(total):
+    """Below this much available memory no new job starts: HW_MEM_FLOOR_GB, else 15 % of the machine, 3 GB at least."""
+    try:
+        return float(os.environ["HW_MEM_FLOOR_GB"])
+    except (KeyError, ValueError):
+        return max(3.0, 0.15 * total)
+
+
+def rss_gb(pids):
+    """Resident memory of these processes, GB (Linux)."""
+    kb = 0
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/status") as f:
+                for ln in f:
+                    if ln.startswith("VmRSS:"):
+                        kb += int(ln.split()[1])
+                        break
+        except (OSError, ValueError, IndexError):
+            pass
+    return kb / 1048576
+
+
+def mem_line():
+    avail, total = mem_gb()
+    if avail is None:
+        return None
+    floor = mem_floor_gb(total)
+    note = "" if avail >= 2 * floor else (" -- LOW: start nothing more until a job ends" if avail >= floor
+                                         else " -- UNDER THE FLOOR: `run` refuses; kill a job or wait")
+    return f"memory: {avail:.1f} GB available of {total:.1f} (floor {floor:.1f}){note}"
+
+
+# ---------------------------------------------------------------------------
 # commands
 # ---------------------------------------------------------------------------
 
@@ -460,6 +527,15 @@ def cmd_run(a):
     if old and old.job is not None and old.running():
         die(f"run: a job named {a.name} is still running (pid {old.pid}): wait on it, "
             f"`bgwait.py kill {a.name}`, or choose another name")
+    avail, total = mem_gb()
+    if avail is not None and avail < mem_floor_gb(total) and not os.environ.get("HW_BGWAIT_NOMEM"):
+        live = [t for t in (Target(name=p.stem, path=p) for p in sorted(d.glob("*.json"))) if t.job and t.running()]
+        held = ", ".join(f"{t.name} {rss_gb(session_pids(t.pid)):.1f} GB" for t in live) or "none of this session's"
+        print(f"bgwait: NOT STARTED -- {avail:.1f} GB of memory available, under the floor of {mem_floor_gb(total):.1f} GB "
+              f"(of {total:.1f}). A job started now can take the machine down with every session on it. Running: {held}. "
+              f"Wait for one to end (`bgwait.py wait`), or kill one; fewer at once, or a smaller HW_JOBS / --seeds "
+              f"(each forked worker is a copy of the board in memory).", file=sys.stderr)
+        return 75
     log = Path(a.log).resolve() if a.log else d / f"{a.name}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     save(jf, {"name": a.name, "cmd": a.cmd, "cwd": os.getcwd(), "log": str(log),
@@ -480,6 +556,9 @@ def cmd_run(a):
     me = me if not me.startswith("..") else str(Path(__file__).resolve())
     print(f"{a.name}: started, pid {job['pid']}, log {log}")
     print(f"wait:   python3 {me} wait {a.name} --timeout {TIMEOUT_DEFAULT:g}")
+    ml = mem_line()
+    if ml and "--" in ml:
+        print(ml)
     return 0
 
 
@@ -495,8 +574,27 @@ def cmd_exec(jobfile):
     job.update(pid=pid, start=start_token(pid), started=time.time())
     save(jobfile, job)
     env = dict(os.environ, PYTHONUNBUFFERED="1")
+
+    def first_to_go():                                   # in the child, before exec: every process of the job inherits it
+        try:
+            with open("/proc/self/oom_score_adj", "w") as f:
+                f.write(str(OOM_ADJ))
+        except OSError:
+            pass
+    peak, over = [0.0], [False]
+
+    def watch():                                         # the job's whole resident memory, sampled: its peak is recorded
+        import threading as _t
+        ev = _t.Event()
+
+        def loop():
+            while not ev.wait(3.0):
+                peak[0] = max(peak[0], rss_gb([q for q in session_pids(pid) if q != pid]))
+        th = _t.Thread(target=loop, daemon=True)
+        th.start()
+        return ev
     try:
-        child = subprocess.Popen(job["cmd"], cwd=job.get("cwd") or None, env=env)
+        child = subprocess.Popen(job["cmd"], cwd=job.get("cwd") or None, env=env, preexec_fn=first_to_go if LINUX else None)
     except OSError as e:
         print(f"bgwait: cannot start {job['cmd'][0]!r}: {e}", flush=True)
         rc = 127
@@ -511,10 +609,18 @@ def cmd_exec(jobfile):
                 pass
         for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(s, forward)
+        stop = watch() if LINUX else None
+        peak[0] = rss_gb([q for q in session_pids(pid) if q != pid]) if LINUX else 0.0
         rc = child.wait()
+        if stop:
+            stop.set()
     tm = os.times()
     job.update(exit=rc if rc >= 0 else 128 - rc, ended=time.time(),
                cpu_s=round(tm.children_user + tm.children_system, 2))
+    if LINUX:
+        import resource
+        # the sampled peak of the whole job, and never less than its largest single process (the kernel's own count)
+        job["peak_gb"] = round(max(peak[0], resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1048576), 2)
     if rc < 0:
         job["signal"] = -rc
     save(jobfile, job)
@@ -551,6 +657,8 @@ def cmd_wait(a):
         time.sleep(max(0.01, min(pause, timeout - (now - t0))))
         pause = min(1.0 if LINUX else 5.0, pause * 1.5)
     results = [report(t, a.tail) for t in targets]
+    if mem_line() and any(r for r, _rc in results):
+        print(mem_line())
     line, code = summary(results, time.monotonic() - t0)
     if timed_out:
         me = os.path.relpath(Path(__file__).resolve())
@@ -578,6 +686,8 @@ def cmd_status(a):
             if t.running():
                 t.sample()
     results = [report(t, a.tail) for t in targets]
+    if mem_line():
+        print(mem_line())
     print(summary(results)[0])
     return 0
 
@@ -641,7 +751,8 @@ def cmd_clean(_a):
 def cores_table(jobs, total=None, since=None):
     """Ended jobs -> (rows, overall): how much of the machine each script used.
 
-    rows: [script, runs, wall hours, core-hours, mean cores while it ran, mean runs of it at once, longest minutes];
+    rows: [script, runs, wall hours, core-hours, mean cores while it ran, mean runs of it at once, longest minutes,
+           the largest peak memory of one run in GB (0 where none was recorded)];
     overall: (hours with any job running, core-hours, mean cores busy, cores).  A script is the first *.py / *.sh of
     the command after an interpreter or a wrapper (tools/kpy tools/route/netgroup.py -> netgroup.py)."""
     import re
@@ -655,7 +766,7 @@ def cores_table(jobs, total=None, since=None):
         text = " ".join(map(str, cmd)) if isinstance(cmd, list) else str(cmd)
         names = [m for m in re.findall(r"([\w.-]+\.(?:py|sh))\b", text) if m not in ("kpy",)]
         key = names[0] if names else (os.path.basename(str(cmd[0])) if cmd else "?")
-        fam.setdefault(key, []).append((st, en, cpu))
+        fam.setdefault(key, []).append((st, en, cpu, j.get("peak_gb") or 0.0))
         spans.append((st, en, cpu))
 
     def union(iv):
@@ -669,8 +780,10 @@ def cores_table(jobs, total=None, since=None):
         return wall + ((cur[1] - cur[0]) if cur else 0.0)
     rows = []
     for key, v in fam.items():
-        busy, job_s, cpu = union([(a_, b_) for a_, b_, _ in v]), sum(b_ - a_ for a_, b_, _ in v), sum(c for *_, c in v)
-        rows.append([key, len(v), busy / 3600, cpu / 3600, cpu / job_s, job_s / busy, max(b_ - a_ for a_, b_, _ in v) / 60])
+        busy, job_s = union([(a_, b_) for a_, b_, *_ in v]), sum(b_ - a_ for a_, b_, *_ in v)
+        cpu = sum(x[2] for x in v)
+        rows.append([key, len(v), busy / 3600, cpu / 3600, cpu / job_s, job_s / busy,
+                     max(b_ - a_ for a_, b_, *_ in v) / 60, max(x[3] for x in v)])
     rows.sort(key=lambda r: -r[2])
     busy = union([(a_, b_) for a_, b_, _ in spans])
     cpu = sum(c for *_, c in spans)
@@ -691,12 +804,17 @@ def cmd_cores(a):
     if not rows:
         print(f"bgwait: no ended job with a CPU record in {', '.join(map(str, dirs))}")
         return 0
-    print(f"{'script':28} {'runs':>5} {'wall h':>7} {'core-h':>7} {'cores a run':>11} {'runs at once':>12} {'longest min':>11}")
-    for k, n, wall, ch, per, conc, longest in rows[:a.top]:
-        print(f"{k[:28]:28} {n:5d} {wall:7.2f} {ch:7.1f} {per:11.1f} {conc:12.1f} {longest:11.1f}")
+    print(f"{'script':28} {'runs':>5} {'wall h':>7} {'core-h':>7} {'cores a run':>11} {'runs at once':>12} {'longest min':>11} {'peak GB a run':>13}")
+    for k, n, wall, ch, per, conc, longest, pk in rows[:a.top]:
+        print(f"{k[:28]:28} {n:5d} {wall:7.2f} {ch:7.1f} {per:11.1f} {conc:12.1f} {longest:11.1f} {(f'{pk:.1f}' if pk else '-'):>13}")
+    avail, tot = mem_gb()
+    big = max((r[7] for r in rows), default=0.0)
+    if avail is not None and big:
+        print(f"memory: the largest run peaked at {big:.1f} GB; {tot:.1f} GB on this machine holds about "
+              f"{max(1, int((tot - mem_floor_gb(tot)) // big))} of those at once, whatever the core count")
     print(f"a job was running for {busy:.1f} h and used {cpu:.1f} core-hours: {mean:.1f} of {total} cores busy on average")
     idle = [r for r in rows if r[2] >= 0.25 and r[4] * r[5] < 0.5 * total]
-    for k, n, wall, ch, per, conc, longest in idle[:3]:
+    for k, n, wall, ch, per, conc, longest, _pk in idle[:3]:
         print(f"  {k}: {wall:.1f} h at {per * conc:.1f} cores -- "
               + ("one core a run and few at once: start the independent runs together (route/race.py, par.cmap)"
                  if per < 1.6 else "under half the machine: serial steps between its parallel ones (minset.py, par.cmap)"))
