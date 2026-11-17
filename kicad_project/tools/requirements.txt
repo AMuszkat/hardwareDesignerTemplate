@@ -5,3 +5,5 @@ easyeda2kicad      # fp.py get --lcsc: LCSC/EasyEDA symbol + footprint + 3D
 PyMuPDF            # route.py render / view.py / placement renders: PDF/SVG -> PNG
 Pillow             # render/render.py: composing the 3D renders, the gallery page images
 matplotlib         # copper/crops.py: crops of shape sites and via moves, copper windows
+scipy              # cpsat_milp.py's scipy-style milp interface, route/escape models: LinearConstraint, Bounds, sparse
+ortools            # cpsat_milp.py: CP-SAT on every core (without it, HiGHS single-threaded)
