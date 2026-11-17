@@ -406,6 +406,15 @@ its docstring. What the spec has to be told:
   with the parts' fixed copper there (the pairs left drawn, the dog-bones at the
   edge at the field's clearance) -- and test a line where it SLANTS past a
   column via, not only where it crosses the column.
+- **The fab's widths moved (a new stack-up): re-width drawn copper as a plan.**
+  `tools/kpy tools/route/rewidth.py --board B --class SE_50 --from 0.178 --to 0.128` writes a
+  route plan that rips each matching segment and lays it again on the same points at the new
+  width, so `route.py check` / `apply` gate it like any group. Same points is right for a
+  single-ended line, and wrong for a coupled pair: its gap is the rule, so narrowing it in place
+  opens the gap by (from - to). The tool refuses a pair class. Move each coupled run toward its
+  partner by (old - new) / 2, keeping each segment's direction, and re-join the uncoupled tails.
+  Leave runs inside courtyards and entries at pad / via pitch as they are (board1, D111: 8 -> 10
+  layers; its `tmpWork/D111_pairs/recouple*.py`).
 - **A model and a geometric check in a loop: cut on a deletion filter.**
   When the check (a strip placement, a relay) refuses the model's answer, drop
   its objects one at a time and keep each drop that still fails: dropping an
