@@ -406,6 +406,11 @@ its docstring. What the spec has to be told:
   with the parts' fixed copper there (the pairs left drawn, the dog-bones at the
   edge at the field's clearance) -- and test a line where it SLANTS past a
   column via, not only where it crosses the column.
+- **netgroup's ROUTED is not a proof; `route.py check` is.** A script that chains router runs
+  (relays, legs) must check every plan it gets back before it reports "routed". board1's relay
+  script reported all six relays routed while one shorted a drawn pair tail. Also: netgroup can
+  miss another net's via by 2-4 um on its grid. Reserve other nets' vias 0.01-0.02 mm larger in the
+  spec, and the DRC misses go.
 - **The fab's widths moved (a new stack-up): re-width drawn copper as a plan.**
   `tools/kpy tools/route/rewidth.py --board B --class SE_50 --from 0.178 --to 0.128` writes a
   route plan that rips each matching segment and lays it again on the same points at the new
