@@ -164,6 +164,12 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    want reviewed alone — **STOP for review**: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
    — Scope: the milestone's groups (`--scope` takes a group id), their
    reports `routing/Rn_REPORT.md`; Gates: the `AUDIT` and `FINDINGS` lines.
+   **A request AS A PLAN** (rehearsed on a scratch copy, applied only after
+   the verdict) files that scratch board, every step applied, in the board
+   folder -- `tmpWork/<group>/r_final.kicad_pcb.scratch` -- and names the
+   path in the request: the reviewer measures the plan on it (`snapshot.py
+   --plan`). A scratch board left in a temporary folder cannot be reviewed,
+   and the request waits on it (board1's RV56).
    **Ring, then start the request's `Meanwhile:` group in the same turn** — a
    review is not a wait. A group started while one is under review
    names in §5 why it is independent. Where nothing is independent, plan the
