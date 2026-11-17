@@ -132,6 +132,12 @@ refuses a new or changed drawing without it.
 
 ## What it does
 
+`--plan PATH` (PCB only) also measures a PLAN: a board session's rehearsed
+scratch `.kicad_pcb` is dropped into a second copy of the frozen board,
+`plan/`, its geometry dumped (`plan/geometry.json`) and diffed against today's
+board (`plan/CHANGES.md`, `plan/changes.json`). Query it with `geom.py
+<snapshot>/plan ...`. The frozen board itself is never touched.
+
 1. **Freezes the board**: copies `kicad_project/<board>/` to
    `out/reviews/<board>/<id>-<kind>/snap/<board>/` (generated plans' previews,
    renders, backups and lock files left out), links `snap/tools` to

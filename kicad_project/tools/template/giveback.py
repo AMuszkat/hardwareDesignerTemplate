@@ -232,7 +232,28 @@ def cmd_finish(repo, a):
         git("reset", "--quiet", "--soft", "HEAD~1", cwd=wt)
         sys.exit(f"check-public refuses this commit; nothing pushed, the files stay staged in {wt}:\n"
                  + "\n".join(ln for ln in r.stdout.splitlines() if ln.startswith(("FAIL", "WARN")) or "FAIL" in ln))
-    git("push", "--quiet", REMOTE, f"HEAD:{BRANCH}", cwd=wt)
+    for attempt in range(3):
+        p = git("push", "--quiet", REMOTE, f"HEAD:{BRANCH}", cwd=wt, check=False)
+        if p.returncode == 0:
+            break
+        if attempt == 2 or not any(w in p.stderr for w in ("non-fast-forward", "fetch first", "rejected")):
+            sys.exit(f"git push failed:\n{p.stderr.strip()}")
+        # the template moved since `open` (another session gave something back): rebase HERE, under
+        # the template's identity -- never by hand. A plain `git rebase` in this worktree re-commits
+        # with the repository's user.email as committer, and once that was a private address that
+        # went public (2026-11-17; the template's history had to be rewritten)
+        git("fetch", "--quiet", REMOTE, BRANCH, cwd=wt)
+        rb = git("rebase", f"{REMOTE}/{BRANCH}", cwd=wt, env=env, check=False)
+        if rb.returncode:
+            git("rebase", "--abort", cwd=wt, check=False)
+            sys.exit(f"the template moved and this commit does not rebase cleanly onto it; nothing pushed, "
+                     f"the worktree {wt} is as it was:\n{rb.stdout.strip() or rb.stderr.strip()}")
+        r = subprocess.run([sys.executable, chk, "--rev", "HEAD"], cwd=wt, env=env, text=True, capture_output=True)
+        if r.returncode:
+            sys.exit("check-public refuses the rebased commit; nothing pushed:\n"
+                     + "\n".join(ln for ln in r.stdout.splitlines() if "FAIL" in ln))
+        sha = git("rev-parse", "--short", "HEAD", cwd=wt).stdout.strip()
+        print(f"the template moved: rebased onto {REMOTE}/{BRANCH} as {sha}, under the template's identity")
     print(f"template {sha} pushed to {REMOTE}/{BRANCH}: {len(files)} file(s)")
     git("worktree", "remove", "--force", wt, cwd=repo)
     fetch(repo)

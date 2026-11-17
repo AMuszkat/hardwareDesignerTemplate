@@ -40,7 +40,15 @@ A request about one group passes `--scope`: the routing group's id (`R3`,
 its applied manifest's copper), a `placement.json` group's name, or
 `refs:A,B`; the PCB views are then tiled only round it and the sheet tiles
 skipped. A fab release, fixes across the board, or a request with no
-group: no `--scope` (everything). Every snapshot writes `changed.md` against
+group: no `--scope` (everything). **A PLAN review** — a group the board
+rehearsed on a scratch copy and applies only after the verdict — adds
+`--plan <its scratch .kicad_pcb>` (a path in its board folder, as the
+request names it): `plan/` then holds that board's `geometry.json` and its
+`CHANGES.md` against TODAY's board, so the reviewer measures the plan with
+`geom.py <snapshot>/plan ...` instead of rebuilding it (board1's RV50, RV51
+and RV54 each built it by hand). Never apply the plan to the snapshot's own
+copy, and tell the reviewer never to run a board tool with `--board`: that
+targets the live board. Every snapshot writes `changed.md` against
 the board's previous snapshot of the same kind; a PCB snapshot also writes
 `CHANGES.md` / `changes.json` — the object-level diff against the last PCB
 snapshot **whose id has a verdict in `tools/handoff/reviews/boardN.md`** —

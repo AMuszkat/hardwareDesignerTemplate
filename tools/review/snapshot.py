@@ -539,6 +539,41 @@ def object_diff(run, out, board, scope):
     run.rows.append(("object-diff", "done", line, "CHANGES.md, changes.json"))
 
 
+def plan_copy(run, out, b, plan):
+    """--plan: the board AS PLANNED -- a board session's rehearsed scratch copy (a .kicad_pcb, any
+    name, usually under its tmpWork/) dropped into a copy of the frozen board, its geometry dumped,
+    and its object diff against TODAY's board written: plan/geometry.json, plan/CHANGES.md,
+    plan/changes.json.  A plan review (a placement or routing group rehearsed and not applied) is
+    measured there with geom.py; three plan reviews built this by hand (board1's RV50, RV51, RV54)."""
+    src = Path(plan)
+    if not src.is_absolute():
+        hits = [p for p in (b / plan, ROOT / plan, KP / plan) if p.is_file()]
+        src = hits[0] if hits else src
+    if not src.is_file():
+        run.rows.append(("plan", "ERROR", f"--plan {plan}: no such file (looked in the frozen board, the repo, kicad_project)", ""))
+        return
+    pdir = out / "plan"
+    shutil.copytree(b, pdir / b.name, ignore=ignore, symlinks=True)
+    os.symlink(TOOLS, pdir / "tools")
+    pcbs = sorted((pdir / b.name).glob("*.kicad_pcb"))
+    shutil.copy2(src, pcbs[0])
+    run.gate("plan-geometry", [KPY, Path(__file__).resolve().parent / "dump.py", pdir / b.name, pdir / "geometry.json"])
+    run.wait()
+    if not (pdir / "geometry.json").exists() or not (out / "geometry.json").exists():
+        run.rows.append(("plan-diff", "ERROR", "no geometry.json for the board or the plan (gates/plan-geometry.txt)", ""))
+        return
+    r = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "changes.py"),
+                        str(out / "geometry.json"), str(pdir / "geometry.json")], capture_output=True, text=True)
+    (pdir / "CHANGES.md").write_text(r.stdout)
+    rj = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "changes.py"), "--json",
+                         str(out / "geometry.json"), str(pdir / "geometry.json")], capture_output=True, text=True)
+    (pdir / "changes.json").write_text(rj.stdout)
+    head = next((ln.strip("* ") for ln in r.stdout.splitlines() if ln.startswith("**")), "see plan/CHANGES.md")
+    run.rows.append(("plan-diff", "done" if r.returncode == 0 else "ERROR",
+                     f"the plan ({src.name}) against today's board: {head}"[:200],
+                     "plan/CHANGES.md, plan/geometry.json (geom.py <snapshot>/plan ...)"))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--board", required=True, help="boardN or the folder name")
@@ -547,6 +582,9 @@ def main():
     ap.add_argument("--out", help="default: out/reviews/<board>/<id>-<kind>/")
     ap.add_argument("--scope", help="pcb: a routing group (R3), a placement.json group, refs:A,B or "
                     "box:X0,Y0,X1,Y1 -- tiles only there; all / fab (default) tiles everything")
+    ap.add_argument("--plan", help="pcb: a PLAN review -- the board session's rehearsed scratch .kicad_pcb (path in "
+                    "its board folder, e.g. tmpWork/R4/final/r.kicad_pcb.scratch): plan/ holds that board's geometry "
+                    "and its object diff against today's")
     a = ap.parse_args()
     if not shutil.which("kicad-cli"):
         die("kicad-cli is not on PATH")
@@ -598,6 +636,8 @@ def main():
     reader(run, out, a.kind, scope)
     if a.kind == "pcb":
         object_diff(run, out, src.name, scope)
+        if a.plan:
+            plan_copy(run, out, b, a.plan)
     print(f"gates: {len(run.times)} in {wall:.1f} s on {run.n_jobs} worker(s) "
           f"({serial:.1f} s if run one at a time)", file=sys.stderr)
 
