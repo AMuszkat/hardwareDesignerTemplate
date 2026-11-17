@@ -13,7 +13,7 @@ the reference designators go.
     tools/kpy tools/place/place.py auto   --board board1 spec.json
     tools/kpy tools/place/place.py sync   --board board1
     tools/kpy tools/place/place.py labels --board board1 [--dry-run [--json]]
-    tools/kpy tools/place/place.py park   --board board1 [--refs H1,H2]  # KiCad closed
+    tools/kpy tools/place/place.py park   --board board1 [--refs H1,H2]  # KiCad closed; --refs are the parts LEFT in place -- every other unfixed part is parked
     tools/kpy tools/place/place.py drc    --board board1                  # DRC cached by content (drccache.py)
     tools/kpy tools/place/place.py render --board board1 --refs U2,C10 [--side B]   # the area, as a PNG
     tools/kpy tools/place/place.py silk   --board board1 [--dry-run]       # KiCad closed
