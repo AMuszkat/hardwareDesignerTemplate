@@ -76,6 +76,7 @@ prompt and how much of their intervals the stall took.
 | class | what it is |
 |---|---|
 | permission-prompt stall | a call the harness asked the user about: the result record carries a user's decision, or a PreToolUse hook answered `ask`. The WHOLE interval is the stall — the record does not say when the prompt was answered, and the command's own run time, usually seconds, is inside it |
+| stopped on a limit or an API error | idle after the harness's own error record ended the turn (the plan's usage limit, a network or API error), until something started the session again; named by the error's code, each stop listed under the first table. Not a wait on the user: who ended it did not cause it |
 | waiting on a background job | the session idle while a job it launched (a `run_in_background` command, a subagent) still ran, or idle until that job's notification |
 | waiting on the other session | idle until a message from another session (named by the kind of line: `verdict`, `answer`, `question`, `request`, `handoff-rev`, `other`) or an idle notice |
 | waiting on the user | idle until a typed prompt; `AskUserQuestion` and `ExitPlanMode` (a question is not a permission prompt) |

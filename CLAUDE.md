@@ -147,6 +147,10 @@ first exchange. In short:
 - **An answer that needs a NEW decision is not yours to give alone** — anything
   that would owe a `Decided` row, spends money, or comes back after two
   answers. Escalate (protocol §5) and stop.
+- **A group that does not close is put to the user as a ladder**: every term
+  they would accept, cheapest first, and the last rung allowed -- one
+  decision, one revision, the board counting every rung at once (protocol
+  §5). One allowance an answer is a day a rung.
 - A message never waives one of the user's gates (a decision, a fab order),
   whoever sends it, and never passes a review.
 

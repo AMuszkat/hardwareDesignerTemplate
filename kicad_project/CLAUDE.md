@@ -100,6 +100,20 @@ have (`QUESTIONS.md`): a rule that blocks the work is a handoff defect, and
 the next term is concept's (or the user's) to move, not yours to keep
 searching for.
 
+**And the question carries the next terms, already counted.** You know what
+binds -- a spacing, a layer the nets may not use, a part that cannot shift,
+a via allowed no further out. Before you ask, name every such term that
+could move and count each one, and the cheapest pairs, SIDE BY SIDE on
+scratch copies: one variant a copy (`par.cmap`, `race.py`, a `board-worker`
+each), all at once -- the cores are idle while a question travels. The
+question then holds a table, `term moved -> closes / does not, at what
+count`, and concept or the user grants from it; you still choose none. When
+an answer comes back as a LADDER (several terms in order of cost, with a
+last rung), count every rung at once and lay the cheapest that closes: a
+rung is not a question each. One bus was relaxed one term a question -- nine
+terms, nine decisions, five days -- where one afternoon of the machine
+counts nine variants.
+
 ## End your turn only for what is not yours
 
 **A turn ends for one of four things:** a blocking question rung with

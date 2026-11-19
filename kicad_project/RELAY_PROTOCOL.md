@@ -159,6 +159,18 @@ Concept does **not** answer alone, and instead escalates, when:
   (each answer a new allowance, the count still short): the next term is
   the user's, with every count so far, even before the third answer.
 
+**A group that does not close is escalated as a ladder, not as a term.** A
+"does not close" question (the board's count, and its table of terms it has
+already counted) asks the user ONE decision: every term the user would
+accept, in order of cost, and the last rung they allow -- "as far as rung 4;
+lay the cheapest that closes". Concept publishes the whole ladder in one
+revision; the board counts every rung at once, on scratch, and lays the
+cheapest that closes; the `Decided` row records the ladder and, when the
+board reports, the rung used. Only a term outside the ladder comes back to
+the user. One term an answer, each "counted for at most two hours", is nine
+answers and nine decisions for one bus: the count is the machine's work and
+runs side by side, the decision is the user's and is asked once.
+
 Escalation is four steps, then **stop**: tell the board session
 `boardN Qn waits on the user`; send the user a `PushNotification` with the
 decision in one line; put the options and a recommendation in the terminal;
