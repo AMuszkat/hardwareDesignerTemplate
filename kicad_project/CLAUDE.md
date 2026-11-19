@@ -125,6 +125,34 @@ the board folder (`tmpWork/`, `routing/`), never only in `/tmp`, which a
 reboot clears. With that, the user may start a fresh session for a new
 routing group and lose nothing.
 
+## Workers: one bounded task each, and none of them waits
+
+What a session spends is the LENGTH of a run -- every call re-reads all that
+came before it -- not who runs it. Handing a whole routing group to one
+subagent moves the cost and does not lower it: one board's workers ran 76
+minutes and 155 tool calls each (median), reached 267,000 tokens a request,
+and cost twice what the session that spawned them did. So:
+
+- **A piece of work that is one count, one plan to a gate, one review's
+  fixes or one tool change goes to a `board-worker`** (`.claude/agents/board-worker.md`:
+  scratch only, compacts at 200,000 tokens, hands back 15 lines) -- not to a
+  `general-purpose` agent, which has neither limit. You stay the dispatcher:
+  the real board, `QUESTIONS.md`, `REVIEW.md`, `ROUTING_PLAN.md` and every
+  ring are yours.
+- **The brief is the task, its STOP condition, the scratch copy, the files to
+  read, and `<board>/tmpWork/<task>/` for the results.** A second task is a
+  second worker, not a message to the first: a worker that is sent on ("now
+  round 2", seven rounds on one bus) is a long session again.
+- **No worker waits on a job that runs for minutes.** It starts the job
+  (`bgwait.py run`), writes `tmpWork/<task>/STATE.md` (the job, what each
+  outcome means, the next command) and hands back; YOU wait
+  (`bgwait.py wait`, in the background) and give `STATE.md` to a fresh worker
+  when the job ends. A worker that sat on a 20-minute solve re-cached its
+  whole context each time it looked, and a reboot took the worker, its
+  scratch copy in `/tmp` and a 90-minute loop's cuts together.
+- **Independent tasks go out together** (two halves of a bus, a count and a
+  tool fix): one message, several workers.
+
 ## The one rule that is easy to get wrong
 
 A line marked **PLACEHOLDER** in `01_components.md` gets **no part at all** —
