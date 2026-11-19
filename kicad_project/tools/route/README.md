@@ -748,6 +748,13 @@ its docstring. What the spec has to be told:
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.
+- **A waypoint is a `"to_xy"` leg, never a `"to_path"` one**: the leg after a `to_path` leg starts
+  at the path's FIRST point (`leg_xy`), not where the route met the path, so its copper and the
+  waypoint's need not join. A net whose order the router keeps getting wrong (two nets crossed and
+  stuck on the same cells, iteration after iteration) takes a first leg `{"to_xy": [x, y],
+  "goal_layer": L}` at the order a model already proved (a strip's y at a column), then its goal:
+  board1's DMI1_B, via four columns out, crossed DATA8_B when free and routed CHECK PASS with the
+  waypoint (R1, 2026-11-19). Proof: `check` passes, and the plan's two legs meet at the waypoint.
 - **A through via (or a THT pin) is a goal on every layer: say so.** A leg
   with one `"goal_layer"` that arrives on another lays its own via a cell short
   of the prelaid one to change layer -- DRC `hole_to_hole` at 0.0-0.15 mm and a
