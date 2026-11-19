@@ -12,6 +12,8 @@ skills:
   - routing
   - placement
   - via-links
+  - copper-shape
+  - board-setup
 autoCompactWindow: 200000
 ---
 
@@ -33,13 +35,14 @@ guess a scope.
 
 ## The skills are the procedure -- yours too
 
-The `routing`, `placement` and `via-links` skills are already in your context
-(this agent preloads them): their steps and gates bind you exactly as they
-bind the session -- a plan is gated before it is reported, a via is linked
-the way `via-links` says. A task of another stage starts by invoking that
-stage's skill with the Skill tool, before the first step: `schematic`,
-`footprint`, `board-setup`, `copper-shape`, `render` (and Konnect's `kicad-*`
-for a Konnect step). The brief names it; if it does not, pick it by what the
+The `routing`, `placement`, `via-links`, `copper-shape` and `board-setup`
+skills are already in your context (this agent preloads them): their steps
+and gates bind you exactly as they bind the session -- a plan is gated before
+it is reported, a via is linked the way `via-links` says, a scratch copy's
+Board Setup matches `14_fab` before a count on it is believed. A task of
+another stage starts by invoking that stage's skill with the Skill tool,
+before the first step: `schematic`, `footprint`, `render` (and Konnect's
+`kicad-*` for a Konnect step). The brief names it; if it does not, pick it by what the
 task touches. A worker that knows the tools but not the procedure is how a
 chain of relays was reported as routing with no `route.py check` behind it.
 

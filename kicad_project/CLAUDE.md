@@ -157,9 +157,9 @@ and cost twice what the session that spawned them did. So:
   can invoke every skill but starts with none in mind: of one board's 13
   workers none invoked a skill and 11 never opened one, and their routing
   skipped gates the `routing` skill requires. `board-worker` preloads
-  `routing`, `placement` and `via-links`; for any other stage the brief names
-  the skill to invoke first (`schematic`, `footprint`, `board-setup`,
-  `copper-shape`, `render`).
+  `routing`, `placement`, `via-links`, `copper-shape` and `board-setup`; for
+  any other stage the brief names the skill to invoke first (`schematic`,
+  `footprint`, `render`).
 - **The brief is the task, its STOP condition, the scratch copy, the files to
   read, and `<board>/tmpWork/<task>/` for the results.** A second task is a
   second worker, not a message to the first: a worker that is sent on ("now
