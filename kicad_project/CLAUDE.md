@@ -114,7 +114,9 @@ that runs for minutes never ends the turn either: wait on it in the
 background (`tools/bgwait.py`, below) and do what does not depend on it.
 
 **The record lives in files, so a fresh session can take over.** A long
-session pays for its whole context on every call, and it compacts.
+session pays for its whole context on every call, and it compacts -- at
+200,000 tokens here (`autoCompactWindow`, `.claude/settings.json`), so what is
+only in the conversation is gone within hours.
 `ROUTING_PLAN.md` is the record: one dated paragraph a step, wrapped at
 about 100 columns (one entry of 36,000 characters on one line came back
 whole from every grep), the result named by its file in the board folder.

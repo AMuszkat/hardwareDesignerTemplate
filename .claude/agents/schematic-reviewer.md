@@ -8,6 +8,7 @@ description: >
   `boardN RVn ready — schematic` ring, or when the user asks for a review);
   never edits a board.
 tools: Read, Grep, Glob, Bash, Write
+autoCompactWindow: 200000
 ---
 
 # Schematic reviewer
