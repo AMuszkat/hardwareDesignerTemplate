@@ -3,10 +3,12 @@
 **Concept's.** `sessions.py` reads a project's Claude Code transcripts and
 writes `out/sessions/report.md` (and `report.json`, the same content as
 data): per session, how its wall-clock divides between permission prompts,
-waiting on a background job, waiting on the other session, waiting on the
-user, foreground tools and the model; the same per stage of the work; tool
-time by command; review turnaround; what the reviewer agents cost; question
-chains. It is the measurement behind a speedup — run it before a change and
+stops (a turn the plan's usage limit or an API error ended, until something
+started the session again), waiting on a background job, waiting on the other
+session, waiting on the user, foreground tools and the model; the same per
+stage of the work; tool time by command; review turnaround; what the reviewer
+and worker agents cost; question chains; and what each request carried in
+(the context: requests x context is what a session spends). It is the measurement behind a speedup — run it before a change and
 after it, on the same kind of work.
 
     .venv/bin/python tools/measure/sessions.py                         # this project, every session
@@ -61,7 +63,7 @@ the sessions `board1`, `concept`) and its working directory.
 sum.** The session's span is cut at every record's timestamp; each piece
 takes the highest class that covers it:
 
-    prompt stall > background wait > peer wait > human wait > tool > model
+    prompt stall > stopped > background wait > peer wait > human wait > tool > model
 
 so the classes sum to the span exactly and nothing is counted twice. The
 case that made it necessary: the model sends an Edit and a Bash call in one
