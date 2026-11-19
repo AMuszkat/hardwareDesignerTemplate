@@ -748,6 +748,13 @@ its docstring. What the spec has to be told:
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.
+- **A scratch copy lives OUTSIDE `kicad_project/`, never in `<board>/tmpWork/`.** `boardsel`
+  resolves any path inside a board's folder to the board's folder itself, so `route.py apply
+  --board <board>/tmpWork/x/cp/<board>` checks against and WRITES the real board (board1 R1,
+  2026-11-20: seven relay plans failed "stacked" against the real board's copper and the eighth
+  was applied to it; ripped by its manifest, the board back to its backup byte for byte).
+  `place.board_dir_arg` now refuses such a path. Build copies in the session's scratchpad and file
+  only their results (plans, logs, the rehearsed `r_final.kicad_pcb.scratch`) in `tmpWork/`.
 - **A waypoint is a `"to_xy"` leg, never a `"to_path"` one**: the leg after a `to_path` leg starts
   at the path's FIRST point (`leg_xy`), not where the route met the path, so its copper and the
   waypoint's need not join. A net whose order the router keeps getting wrong (two nets crossed and

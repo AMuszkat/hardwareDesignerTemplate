@@ -460,8 +460,23 @@ class Board:
 
 def board_dir_arg(s):
     """boardN, the folder name or a path; None = the folder you are in, else
-    this session's board (tools/boardsel.py)."""
-    return boardsel.resolve(s)
+    this session's board (tools/boardsel.py).
+
+    boardsel resolves any path INSIDE a board's folder to that board's folder: a
+    scratch copy kept under <board>/tmpWork/ is, to every pcbnew tool, the real
+    board -- `route.py apply --board <board>/tmpWork/x/cp/<board>` wrote the real
+    board (board1 R1 g3, 2026-11-20; ripped by its manifest).  A path that holds a
+    board of its own and resolves to another folder is refused here."""
+    path = boardsel.resolve(s)
+    if s not in (None, "") and str(s).rstrip("/") not in boardsel.boards():
+        given = Path(s).expanduser()
+        given = (given if given.is_absolute() else Path.cwd() / given).resolve()
+        if given.is_dir() and given != path.resolve() and any(given.glob("*.kicad_pcb")):
+            die(f"--board {s} holds a board of its own but lies inside {path.name}/, which every tool "
+                f"resolves it to: this would read and WRITE {path.name}/'s real board.  Keep a scratch "
+                f"copy outside kicad_project/ (the session's scratchpad) and file only its results in "
+                f"{path.name}/tmpWork/.")
+    return path
 
 
 # ---------------------------------------------------------------------------
