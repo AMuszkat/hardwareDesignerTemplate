@@ -212,6 +212,20 @@ history is rewritten (same trees, new ids: a privacy re-commit), a plain
 `git merge` takes a days-old base and conflicts everywhere; `giveback.py
 merge` merges on the rewritten twin of the commit the project last merged.
 
+**A merge changes files; a running session changes when it is restarted.**
+What takes effect when:
+
+| what the merge brought | in effect |
+|---|---|
+| a tool (`tools/`, `kicad_project/tools/`) | at once: the next run |
+| a contract (`CLAUDE.md`), a skill, an agent (`.claude/agents/`), `settings.json` (hooks, `autoCompactWindow`, `env`) | at the session's next start: restart each session with its launcher (`bin/concept --resume`, `bin/board boardN --resume`), at a point where no background job of its own is running. `/autocompact 200k` sets the compaction window in a session without a restart |
+| the per-machine wall (`render_settings.py` itself changed) | `./setup.sh render-settings`, then restart |
+| a way of working a board's own `build/` script should now use | not by itself: at its next start each session is told, by the session-start hook, what the merges of the last 7 days brought (`[template] ...`, for a board session the changes under `kicad_project/`), and to switch a script that does by hand what a tool now does |
+
+So after a merge that matters: merge at a quiet point, restart both sessions
+through the launchers, and stay until each has run its first shell command
+(§5).
+
 The reverse direction is the rule, not a courtesy: **an improvement to a
 template-owned file (a board tool, a skill, a contract, `publish.py`) found
 in a project is committed to the template remote and pushed, then merged into
