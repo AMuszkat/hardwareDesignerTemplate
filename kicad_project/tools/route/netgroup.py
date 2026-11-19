@@ -1030,6 +1030,12 @@ def main():
             else:
                 s, lay, hd = leg_xy(legs[li - 1]), leg_layer(legs[li - 1]), 0
                 s = G.xy(G.cell(*s))
+                if "to_xy" in legs[li - 1] and isinstance(lay, str):
+                    # a waypoint is a joint, not a pad: the leg after it leaves with the heading the leg before
+                    # arrived with, so the turn rule holds across it (board1 R1 g1: a 90-degree joint at a to_xy)
+                    for L_, a_, b_, _w in fixed[n]["tracks"]:
+                        if L_ == lay and math.dist(b_, s) < 0.02 and math.dist(a_, s) > 0.02:
+                            hd = heading(a_, b_)
             bias = array("f", bytes(4 * G.nx * G.ny))
             for c in own.get(n, ()):
                 bias[c] = 3.0

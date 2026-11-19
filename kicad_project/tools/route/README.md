@@ -755,6 +755,17 @@ its docstring. What the spec has to be told:
   "goal_layer": L}` at the order a model already proved (a strip's y at a column), then its goal:
   board1's DMI1_B, via four columns out, crossed DATA8_B when free and routed CHECK PASS with the
   waypoint (R1, 2026-11-19). Proof: `check` passes, and the plan's two legs meet at the waypoint.
+- **A waypoint is a joint: the angle rule holds across it.** The leg after a `to_xy` starts with
+  the heading the leg before arrived with (netgroup does this), so the turn there is 45 degrees at
+  most -- before, it started with none and left 90- and 135-degree joints at the waypoint. Give the
+  waypoint leg `"goal_dirs"` toward the next goal (a goal to the east: `[8, 1, 2]`), or the router
+  may reach it from behind and turn back. Two traps remain, both for the plan's post-pass, since
+  netgroup writes each leg as its own track: a one-cell 45-degree step on each side of the waypoint
+  is a right angle whose diagonal is under one track width (`check`: "the diagonal of a right-angle
+  turn"; widen it by sliding its ends back along the runs either side, B - u*s and C + z*s,
+  s = (w - d) / sqrt 2), and a waypoint the router can reach only from behind comes back as a
+  loop with copper stacked on copper -- the order the waypoint states does not route on that layer,
+  a model's cut, not a joint to repair (board1 R1 g1-g3, 2026-11-20).
 - **A through via (or a THT pin) is a goal on every layer: say so.** A leg
   with one `"goal_layer"` that arrives on another lays its own via a cell short
   of the prelaid one to change layer -- DRC `hole_to_hole` at 0.0-0.15 mm and a
