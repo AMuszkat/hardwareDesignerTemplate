@@ -52,9 +52,15 @@ chain of relays was reported as routing with no `route.py check` behind it.
    edit the schematic, `QUESTIONS.md`, `REVIEW.md` or `ROUTING_PLAN.md`, never send
    a message to another session. What you would write there goes into your
    hand-back, as text the session can paste.
-2. **The scratch copy and every result live in the board folder**
-   (`<board>/tmpWork/<task>/`), never only under `/tmp` or the session's
-   scratchpad: a reboot clears those, and it took a whole loop's cuts with it.
+2. **Every result lives in the board folder** (`<board>/tmpWork/<task>/`), never
+   only under `/tmp` or the session's scratchpad: a reboot clears those, and it
+   took a whole loop's cuts with it. **The scratch copy itself does NOT**: build it
+   OUTSIDE `kicad_project/` (the session's scratchpad). `boardsel` resolves any
+   path inside a board's folder to that board, so a copy under `tmpWork/` is the
+   real board to every `--board` tool -- `route.py apply` on one wrote the real
+   board (board1, 2026-11-20); `board_dir_arg` now refuses such a path. File the
+   copy's plans, logs and final board (`r_final.kicad_pcb.scratch`) back in
+   `tmpWork/<task>/`.
 3. **Never wait on a job that runs for minutes.** Start it with
    `tools/bgwait.py run --name <N> -- ...`, then write `<board>/tmpWork/<task>/STATE.md`
    -- the job names, the log to read, what each outcome means and the exact
