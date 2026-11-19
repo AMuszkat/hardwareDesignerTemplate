@@ -45,6 +45,18 @@ escalate first. The publisher refuses a third answer on a topic that has no
 the same problem is the same topic, whatever the question calls it (seven
 answers in five hours on one escape were each a new allowance).
 
+**"It does not close" is answered with a ladder, never with one term.** When
+the question is a count that falls short (a bus, an escape, a corner), put
+to the user every term they might accept, cheapest first, each with what it
+costs (a study where a number decides it) and whether the board has already
+counted it -- and ask for the last rung allowed, once. Publish the whole
+ladder in one revision (`10_layout`: the terms in order, "lay the cheapest
+that closes; count every rung at once"), with one `Decided` row for it; the
+board's report of the rung used completes the row. A second answer on the
+same problem that adds one more allowance is the failure this prevents:
+nine terms on one bus went out one at a time, each with its own two-hour
+count and its own decision, over five days.
+
 **A question about a route** (pair order, which side a bus leaves, a
 crossing, an escape) is never answered from pin order alone. Before an
 option goes into the handoff, have the `pcb-reviewer` measure it on the

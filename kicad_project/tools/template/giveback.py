@@ -55,7 +55,7 @@ DATA_KEEP = ("tools/diagrams/sheet.py", "tools/diagrams/check_diagrams.py",
 FILLED = ("CLAUDE.md", "README.md", "studies/README.md", "design/DIAGRAMS.md")
 MECHANISM_DIRS = ("kicad_project/tools/", "kicad_project/.claude/", ".claude/", "tools/handoff/",
                   "tools/parts/", "tools/setup/", "tools/review/", "bin/")
-NOT_MECHANISM = ("kicad_project/.claude/konnect", "kicad_project/.claude/agents/",
+NOT_MECHANISM = ("kicad_project/.claude/konnect", "kicad_project/.claude/agents/kicad-",
                  "kicad_project/.claude/skills/kicad-")   # Konnect's generated files
 
 

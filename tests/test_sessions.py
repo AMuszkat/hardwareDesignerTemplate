@@ -5,8 +5,8 @@ span, and nothing is counted twice.
 
     python3 tests/test_sessions.py
 
-The fixture (tests/fixtures/sessions/, 30 records and a 6-record subagent
-run, every word invented) is one board session, 09:00:00 to 10:37:30 UTC:
+The fixture (tests/fixtures/sessions/, 34 records and a 6-record subagent
+run, every word invented) is one board session, 09:00:00 to 10:57:55 UTC:
 
     09:00:20  place.py check                               40 s   tool
     09:01:10  ONE BATCH: an Edit that sits on a permission prompt until
@@ -22,10 +22,13 @@ run, every word invented) is one board session, 09:00:00 to 10:37:30 UTC:
     10:16:20  a script written with a heredoc and run in the same call
                                                            30 s   tool
     10:17:30  a prompt, answered 20 minutes later        1200 s   no record
+    10:37:40  a prompt; the turn ends at 10:37:45 on the plan's usage limit
+              (the harness's own error record); the user types again at
+              10:57:45                                   1200 s   stopped
 
 What must hold, and what each assertion is there to catch:
 
-  * the seven classes sum to the span TO THE SECOND -- also inside a
+  * the eight classes sum to the span TO THE SECOND -- also inside a
     --since/--until window that cuts intervals in two;
   * the `grep` beside the stalled Edit owns no time: summed, the batch would
     be 600 s of stall plus 599 s of "tool time" of a command that ran for a
@@ -33,6 +36,9 @@ What must hold, and what each assertion is there to catch:
   * the per-family tool times sum to the tool class (one owner per second);
   * the background job, its wait, the review request/verdict pair and the
     idle compaction folded into the peer wait are found;
+  * the 20 minutes after the usage-limit record are a STOP named by its
+    error code, not a wait on the user who ended it, and the error record is
+    not a request;
   * NOTHING of the transcript's text is in the report: every message, file
     path and command argument of the fixture carries the word ZEBRA, and the
     report must not.
@@ -49,8 +55,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = os.path.join(ROOT, "tools", "measure", "sessions.py")
 FIXTURE = os.path.join(ROOT, "tests", "fixtures", "sessions")
 
-EXPECT = {"prompt": 600, "background": 600, "peer": 1080, "human": 2130, "tool": 88, "model": 152, "gap": 1200}
-SPAN = 5850
+EXPECT = {"prompt": 600, "stopped": 1200, "background": 600, "peer": 1080, "human": 2140, "tool": 88, "model": 167,
+          "gap": 1200}
+SPAN = 7075
 
 fails = []
 checks = [0]
@@ -142,9 +149,18 @@ def main():
               and sub[0]["review"] == "RV3" and abs(sub[0]["minutes"] - 2.0) < 0.01 and sub[0]["tool_calls"] == 2
               and sub[0]["inline_scripts"] == 1 and sub[0]["output_tokens"] == 1200,
               f"subagent runs {sub}, expected one pcb-reviewer run of 2.0 min, 2 calls, 1 inline script")
-        check(s["turns"] == 12 and s["tokens"]["output"] == 1200,
-              f"{s['turns']} requests, {s['tokens']['output']} output tokens; expected 12 and 1200 "
-              "(a message written as two records is one request)")
+        check(s["turns"] == 13 and s["tokens"]["output"] == 1300,
+              f"{s['turns']} requests, {s['tokens']['output']} output tokens; expected 13 and 1300 "
+              "(a message written as two records is one request; the harness's error record is none)")
+
+        # the stop: named by its error, 1200 s, and in the report's table
+        check(len(s["stops"]) == 1 and s["stops"][0]["cause"] == "usage_limit_reached"
+              and abs(s["stops"][0]["hours"] * 60 - 20) < 0.1, f"stops {s['stops']}, expected one usage_limit_reached of 1200 s")
+        w = waits.get(("stopped", "usage_limit_reached"), {})
+        check(w.get("n") == 1 and round(w.get("seconds", 0)) == 1200, f"the stop among the waits: {w}")
+        check("`usage_limit_reached`" in md, "report.md does not list the stop")
+        check(round(s["context"]["mean_tokens"]) == 1060 and s["context"]["max_tokens"] == 1060,
+              f"context a request {s['context']}, expected 1060 tokens (10 input + 1000 read + 50 written)")
 
         # nothing of the transcript's text in the report
         for name, text in (("report.md", md), ("report.json", json.dumps(R)), ("stdout", stdout)):
@@ -189,8 +205,8 @@ def main():
             print("  " + f)
         print(f"FAIL: {len(fails)} of {checks[0]} checks: {fails[0]}")
         return 1
-    print(f"PASS: {checks[0]} checks; span {SPAN} s = prompt 600 + background 600 + peer 1080 + human 2130 "
-          f"+ tool 88 + model 152 + no record 1200; the Bash call beside the stalled Edit owns 0 s of its 599; "
+    print(f"PASS: {checks[0]} checks; span {SPAN} s = prompt 600 + background 600 + peer 1080 + human 2140 "
+          f"+ tool 88 + model 167 + stopped 1200 + no record 1200; the Bash call beside the stalled Edit owns 0 s of its 599; "
           f"review RV3 paired after 18.1 min")
     return 0
 

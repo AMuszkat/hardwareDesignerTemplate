@@ -27,7 +27,7 @@ THE RULE THAT MAKES THE NUMBERS ADD UP.  Wall-clock is classified by the
 UNION of the intervals, never by their sum.  A span is cut at every record's
 timestamp; each piece takes the highest class that covers it:
 
-    prompt stall > background wait > peer wait > human wait > tool > model
+    prompt stall > stopped > background wait > peer wait > human wait > tool > model
 
 so the classes sum to the span exactly, and a call cannot be counted twice.
 The case that made this necessary: the model sends an Edit and a Bash call in
@@ -38,6 +38,13 @@ hours are one prompt stall, and the Bash call owns only the pieces no stalled
 call covers (usually none).  Two tool calls that overlap share the time the
 same way: each piece has one owner, so the per-family tool times also add up
 to the tool class.
+
+What is "stopped": an idle period that began with the harness's own error
+record instead of the model's answer -- the plan's usage limit, an API or
+network error that ended the turn.  Whoever ends it (the user typing
+"continue" the next morning) did not cause it, so it is not a wait on the
+user: it is named by the error's own code (`usage_limit_reached`,
+`connection_failed`), and the report lists each stop.
 
 What is model time: every piece no interval covers (the model generating, a
 mid-turn compaction).  One such piece longer than --gap-min (15) minutes is
@@ -68,11 +75,12 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 
 # The classes, highest priority first.  "gap" is not painted by any interval:
 # it is an uncovered piece too long to be the model (see the docstring).
-PRIORITY = ["prompt", "background", "peer", "human", "tool", "model"]
+PRIORITY = ["prompt", "stopped", "background", "peer", "human", "tool", "model"]
 CLASSES = PRIORITY + ["gap"]
 RANK = {c: len(PRIORITY) - i for i, c in enumerate(PRIORITY)}
 LABEL = {
     "prompt": "permission-prompt stall",
+    "stopped": "stopped on a limit or an API error",
     "background": "waiting on a background job",
     "peer": "waiting on the other session",
     "human": "waiting on the user",
@@ -555,6 +563,8 @@ def parse(path, subs=None):
       jobs         background launches by job id: t0, family, detail, call
       compactions  t, trigger, seconds, pre_tokens, idle
       turns        model requests (distinct message ids); tokens summed per kind
+      context      what a request carried in (input + cache read + cache write
+                   tokens): mean, max -- a session pays for it on every request
 
     A wait exists only where the session was IDLE: the record before it is the
     assistant's (its turn over, no call pending) or another idle-time record.
@@ -562,7 +572,7 @@ def parse(path, subs=None):
     the middle of a turn (a compaction, a hook's note) is model time.
     """
     subs = subs or Subcommands(None)
-    S = dict(file=path, id=os.path.basename(path)[:-6], stamps=[], calls=[], unfinished=[],
+    S = dict(file=path, id=os.path.basename(path)[:-6], stamps=[], calls=[], unfinished=[], context={},
              waits=[], relay=[], jobs={}, compactions=[], turns=0, cwd=None, name=None,
              cost_usd=None, tokens=dict(output=0, input=0, cache_read=0, cache_creation=0),
              versions=set(), skipped_lines=0)
@@ -571,6 +581,7 @@ def parse(path, subs=None):
     usage = {}           # message id -> the largest usage seen (a message is several records)
     seen = set()
     neutral = []         # waits ended by a compaction or a local record, cause not known yet
+    stopped = None       # the error code of the harness's record that ended the last turn, if one did
     idle = False
     prev = None
     try:
@@ -622,12 +633,16 @@ def parse(path, subs=None):
                 for w in neutral:
                     w["cause"] = "human"
                 neutral = []
+            # the harness writes an API error as an assistant record of its own: no request was served,
+            # and the idle time after it is a stop, whoever ends it
+            stopped = (safe(d.get("apiError") or d.get("error"), "") or "api_error") if d.get("isApiErrorMessage") else None
             u = msg.get("usage") or {}
             mid = msg.get("id") or d.get("uuid")
-            old = usage.get(mid, {})
-            usage[mid] = {k: max(old.get(k, 0), u.get(k) or 0) for k in
-                          ("output_tokens", "input_tokens", "cache_read_input_tokens",
-                           "cache_creation_input_tokens")}
+            if stopped is None:
+                old = usage.get(mid, {})
+                usage[mid] = {k: max(old.get(k, 0), u.get(k) or 0) for k in
+                              ("output_tokens", "input_tokens", "cache_read_input_tokens",
+                               "cache_creation_input_tokens")}
             for b in content if isinstance(content, list) else []:
                 if not isinstance(b, dict) or b.get("type") != "tool_use":
                     continue
@@ -675,7 +690,8 @@ def parse(path, subs=None):
                 what = ended_by(d, text)
                 w = None
                 if idle and prev is not None and now > prev:
-                    w = dict(t0=prev, t1=now, ended_by=what, cause=CAUSE.get(what), job=None, event=None)
+                    w = dict(t0=prev, t1=now, ended_by=what, cause=CAUSE.get(what), job=None, event=None,
+                             stopped=stopped)
                     S["waits"].append(w)
                 if what in ("peer", "idle-notice"):
                     ev = relay_event(o.get("body") if isinstance(o.get("body"), str) else text) \
@@ -720,6 +736,9 @@ def parse(path, subs=None):
         S["tokens"]["input"] += u["input_tokens"]
         S["tokens"]["cache_read"] += u["cache_read_input_tokens"]
         S["tokens"]["cache_creation"] += u["cache_creation_input_tokens"]
+    ctx = [u["input_tokens"] + u["cache_read_input_tokens"] + u["cache_creation_input_tokens"] for u in usage.values()]
+    ctx = [c for c in ctx if c]
+    S["context"] = dict(mean=sum(ctx) / len(ctx) if ctx else 0.0, max=max(ctx or [0]))
     S["versions"] = sorted(S["versions"])
     return S
 
@@ -779,7 +798,7 @@ def classify(S, lo=None, hi=None, gap_min=GAP_MIN):
         c["own_s"] = c["beside_s"] = 0.0
         paint(c["t0"], c["t1"], call_class(c), c, 0 if c["name"] in INSTANT else 1)
     for w in S["waits"]:
-        paint(w["t0"], w["t1"], w["cause"], w, 0)
+        paint(w["t0"], w["t1"], "stopped" if w.get("stopped") else w["cause"], w, 0)
 
     running = [None] * n
     for jid, j in sorted(S["jobs"].items(), key=lambda kv: -kv[1]["t0"]):
@@ -986,12 +1005,15 @@ def summarise(S, T, role):
         if j.get("t1") is not None:
             row["ended"] += 1
             row["runs"].append(j["t1"] - j["t0"])
-    waits, counted = {}, set()
+    waits, counted, stops = {}, set(), {}
     for x, o in enumerate(T["owner"]):
         if o is None or "family" in o:
             continue
         c, dt = T["cls"][x], T["cuts"][x + 1] - T["cuts"][x]
-        row = waits.setdefault((c, o.get("event") or o["ended_by"]), dict(n=0, s=0.0))
+        row = waits.setdefault((c, o["stopped"] if c == "stopped" else o.get("event") or o["ended_by"]),
+                               dict(n=0, s=0.0))
+        if c == "stopped":
+            stops.setdefault(id(o), dict(t=T["cuts"][x], s=0.0, cause=o["stopped"]))["s"] += dt
         row["s"] += dt
         if (c, id(o)) not in counted and not o.get("folded"):
             counted.add((c, id(o)))
@@ -1033,6 +1055,9 @@ def summarise(S, T, role):
                                 for k, v in jobs.items()), key=lambda r: (-r["wait_s"], -r["run_s"], r["family"])),
         waits=sorted(({"cause": k[0], "ended_by": k[1], "n": v["n"], "seconds": v["s"]} for k, v in waits.items()),
                      key=lambda r: -r["seconds"]),
+        stops=[dict(t=iso(v["t"]), hours=v["s"] / 3600.0, cause=v["cause"])
+               for v in sorted(stops.values(), key=lambda v: v["t"])],
+        context=dict(mean_tokens=S["context"].get("mean", 0.0), max_tokens=S["context"].get("max", 0)),
         relay=relay_tables(S, T, role),
         compactions=dict(n=len(comp), idle=sum(1 for c in comp if c["idle"]),
                          seconds=sum(c["seconds"] for c in comp),
@@ -1073,6 +1098,7 @@ def subagent_row(path, subs, lo, hi):
                 minutes=work / 60.0, model_min=sec["model"] / 60.0, tool_min=sec["tool"] / 60.0,
                 prompt_min=sec["prompt"] / 60.0, gap_min=sec["gap"] / 60.0,
                 output_tokens=S["tokens"]["output"], tool_calls=len(S["calls"]),
+                requests=S["turns"], context_mean=S["context"].get("mean", 0.0),
                 inline_scripts=sum(1 for c in S["calls"] if c["inline"]),
                 call=meta.get("toolUseId") or "")
 
@@ -1145,6 +1171,7 @@ def agent_summary(runs):
                      h(60 * sum(r["model_min"] for r in v)), h(60 * sum(r["tool_min"] for r in v)),
                      h(60 * sum(r["prompt_min"] for r in v)),
                      f"{sum(r['output_tokens'] for r in v) / 1000.0:.0f}",
+                     f"{sum(r['context_mean'] * r['requests'] for r in v) / max(1, sum(r['requests'] for r in v)) / 1000.0:.0f}",
                      f"{median([r['tool_calls'] for r in v]):.0f}",
                      f"{median([r['inline_scripts'] for r in v]):.0f} ({max(r['inline_scripts'] for r in v)})"])
     return rows
@@ -1157,7 +1184,7 @@ def render(R):
          "Numbers and the names of tools and commands only; no message text.*", "",
          f"Window: {R['window']['since'] or 'the first record'} to {R['window']['until'] or 'the last record'} (UTC). "
          f"{len(R['sessions'])} session(s). Every second of a session is in exactly one class, by priority "
-         "prompt stall > background wait > peer wait > human wait > tool > model "
+         "prompt stall > stopped > background wait > peer wait > human wait > tool > model "
          f"(`tools/measure/README.md`); an uncovered piece over {R['gap_min']:g} min is \"no record\".", ""]
     if not R["sessions"]:
         return "\n".join(L + ["No session has a record in the window.", ""])
@@ -1170,11 +1197,17 @@ def render(R):
         x = s["seconds"]
         act = 100.0 * (x["model"] + x["tool"]) / s["span_s"] if s["span_s"] else 0.0
         rows.append([lab[s["id"]], s["start"][5:16].replace("T", " "), h(s["span_s"]),
-                     f"{h(x['prompt'])} ({s['stalls']['over_1min']} over 1 min)", h(x["peer"]),
+                     f"{h(x['prompt'])} ({s['stalls']['over_1min']} over 1 min)", h(x["stopped"]), h(x["peer"]),
                      h(x["background"]), h(x["model"]), f"{h(x['tool'])} ({s['calls']} calls)",
                      h(x["human"]), h(x["gap"]), f"{act:.0f} %"])
-    L += table(["session", "from", "span", LABEL["prompt"], LABEL["peer"], LABEL["background"], LABEL["model"],
-                LABEL["tool"], LABEL["human"], LABEL["gap"], "active"], rows)
+    L += table(["session", "from", "span", LABEL["prompt"], LABEL["stopped"], LABEL["peer"], LABEL["background"],
+                LABEL["model"], LABEL["tool"], LABEL["human"], LABEL["gap"], "active"], rows)
+    stops = [[lab[s["id"]], r["t"][5:16].replace("T", " "), f"`{r['cause']}`", h(3600 * r["hours"])]
+             for s in R["sessions"] for r in s["stops"] if r["hours"] * 60 >= 1]
+    if stops:
+        L += ["Stops: a turn that ended on the harness's own error record (the plan's usage limit, an API or "
+              "network error), and the idle time until something started the session again.", ""]
+        L += table(["session", "stopped (UTC)", "error", "hours"], stops, right={3})
 
     L += ["## 2. Per stage", "",
           "Hours. A call's stage comes from the path it runs or writes (`tools/place/` is placement, "
@@ -1267,7 +1300,8 @@ def render(R):
             continue
         L += [f"**{lab[s['id']]}** — {len(runs)} run(s)", ""]
         L += table(["agent type", "runs", "median min", "max min", "sum h", "model h", "tool h", "prompt stall h",
-                    "output k tokens", "median tool calls", "inline scripts, median (max)"], agent_summary(runs))
+                    "output k tokens", "context k tokens a request", "median tool calls",
+                    "inline scripts, median (max)"], agent_summary(runs))
         rv = [r for r in runs if "review" in r["type"]]
         if rv:
             L += table(["start (UTC)", "agent type", "board", "review", "min", "model min", "tool min", "stall min",
@@ -1310,13 +1344,17 @@ def render(R):
     for s in R["sessions"]:
         if s["waits"]:
             L += [f"**{lab[s['id']]}**", ""]
-            L += table(["class", "ended by", "waits", "hours"],
+            L += table(["class", "ended by (a stop: its error)", "waits", "hours"],
                        [[LABEL[r["cause"]], r["ended_by"], r["n"], h(r["seconds"])] for r in s["waits"]], right={2, 3})
 
-    L += ["## 10. Model usage", ""]
-    L += table(["session", "requests", "output M tokens", "cache read M", "cache write M", "compactions (idle)",
-                "compaction min", "cost USD", "subagent output M tokens"],
-               [[lab[s["id"]], s["turns"], f"{s['tokens']['output'] / 1e6:.2f}", f"{s['tokens']['cache_read'] / 1e6:.0f}",
+    L += ["## 10. Model usage", "",
+          "\"Context\" is what one request carried in (input, cache read and cache write tokens): every request "
+          "pays for all of it again, so requests x context is what a session spends -- the output is a few per "
+          "cent. It is bounded by `autoCompactWindow` (the sessions' `settings.json`, an agent's frontmatter).", ""]
+    L += table(["session", "requests", "context k tokens a request, mean (max)", "output M tokens", "cache read M",
+                "cache write M", "compactions (idle)", "compaction min", "cost USD", "subagent output M tokens"],
+               [[lab[s["id"]], s["turns"], f"{s['context']['mean_tokens'] / 1000.0:.0f} ({s['context']['max_tokens'] / 1000.0:.0f})",
+                 f"{s['tokens']['output'] / 1e6:.2f}", f"{s['tokens']['cache_read'] / 1e6:.0f}",
                  f"{s['tokens']['cache_creation'] / 1e6:.1f}", f"{s['compactions']['n']} ({s['compactions']['idle']})",
                  mins(s["compactions"]["seconds"]), "" if s["cost_usd"] is None else f"{s['cost_usd']:.0f}",
                  f"{sum(r['output_tokens'] for r in s['subagents']) / 1e6:.2f}"] for s in R["sessions"]])

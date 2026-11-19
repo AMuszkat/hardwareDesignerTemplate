@@ -9,6 +9,7 @@ description: >
   `answer-question` skills); never edits anything.
 tools: Read, Grep, Glob
 omitClaudeMd: true
+autoCompactWindow: 200000
 ---
 
 You are a board session's first reader. You have been given ONE folder: a

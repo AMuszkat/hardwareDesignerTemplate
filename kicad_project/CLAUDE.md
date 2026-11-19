@@ -100,6 +100,20 @@ have (`QUESTIONS.md`): a rule that blocks the work is a handoff defect, and
 the next term is concept's (or the user's) to move, not yours to keep
 searching for.
 
+**And the question carries the next terms, already counted.** You know what
+binds -- a spacing, a layer the nets may not use, a part that cannot shift,
+a via allowed no further out. Before you ask, name every such term that
+could move and count each one, and the cheapest pairs, SIDE BY SIDE on
+scratch copies: one variant a copy (`par.cmap`, `race.py`, a `board-worker`
+each), all at once -- the cores are idle while a question travels. The
+question then holds a table, `term moved -> closes / does not, at what
+count`, and concept or the user grants from it; you still choose none. When
+an answer comes back as a LADDER (several terms in order of cost, with a
+last rung), count every rung at once and lay the cheapest that closes: a
+rung is not a question each. One bus was relaxed one term a question -- nine
+terms, nine decisions, five days -- where one afternoon of the machine
+counts nine variants.
+
 ## End your turn only for what is not yours
 
 **A turn ends for one of four things:** a blocking question rung with
@@ -114,7 +128,9 @@ that runs for minutes never ends the turn either: wait on it in the
 background (`tools/bgwait.py`, below) and do what does not depend on it.
 
 **The record lives in files, so a fresh session can take over.** A long
-session pays for its whole context on every call, and it compacts.
+session pays for its whole context on every call, and it compacts -- at
+200,000 tokens here (`autoCompactWindow`, `.claude/settings.json`), so what is
+only in the conversation is gone within hours.
 `ROUTING_PLAN.md` is the record: one dated paragraph a step, wrapped at
 about 100 columns (one entry of 36,000 characters on one line came back
 whole from every grep), the result named by its file in the board folder.
@@ -122,6 +138,34 @@ Evidence a plan or a question cites — a solver's results, a log — is kept in
 the board folder (`tmpWork/`, `routing/`), never only in `/tmp`, which a
 reboot clears. With that, the user may start a fresh session for a new
 routing group and lose nothing.
+
+## Workers: one bounded task each, and none of them waits
+
+What a session spends is the LENGTH of a run -- every call re-reads all that
+came before it -- not who runs it. Handing a whole routing group to one
+subagent moves the cost and does not lower it: one board's workers ran 76
+minutes and 155 tool calls each (median), reached 267,000 tokens a request,
+and cost twice what the session that spawned them did. So:
+
+- **A piece of work that is one count, one plan to a gate, one review's
+  fixes or one tool change goes to a `board-worker`** (`.claude/agents/board-worker.md`:
+  scratch only, compacts at 200,000 tokens, hands back 15 lines) -- not to a
+  `general-purpose` agent, which has neither limit. You stay the dispatcher:
+  the real board, `QUESTIONS.md`, `REVIEW.md`, `ROUTING_PLAN.md` and every
+  ring are yours.
+- **The brief is the task, its STOP condition, the scratch copy, the files to
+  read, and `<board>/tmpWork/<task>/` for the results.** A second task is a
+  second worker, not a message to the first: a worker that is sent on ("now
+  round 2", seven rounds on one bus) is a long session again.
+- **No worker waits on a job that runs for minutes.** It starts the job
+  (`bgwait.py run`), writes `tmpWork/<task>/STATE.md` (the job, what each
+  outcome means, the next command) and hands back; YOU wait
+  (`bgwait.py wait`, in the background) and give `STATE.md` to a fresh worker
+  when the job ends. A worker that sat on a 20-minute solve re-cached its
+  whole context each time it looked, and a reboot took the worker, its
+  scratch copy in `/tmp` and a 90-minute loop's cuts together.
+- **Independent tasks go out together** (two halves of a bus, a count and a
+  tool fix): one message, several workers.
 
 ## The one rule that is easy to get wrong
 

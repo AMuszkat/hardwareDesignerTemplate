@@ -112,6 +112,30 @@ session that never was, in a project with more than one board, is **refused**
 every Edit and Write in a board folder and told the line to run. The wall
 never asks: a permission prompt on an unattended session is hours lost.
 
+**After every start or resume, stay until the first shell command has run.**
+In the `default` permission mode that command asks, and the answer holds for
+that session only, so each restart asks once more (the launchers print a line
+saying so). One project restarted both sessions in the evening, typed
+"continue" and left: both sat on that one prompt for eight hours.
+
+**Both sessions compact at 200,000 tokens** (`autoCompactWindow` in the two
+committed `settings.json`, and in each agent's frontmatter under
+`.claude/agents/`). Without it a session on a 1M-token model compacts near
+967,000, and every request re-reads everything before it: one board session
+averaged 462,000 tokens a request over 1,772 requests, nine tenths of what it
+spent, and reached the plan's weekly limit -- 38 hours stopped. The record a
+session needs after a compaction is in its files (`ROUTING_PLAN.md`,
+`QUESTIONS.md`, `REVIEW.md`, `history/`), by contract. Raise the number in
+`settings.json` if a session loses what it needs; `/autocompact 200k` sets it
+in a session that is already running. `tools/measure/sessions.py` reports each
+session's context per request, and every stop on a limit or an API error.
+
+**`CLAUDE_CODE_RETRY_WATCHDOG=1`** (the same files, `env`) makes a request
+that meets a capacity error, a time-out or a dropped connection keep retrying
+instead of ending the turn after ten attempts: an overnight session whose
+turn ended on one DNS failure stood still for eleven hours. Remove it if you
+would rather see such an error at once.
+
 ## 6. What is local to the project, and what lives on the machine
 
 | item | where | committed | made by |
@@ -187,6 +211,20 @@ template's mechanism, and run `./verify.sh` after. After the template's
 history is rewritten (same trees, new ids: a privacy re-commit), a plain
 `git merge` takes a days-old base and conflicts everywhere; `giveback.py
 merge` merges on the rewritten twin of the commit the project last merged.
+
+**A merge changes files; a running session changes when it is restarted.**
+What takes effect when:
+
+| what the merge brought | in effect |
+|---|---|
+| a tool (`tools/`, `kicad_project/tools/`) | at once: the next run |
+| a contract (`CLAUDE.md`), a skill, an agent (`.claude/agents/`), `settings.json` (hooks, `autoCompactWindow`, `env`) | at the session's next start: restart each session with its launcher (`bin/concept --resume`, `bin/board boardN --resume`), at a point where no background job of its own is running. `/autocompact 200k` sets the compaction window in a session without a restart |
+| the per-machine wall (`render_settings.py` itself changed) | `./setup.sh render-settings`, then restart |
+| a way of working a board's own `build/` script should now use | not by itself: at its next start each session is told, by the session-start hook, what the merges of the last 7 days brought (`[template] ...`, for a board session the changes under `kicad_project/`), and to switch a script that does by hand what a tool now does |
+
+So after a merge that matters: merge at a quiet point, restart both sessions
+through the launchers, and stay until each has run its first shell command
+(§5).
 
 The reverse direction is the rule, not a courtesy: **an improvement to a
 template-owned file (a board tool, a skill, a contract, `publish.py`) found

@@ -10,6 +10,7 @@ description: >
   review); never edits a board.
 tools: Read, Grep, Glob, Bash, Write
 effort: medium
+autoCompactWindow: 200000
 ---
 
 # PCB reviewer

@@ -15,5 +15,12 @@ if ! python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get
   echo "relay OFF: you carry every review ring, answer and question between the sessions by hand." \
        "bin/relay on lets them ring each other (kicad_project/RELAY_PROTOCOL.md)." >&2
 fi
+# In the `default` permission mode the first shell command of a session asks, and the answer is kept for
+# that session only -- so EVERY start and every --resume asks once more. Say so: a session restarted at
+# night and left sat on that prompt until morning (both sessions, 8 h each).
+if [ "$mode" = "default" ]; then
+  echo "permission mode 'default': this session's first shell command will ask you -- answer it before you leave" \
+       "(a restart asks again; an unattended prompt is the whole night)." >&2
+fi
 cd "$root"
 exec claude -n "$name" --permission-mode "$mode" --chrome "$@"

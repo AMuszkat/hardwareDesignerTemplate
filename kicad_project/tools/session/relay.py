@@ -169,6 +169,44 @@ def _board_of_session(event):
     return board, how
 
 
+NEWS_DAYS = 7            # template merges this recent are named at session start
+NEWS_MAX = 8
+
+
+def template_news(side, days=NEWS_DAYS, limit=NEWS_MAX):
+    """Lines for the brief: what the template merges of the last `days` days brought (the subjects of
+    the template's own commits; for a board session those that touch kicad_project/).  A tool, a
+    skill or a rule a session learned before the merge may have moved under it, and a resumed or
+    compacted session is not told by anything else -- one project's build script kept a serial filter
+    for days after the merge that brought the parallel one.  Silent when this is not a git repository,
+    when nothing was merged, or on any git failure: a hook must never stop a session."""
+    import subprocess
+
+    def git(*a):
+        r = subprocess.run(["git", "-C", str(KP), *a], capture_output=True, text=True, timeout=10)
+        return r.stdout if r.returncode == 0 else ""
+    try:
+        merges = git("log", "--first-parent", f"--since={days}.days", "--grep=^Merge template: ", "--format=%H").split()
+        if not merges:
+            return []
+        rng = f"{merges[-1]}^1..{merges[0]}^2"
+        out = git("log", "--no-merges", "--date=format:%m-%d", "--format=%ad%x02%s", rng,
+                  *(["--", str(KP)] if side == "board" else []))
+    except Exception:
+        return []
+    rows = [l.split("\x02", 1) for l in out.splitlines() if "\x02" in l]
+    if not rows:
+        return []
+    lines = [f"[template] {len(rows)} change(s) came in from the template in the last {days} days, newest first. "
+             "A tool, a skill or a rule you used before may have moved: read the file a line names before the "
+             "step it concerns, and if a script of yours does by hand what one of them now does, switch it."]
+    for d, s in rows[:limit]:
+        lines.append(f"[template]   {d}  {s if len(s) <= 240 else s[:237] + '...'}")
+    if len(rows) > limit:
+        lines.append(f"[template]   ... and {len(rows) - limit} older: git log --no-merges --format=%s {rng}")
+    return lines
+
+
 def brief(side):
     """Printed by the SessionStart hook; lands in the session's context."""
     event = _hook_event()
@@ -224,6 +262,7 @@ def brief(side):
                      + ("Report published revisions to the user."
                         if side == "concept" else
                         "Write questions in QUESTIONS.md and tell the user."))
+    lines += template_news(side)
     print("\n".join(lines))
 
 
