@@ -173,6 +173,10 @@ written: a one-off Konnect fix can take its arguments from them.
   fields, nets, and per sheet the symbols, wires, labels and frames that sit elsewhere, paper, rev); a text diff
   cannot (a draw re-orders every file). A backup folder read directly fails in `plan.Source.from_sch` (the root
   sheet is found by the folder's name): the script stages it under the board's name.
+  ⚠ Its per-sheet WIRE lines are noise: the preview writes a wire on one line and a kicad-cli resave on
+  several, so every wire reads as moved even on an identical drawing. Judge a redraw by its part, net, rail
+  and symbol lines; a control `plan --from-sch` of the unchanged source tells drift from cause (board1 RV58:
+  a shorter Value re-lays its block -- 78 parts on five sheets -- and the control moved 0).
 
 - ⚠ **A named net a ladder closes on its own carries its label.** A row
   wire with no label is a net KiCad names after a pin (`Net-(D1-A)`), and
@@ -237,6 +241,9 @@ given as data). Two uses:
   unconnected. It says how many pins it checked and how many parts are still
   only prose in the handoff. A difference is fixed in the drawing — or, when
   the handoff is what is wrong, is a question.
+  It also checks a PLAN before `draw`: `--board <scratch folder>` holding the
+  preview's sheets (outside `kicad_project/`) proves the handoff parity of what
+  `draw` would install (board1 RV58).
 - **`plan --handoff`**, a new board, once the handoff marks the netlist
   `complete`: the layout comes from it directly. What is the board's own —
   the sheets, and per refdes (a glob is fine) the symbol, footprint, units
