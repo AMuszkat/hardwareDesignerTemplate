@@ -53,6 +53,19 @@ job is printed every `--every` seconds (default 30) on the way.
 `status` is the same report without waiting (running jobs are sampled for
 `--sample` seconds, default 1, to say whether they use CPU).
 
+WHERE A JOB'S TIME WENT.  A job that is a loop of other programs (solve, check,
+route, again) reports one CPU total, and that hides the step that costs the
+hours: on the first project a loop iteration spent 75 of its 110 minutes in
+ONE script that re-solved the same model five times on one core of 24, and no
+wait on the job showed it.  The wrapper samples the job's processes every 3 s and
+`wait` / `status` print, per COMMAND the job ran (the script an interpreter
+was given, through `timeout`, `nice`, `tools/kpy`): its share of the job's
+wall-clock, how many processes ran it and how many cores it used while it ran
+(Linux; the record's `steps`: [command, runs, wall s, cpu s]).  A step at
+"1.0 core(s)" holding most of a job is the first thing to fix -- before more
+rounds are run.  So READ the report: `wait ... > /dev/null` throws it away
+(`--every 0` drops the progress lines and keeps it).
+
 MEMORY IS THE OTHER LIMIT, AND THE ONE THAT KILLS.  Cores oversubscribed are a
 slow run; memory oversubscribed is the kernel killing processes -- on the first
 project it took the board session, the concept session and the editor with it
@@ -275,6 +288,131 @@ def session_pids(pid):
 
 
 # ---------------------------------------------------------------------------
+# steps: which command of the job used its wall-clock
+# ---------------------------------------------------------------------------
+# A job is often a script that runs other programs in turn -- a loop of a solver, a checker and a
+# router.  Its CPU total says how hard the machine worked, not on what: one step that solves the
+# same model five times on one core is invisible in "73,907 s CPU".  The wrapper samples the job's
+# processes and keeps, per COMMAND (the script or program a process runs), the wall-clock during
+# which it was the one working, its CPU and how many processes ran it.
+STEP_EVERY = 3.0
+_WRAPPERS = {"timeout", "nice", "ionice", "env", "stdbuf", "setsid", "nohup", "time", "chrt", "taskset", "xvfb-run"}
+_INTERPRETER = re.compile(r"(python[\d.]*|pypy[\d.]*|bash|sh|dash|zsh|kpy|node|perl|ruby|java)$")
+_WRAPPER_ARG = re.compile(r"-.*|[\d.]+[smhd]?|[A-Za-z_][A-Za-z0-9_]*=.*")
+
+
+def step_label(argv):
+    """The command a process runs, from its argv: the script an interpreter was given (`python3
+    build/strip_plan.py --x` -> strip_plan.py, through `timeout 900 nice -n 5 tools/kpy ...` too),
+    `python3 -c` / `bash -c` for an inline one, the module after -m, the jar after -jar, else the
+    program's own name."""
+    argv = [a for a in argv if a]
+    i, n = 0, len(argv)
+    while i < n:
+        name = os.path.basename(argv[i])
+        if name in _WRAPPERS:
+            i += 1
+            while i < n and _WRAPPER_ARG.fullmatch(argv[i]):
+                i += 1
+            continue
+        if _INTERPRETER.fullmatch(name):
+            j = i + 1
+            while j < n and argv[j].startswith("-") and argv[j] not in ("-c", "-m", "-", "-jar"):
+                j += 1
+            if j >= n:
+                return name
+            if argv[j] in ("-c", "-"):
+                return f"{name} {argv[j]}"
+            if argv[j] in ("-m", "-jar"):
+                return os.path.basename(argv[j + 1]) if j + 1 < n else name
+            i = j                                           # the script -- or another wrapper (kpy)
+            continue
+        return name
+    return os.path.basename(argv[-1]) if argv else "?"
+
+
+def _proc_own(pid):
+    """Linux: (state, ppid, session, this process's own CPU seconds, start ticks) or None."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            raw = f.read().decode("ascii", "replace")
+        f_ = raw[raw.rindex(")") + 2:].split()
+        return f_[0], int(f_[1]), int(f_[3]), (int(f_[11]) + int(f_[12])) / TICK, f_[19]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _argv(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().decode("utf-8", "replace").split("\0")
+    except OSError:
+        return []
+
+
+class Steps:
+    """The job's processes, sampled by its wrapper (Linux).  A process WORKS in a sample when it has
+    no child in the job (a leaf: the program actually running) or used half the interval's CPU
+    itself; a shell or a loop script waiting on its child does not.  Per command: `wall`, the time
+    at least one process of it worked (two at once count once); `cpu`, its processes' own CPU;
+    `runs`, how many processes worked on it.  cpu / wall is the cores it used while it ran.
+    A step shorter than the sampling interval can be missed: the table is where the minutes went,
+    not an account to the second."""
+
+    def __init__(self, leader, every=STEP_EVERY):
+        self.leader, self.every = leader, every
+        self.rows = {}                         # label -> [wall s, cpu s, {(pid, start)}]
+        self.last = {}                         # (pid, start) -> own cpu s at the last sample
+        self.t = time.monotonic()
+
+    def sample(self):
+        now = time.monotonic()
+        dt, self.t = now - self.t, now
+        procs = {}
+        for name in os.listdir("/proc"):
+            if name.isdigit() and int(name) != self.leader:
+                s = _proc_own(int(name))
+                if s and s[2] == self.leader and s[0] not in "ZX":
+                    procs[int(name)] = s
+        parents = {s[1] for s in procs.values()}
+        seen, working = {}, set()
+        for p, (_state, _ppid, _sess, cpu, start) in procs.items():
+            key = (p, start)
+            dcpu = max(0.0, cpu - self.last.get(key, 0.0))
+            seen[key] = cpu
+            label = step_label(_argv(p))
+            row = self.rows.setdefault(label, [0.0, 0.0, set()])
+            row[1] += dcpu
+            if p not in parents or dcpu >= 0.5 * dt:
+                working.add(label)
+                row[2].add(key)
+        for label in working:
+            self.rows[label][0] += dt
+        self.last = seen
+
+    def table(self, top=12):
+        """[[command, runs, wall s, cpu s], ...], the longest first."""
+        rows = [[k, len(v[2]), round(v[0], 1), round(v[1], 1)] for k, v in self.rows.items() if v[2]]
+        return sorted(rows, key=lambda r: -r[2])[:top]
+
+
+def steps_file(jobfile):
+    return f"{os.path.splitext(str(jobfile))[0]}.steps"     # not *.json: every *.json here is a job
+
+
+def steps_lines(rows, wall, shown=5):
+    """The report's lines for a job's steps: the commands that held 3 % of its wall-clock or more."""
+    rows = [r for r in rows or [] if wall > 0 and r[2] >= max(STEP_EVERY, 0.03 * wall)][:shown]
+    if not rows:
+        return []
+    ncpu = os.cpu_count() or 1
+    out = [f"   where the time went (the job's own commands, sampled; cores = CPU / wall; the machine has {ncpu}):"]
+    for label, runs, w, cpu in rows:
+        out.append(f"   | {100 * w / wall:3.0f} %  {dur(w):>8}  {label}  x{runs}, {cpu / w:.1f} core(s)")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # job files
 # ---------------------------------------------------------------------------
 
@@ -437,6 +575,9 @@ def report(t, tail):
             head += f"; {rss_gb(session_pids(t.pid) or [t.pid]):.1f} GB resident"
     print(f"{t.label}: {head}")
     if job is not None:
+        started = job.get("started") or job.get("created") or now
+        for ln in steps_lines(job.get("steps") or load(steps_file(t.path)), (job.get("ended") or now) - started):
+            print(ln)
         log = job.get("log")
         try:
             st = os.stat(log)
@@ -582,17 +723,31 @@ def cmd_exec(jobfile):
         except OSError:
             pass
     peak, over = [0.0], [False]
+    try:
+        every = float(os.environ.get("HW_BGWAIT_STEP_EVERY", STEP_EVERY))
+    except ValueError:
+        every = STEP_EVERY
+    steps = Steps(pid, every) if LINUX else None
+    sfile = steps_file(jobfile)
 
-    def watch():                                         # the job's whole resident memory, sampled: its peak is recorded
-        import threading as _t
+    def watch():                                         # the job's whole resident memory, sampled: its peak is recorded;
+        import threading as _t                           # and its steps: which command is working (Steps)
         ev = _t.Event()
 
         def loop():
-            while not ev.wait(3.0):
+            n = 0
+            while not ev.wait(every):
                 peak[0] = max(peak[0], rss_gb([q for q in session_pids(pid) if q != pid]))
+                try:
+                    steps.sample()
+                    n += 1
+                    if n % max(1, round(30.0 / every)) == 0:     # a running job's table, for `wait` and `status`
+                        save(sfile, steps.table())
+                except Exception:                                 # the table is a report, never the job's risk
+                    pass
         th = _t.Thread(target=loop, daemon=True)
         th.start()
-        return ev
+        return ev, th
     try:
         child = subprocess.Popen(job["cmd"], cwd=job.get("cwd") or None, env=env, preexec_fn=first_to_go if LINUX else None)
     except OSError as e:
@@ -609,11 +764,12 @@ def cmd_exec(jobfile):
                 pass
         for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(s, forward)
-        stop = watch() if LINUX else None
+        stop, th = watch() if LINUX else (None, None)
         peak[0] = rss_gb([q for q in session_pids(pid) if q != pid]) if LINUX else 0.0
         rc = child.wait()
         if stop:
             stop.set()
+            th.join(timeout=5)
     tm = os.times()
     job.update(exit=rc if rc >= 0 else 128 - rc, ended=time.time(),
                cpu_s=round(tm.children_user + tm.children_system, 2))
@@ -623,7 +779,13 @@ def cmd_exec(jobfile):
         job["peak_gb"] = round(max(peak[0], resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1048576), 2)
     if rc < 0:
         job["signal"] = -rc
+    if steps and steps.table():
+        job["steps"] = steps.table()
     save(jobfile, job)
+    try:
+        os.unlink(sfile)                                 # the running job's table: the record holds the last one now
+    except OSError:
+        pass
     return job["exit"]
 
 
@@ -758,6 +920,8 @@ def cmd_clean(_a):
         log = Path(t.job.get("log") or "")
         if log.parent == mine and log.exists():        # a log written elsewhere (--log) is the caller's
             log.unlink()
+        if os.path.exists(steps_file(p)):
+            os.unlink(steps_file(p))
         p.unlink()
         n += 1
     print(f"bgwait: forgot {n} ended job(s) in {mine}")

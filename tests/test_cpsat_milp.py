@@ -73,6 +73,29 @@ p = subprocess.run([sys.executable, "-c", code, str(TOOLS)], capture_output=True
 eq("no OR-Tools: HiGHS's answer", p.stdout.split(), ["-9.0", "True"])
 eq("no OR-Tools: said on stderr", "OR-Tools is not installed" in p.stderr, True)
 
+# ---- 1b. a model HiGHS keeps (a continuous variable): `first` drops the objective; verdict() ----
+from cpsat_milp import verdict  # noqa: E402
+MIX = dict(c=np.array([-1.0, -1.0]), integrality=np.array([1, 0]), bounds=Bounds([0, 0], [1, 1]))   # x binary, y real
+ROW = [[1.0, 1.0]]
+r = milp(**MIX, constraints=LinearConstraint(ROW, -np.inf, 1.5))
+eq("mixed model: HiGHS's optimum", r.fun, -1.5)
+eq("mixed model: verdict", verdict(r), "answer")
+r = milp(**MIX, constraints=LinearConstraint(ROW, -np.inf, 1.5), options={"first": True})
+eq("mixed model, first: a point that meets the row", r.x is not None and float(r.x[0] + r.x[1]) <= 1.5 + 1e-9, True)
+eq("mixed model, first: status 1 (an answer, not the optimum) and it says how", (r.status, "first" in r.message), (1, True))
+eq("mixed model, first: fun is the ORIGINAL objective at that point", r.fun, float(MIX["c"] @ r.x))
+eq("mixed model, first: verdict", verdict(r), "answer")
+r = milp(**MIX, constraints=LinearConstraint(ROW, 3.0, np.inf), options={"first": True})
+eq("mixed model, first: infeasible is still proven", (r.status, verdict(r)), (2, "infeasible"))
+eq("verdict: a time limit with no answer is undecided, never infeasible",
+   verdict(type("R", (), {"x": None, "status": 1})()), "undecided")
+code = ("import sys; sys.path.insert(0, sys.argv[1]); import numpy as np;"
+        "from scipy.optimize import LinearConstraint, Bounds; from cpsat_milp import milp;"
+        "milp(np.array([-1.0, -1.0]), constraints=LinearConstraint([[1.0, 1.0]], -np.inf, 1.5), integrality=np.array([1, 0]),"
+        " bounds=Bounds([0, 0], [1, 1]), options={'stall': 5})")
+p = subprocess.run([sys.executable, "-c", code, str(TOOLS)], capture_output=True, text=True)
+eq("mixed model, stall: said on stderr that HiGHS has none", "stall is CP-SAT's" in p.stderr, True)
+
 try:
     import ortools  # noqa: F401
 except ImportError:

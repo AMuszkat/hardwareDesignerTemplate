@@ -1405,6 +1405,23 @@ check the answer, turn each failure into a cut, solve again. Board1's ran 266 ro
   ask and claim by themselves; a script's own pool should too. `HW_JOBS=N` still overrides.
 - **Log each phase's seconds in the loop** (solve, build, each check): the split above had to be
   rebuilt from file times, and it decides which of these to reach for.
+- **A check asks for a verdict: solve it without its objective.** Board1's later strip check (a mixed
+  model -- real positions, binary sides -- so HiGHS on one core) had a point that fits after 1.0 s and
+  then polished a "least movement" objective to its 900 s limit: the gap never under 60 %, the value
+  unchanged since second 31, five times an outer iteration -- 75 of its 110 minutes, on one core of 24.
+  `options={"first": True}` is honoured for HiGHS's models too (`cpsat_milp` drops the objective). Where
+  the point itself goes on (positions a router takes over), solve for the verdict first and give the
+  objective a short `time_limit` of its own -- and say in the log which of the two ended the solve.
+- **A time limit is not a verdict.** `cpsat_milp.verdict(res)` is `"answer"`, `"infeasible"` (status 2:
+  proven) or `"undecided"`; only `"infeasible"` becomes a cut. An undecided check stops the loop or is
+  solved longer -- a cut built on "no answer in 900 s" removes answers that fit.
+- **The same inputs are solved once.** The loop's last round, the routing script's own re-check and its
+  prep each solved one strip for one answer: a result is a file passed along, or a cache keyed by the
+  hash of the inputs AND of the script.
+- **`bgwait.py wait` names the command that held the job**: per command the job ran, its share of the
+  wall-clock, its runs and the cores it used. Read it at a new loop's first wait (`--every 0` for no
+  progress lines; never `> /dev/null`): a step at one core holding most of the job is fixed before more
+  rounds are run.
 
 ## `race.py` — spec variants raced as processes, one table, one winner
 
