@@ -1492,6 +1492,17 @@ other angle cannot be repaired locally — it raises, and the polyline has to be
 re-drawn. `straighten(pts, width)` turns a grid router's one-cell stairs back
 into diagonals, keeping the first and last headings.
 
+- **A widening that slides a short diagonal along the next leg can leave that leg's remnant short
+  before a turn of the same sense** -- the angle rule's failure moved one piece on, not fixed
+  (board1 R1 l1, DRAM_NCS1_A: S, SE 0.029, E 0.0625, NE; the SE slid to one width and left E
+  0.010 before the NE). Judge any such pass with `short_turns(pts, w)` (route.py check's rule on
+  one polyline, collinear pieces taken as one run): a candidate that does not lower that count is
+  refused. `square_turns(pts, w, fixed=...)` re-draws what is left: the short run dropped, the two
+  legs met where their lines cross, that joint chamfered like `fix45` (90 -> one piece, 135 -> two,
+  each one width long), growing the run a piece at a time while a leg's remnant would be short. It
+  returns the input untouched when there is nothing to do (a pass placed after the others changes
+  no plan that already passes); the copper moves into the corner, so `route.py check` judges it.
+
 **Generate at 45°, do not chamfer afterwards.** A pass that cuts the corners of
 a router's output also "cuts" the router's own 45° joints, into 22.5° ones.
 
