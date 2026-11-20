@@ -781,6 +781,21 @@ its docstring. What the spec has to be told:
   s = (w - d) / sqrt 2), and a waypoint the router can reach only from behind comes back as a
   loop with copper stacked on copper -- the order the waypoint states does not route on that layer,
   a model's cut, not a joint to repair (board1 R1 g1-g3, 2026-11-20).
+- **Every waypoint is a fixed joint the negotiation cannot move: place one only where a line must
+  keep a side.** Legs are negotiated one stage at a time, each finished leg frozen, so an exact
+  point at every column of a strip turns one problem into a chain of small ones whose joints no
+  later stage can shift. board1's U1 relays with a `to_xy` at all six strip columns stuck (`STUCK`,
+  the same 2-4 cells for 20 iterations) at column-1 points where no via stood, with `--seeds 8`,
+  `--full` and `--repair` alike; with waypoints only at the columns holding a via (where the line
+  must pass on its planned side) and at the end, the same nets routed (R1, 2026-11-20). Proof:
+  route the failing net alone (`--only NET`): if it routes, the obstacle is the other nets' frozen
+  legs, not the board.
+- **`STUCK` names the nets whose cells are contested, not the net that shut the channel.** The
+  loser is often listed alone ("nets: X (9 cells)", "would pass if the nets that are NOT in
+  conflict lay elsewhere"): a neighbour that holds the way it needs stays uncontested. A diagnosis
+  or a model cut built from that list blames one net for a combination; take every net whose copper
+  in the `.partial.json` runs within a clearance or two of the contested cells (board1 R1: twelve
+  one-net relay cuts made the fanout model infeasible; with the neighbours added, none was one-net).
 - **A through via (or a THT pin) is a goal on every layer: say so.** A leg
   with one `"goal_layer"` that arrives on another lays its own via a cell short
   of the prelaid one to change layer -- DRC `hole_to_hole` at 0.0-0.15 mm and a
