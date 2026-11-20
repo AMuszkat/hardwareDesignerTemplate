@@ -9,6 +9,9 @@ carries (`handoff/findings.json`, `route.py audit --findings`):
   | cap reach     | U1: 1.27 mm (C12, C13)        | every pad of each listed part lies within the
                                                      distance of a same-net pad of U1 or a same-net
                                                      via (centre to centre) -- decoupling at its pin |
+  |               | U1: 12 mm to pads (C20, C21)  | the same, measured to U1's own pads only: a part
+                                                     on its own vias reaches a via wherever it
+                                                     stands, so a distance to the PART needs this |
   | layers apart  | In4.Cu / In5.Cu: 0 mm         | tracks of two nets, one on each layer, do not lie
                                                      over each other for more than this per net pair;
                                                      a square crossing is free |
@@ -44,12 +47,14 @@ def parse(rule, val, s, G):
     mmnum = r"(\d+(?:\.\d+)?)\s*mm"
     mmnum0 = r"(-?\d+(?:\.\d+)?)"
     if rule == "cap reach":
-        m = re.fullmatch(r"\s*([A-Za-z]+\d+)\s*:\s*" + mmnum + r"\s*\(([^)]+)\)\s*", val)
-        caps = [x.strip() for x in m.group(3).split(",") if x.strip()] if m else []
+        m = re.fullmatch(r"\s*([A-Za-z]+\d+)\s*:\s*" + mmnum + r"\s*(to\s+pads\s*)?\(([^)]+)\)\s*", val)
+        caps = [x.strip() for x in m.group(4).split(",") if x.strip()] if m else []
         if not m or not caps or not all(re.fullmatch(r"[A-Za-z]+\d+", c) for c in caps):
-            raise RuleError("'cap reach' takes 'U1: 1.27 mm (C12, C13)' -- the parts are named: a part "
-                            "that leaves a courtyard must not leave the rule")
-        G.setdefault("cap_reach", []).append(dict(s, ref=m.group(1), max=float(m.group(2)), caps=caps))
+            raise RuleError("'cap reach' takes 'U1: 1.27 mm (C12, C13)', or 'U1: 12 mm to pads (C20)' to measure "
+                            "to U1's pads only -- the parts are named: a part that leaves a courtyard must not "
+                            "leave the rule")
+        G.setdefault("cap_reach", []).append(dict(s, ref=m.group(1), max=float(m.group(2)), caps=caps,
+                                                  pads_only=bool(m.group(3))))
     elif rule == "layers apart":
         m = re.fullmatch(r"\s*([A-Za-z0-9_.]+)\s*/\s*([A-Za-z0-9_.]+)\s*:\s*" + mmnum + r"\s*", val)
         if not m or m.group(1) == m.group(2):
@@ -128,9 +133,10 @@ def cap_reach(geo, rule):
             out.append(f"{c} is not on the board (or has no net): the rule names it")
             continue
         for _r, num, net, x, y in mine:
-            to = ref_pads.get(net, []) + vias.get(net, [])
+            to = ref_pads.get(net, []) + ([] if rule.get("pads_only") else vias.get(net, []))
             if not to:
-                out.append(f"{c}.{num} ({leaf(net)}): no {leaf(net)} pad of {rule['ref']} and no {leaf(net)} via to reach")
+                out.append(f"{c}.{num} ({leaf(net)}): no {leaf(net)} pad of {rule['ref']}"
+                           + ("" if rule.get("pads_only") else f" and no {leaf(net)} via") + " to reach")
                 continue
             d, kind = min((math.hypot(x - tx, y - ty), k) for tx, ty, k in to)
             if d > rule["max"] + EPS:
@@ -291,7 +297,8 @@ def run(G, geo, classes_of=None, full_width=None):
 def label(key, rule):
     """The rule in a few words, for a gate line."""
     if key == "cap_reach":
-        return f"{rule['ref']}: {len(rule['caps'])} part(s) within {rule['max']} mm"
+        return (f"{rule['ref']}: {len(rule['caps'])} part(s) within {rule['max']} mm"
+                + (" of its pads" if rule.get("pads_only") else ""))
     if key == "layers_apart":
         return f"{rule['a']} / {rule['b']}, {rule['max']} mm a net pair"
     if key == "stitch":

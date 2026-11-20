@@ -78,6 +78,16 @@ def rules():
     expect(len(s) == 1 and "C1.2 (GND)" in s[0], "cap reach: a same-net via within reach counts; the other pad still fails", s)
     s = one("cap reach", "U1: 1.27 mm (C1, C9)", geo)
     expect(len(s) == 1 and "C9 is not on the board" in s[0], "cap reach: a named part that is gone is a site, not a pass", s)
+    geo3 = dict(geo, pads=geo["pads"] + [("C2", "1", "VDD", 5.0, 0.0), ("C2", "2", "GND", 6.0, 0.0)],
+                vias=[("VDD", 5.0, 0.4), ("GND", 6.0, 0.4)])
+    expect(one("cap reach", "U1: 1.27 mm (C2)", geo3) == [], "cap reach: a part on its own vias passes the via form anywhere")
+    s = one("cap reach", "U1: 1.27 mm to pads (C2)", geo3)
+    expect(len(s) == 2 and "C2.1 (VDD)" in s[0] and "5.000 mm" in s[0] and "pad" in s[0],
+           "cap reach to pads: the part's own vias do not count; it fails at its distance to U1's pads", s)
+    expect(one("cap reach", "U1: 5 mm to pads (C2, C1)", geo3) == [], "cap reach to pads: holds within the distance", s)
+    s = one("cap reach", "U1: 12 mm to pads (C3)", dict(geo3, pads=geo3["pads"] + [("C3", "1", "AUX", 0.0, 2.0)]))
+    expect(len(s) == 1 and "no AUX pad of U1 to reach" in s[0] and "via" not in s[0],
+           "cap reach to pads: a net U1 does not have is a site, named without vias", s)
 
     tr = lambda *rows: {"pads": [], "vias": [], "tracks": list(rows)}
     over = tr(("X", "In1.Cu", (0.0, 0.0), (10.0, 0.0), 0.1), ("Y", "In2.Cu", (2.0, 0.02), (6.0, 0.02), 0.1))

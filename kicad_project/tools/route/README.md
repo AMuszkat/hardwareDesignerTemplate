@@ -134,7 +134,7 @@ listing the names the tools know.
 | `ground beside` | `Fast: GND within 0.6 mm` | reported by `audit` and `check`: mm of the class's track with ground on 2 / 1 / 0 sides, before → after |
 | `frozen` | `class X, net Y` | copper `viafix.py --push` never moves |
 | `thermal pad` | `U5.5: solid` | one pad's own connection to the pour |
-| `cap reach` | `U1: 1.27 mm (C12, C13)` | `audit`: a pad of a listed part farther than that (centre to centre) from every same-net pad of U1 and every same-net via — the decoupling cap that drifted off its pin. The parts are named, so one that leaves a courtyard does not leave the rule |
+| `cap reach` | `U1: 1.27 mm (C12, C13)` | `audit`: a pad of a listed part farther than that (centre to centre) from every same-net pad of U1 and every same-net via — the decoupling cap that drifted off its pin. The parts are named, so one that leaves a courtyard does not leave the rule. **`U1: 12 mm to pads (C20, C21)`** measures to U1's own pads only: a part that stands on its own vias always has a same-net via within reach, so a distance to the PART (a bulk capacitor allowed some millimetres from its balls) needs this form |
 | `layers apart` | `In4.Cu / In5.Cu: 0 mm` | `audit`: two nets, one on each layer, whose tracks lie over each other for more than that per net pair. A square crossing is free |
 | `stitch via` | `Pairs: GND within 1.27 mm` | `audit`: a via of a net in the class with no via of the named net within the distance |
 | `neck length` | `4 mm` or `Fast: 4 mm` | `audit`: a connected run of track narrower than the net's width (its class's, or the narrowest its custom rules give on that layer) longer than that |
