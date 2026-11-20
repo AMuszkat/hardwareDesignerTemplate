@@ -77,7 +77,11 @@ For **every** generator in `tools/diagrams/`:
 
 For each board the decision touches: edit `tools/handoff/boards/boardN.py`
 (nets, connectors, layout rules, open/deliberate text), set `RELEASE_NOTE`
-saying **which drawn work is now wrong**. A layout rule or a drawing the
+saying **which drawn work is now wrong**. **A value that changed is
+searched for as TEXT, not only by refdes** (`grep -n '100 nF'
+tools/handoff/boards/boardN.py`): a layout rule can name parts by their
+value alone ("the VCC and VCCQ 100 nF capacitors"), and no lint sees it
+(board 1's RV58.1). A layout rule or a drawing the
 decision adds is tried on the board's newest PCB snapshot first, with the
 board's own copper in place (`answer-question` step 2, "A geometric rule or
 a drawing"). Then
