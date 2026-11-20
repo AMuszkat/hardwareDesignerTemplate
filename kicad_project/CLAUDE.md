@@ -243,6 +243,12 @@ ONE `wait A B C --timeout 3600` for all of them, sent as a BACKGROUND Bash
 command: the harness wakes you when it returns. A hook
 (`tools/session/bashguard.py`) refuses the name loop and a foreground sleep
 of 60 s or more, and names the line to run instead.
+**Read the report the wait prints** (`--every 0` drops its progress lines;
+`> /dev/null` drops the report): besides the exit code and the log's tail it
+names, per command the job ran, its share of the wall-clock and the cores it
+used. A step at one core that holds most of a job is fixed before the job is
+run again -- one loop spent 75 of an iteration's 110 minutes in a single
+script on one core of 24, and no wait on it had shown that.
 
 ## Footprints are yours
 

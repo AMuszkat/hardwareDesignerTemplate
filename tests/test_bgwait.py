@@ -19,7 +19,10 @@ What must hold:
   5. a bare PID (a process not started by `run`) is waited on too, with its
      exit code reported as unknown; a pid that is not there is "not running";
   6. usage errors exit 2: an unknown name, a --timeout that is not positive, a
-     second job of a name that still runs.
+     second job of a name that still runs;
+  7. STEPS: a job that runs other commands in turn records, per command, the
+     wall-clock it worked, its CPU and its runs, and `wait` prints the table --
+     the script that solved on one core for most of a job is named.
 
 Standard library only, nothing to skip.  The last line is PASS / FAIL with
 the measured times.
@@ -99,10 +102,38 @@ def main():
            "cores: 3 h with a job running, 26 core-hours, 8.67 of 24 busy", str((busy, cpu, mean, total)))
     expect(bgwait.cores_table(jobs, total=24, since=H)[0][0][0] == "loop.py" and len(bgwait.cores_table(jobs, since=H)[0]) == 1,
            "cores: --since keeps the jobs started on or after it")
+    # 0a --------------------------------------------------------------- a step's name, from its argv
+    for argv, want in ((["python3", "/x/build/strip_plan.py", "--copy", "c"], "strip_plan.py"),
+                       (["timeout", "1700", "tools/kpy", "tools/route/netgroup.py", "--board", "b"], "netgroup.py"),
+                       (["nice", "-n", "5", "/venv/bin/python3", "-u", "x.py"], "x.py"),
+                       (["env", "A=1", "bash", "build/loop.sh", "j"], "loop.sh"),
+                       (["bash", "-c", "cd x; y"], "bash -c"), (["python3", "-m", "pytest", "-q"], "pytest"),
+                       (["/usr/bin/java", "-Xmx2g", "-jar", "/a/router.jar", "--gui"], "router.jar"),
+                       (["kicad-cli", "pcb", "drc"], "kicad-cli"), (["sleep", "4"], "sleep")):
+        expect(bgwait.step_label(argv) == want, f"steps: {' '.join(argv)} is the step {want}", bgwait.step_label(argv))
+    lines = bgwait.steps_lines([["strip_plan.py", 5, 4500.0, 4600.0], ["u500_fanout.py", 3, 560.0, 7300.0], ["cp", 9, 20.0, 1.0]], 6600.0)
+    expect(len(lines) == 3 and "68 %" in lines[1] and "strip_plan.py  x5, 1.0 core(s)" in lines[1] and "13.0 core(s)" in lines[2],
+           "steps: the report names the command that held 68 % of a job at one core, and drops a step under 3 %", str(lines))
     tmp = Path(tempfile.mkdtemp(prefix="test_bgwait_"))
     env = dict(os.environ, HW_BGWAIT_DIR=str(tmp / "jobs"))
     env.pop("HW_MEM_FLOOR_GB", None)
     if bgwait.LINUX:
+        # 0c -------------------------------------------------------------- steps: which command of a job used its wall-clock
+        busy = tmp / "busy_step.py"
+        tmp.mkdir(parents=True, exist_ok=True)
+        busy.write_text("import sys, time\nt = time.time() + float(sys.argv[1])\nwhile time.time() < t:\n    pass\n")
+        loop = tmp / "loop_step.sh"
+        loop.write_text(f"for i in 1 2; do {sys.executable} {busy} 1.5; done\nsleep 1\n")
+        rc, out, _ = bg(dict(env, HW_BGWAIT_STEP_EVERY="0.1"), "run", "--name", "steps", "--", "bash", str(loop))
+        rc, out, _ = bg(env, "wait", "steps", "--timeout", "30", timeout=40)
+        st = {r[0]: r for r in json.loads((tmp / "jobs" / "steps.json").read_text()).get("steps", [])}
+        b = st.get("busy_step.py")
+        expect(b is not None and b[1] == 2 and 2.4 <= b[2] <= 3.6 and 0.8 <= b[3] / b[2] <= 1.2,
+               "steps: two 1.5 s runs of a script inside a loop -- 2 runs, about 3 s of wall, one core", str(st))
+        expect("loop_step.sh" not in st and st.get("sleep", [0, 0, 0, 9])[3] < 0.2,
+               "steps: the shell that waited on them is not a step, and a sleep used no CPU", str(st))
+        expect("where the time went" in out and "busy_step.py  x2" in out and not (tmp / "jobs" / "steps.steps").exists(),
+               "steps: the wait report prints the table, and the running job's side file is gone at the end", out)
         # 0b -------------------------------------------------------------- memory: the floor, the kernel's first choice, the peak
         rc, out, _ = bg(dict(env, HW_MEM_FLOOR_GB="99999"), "run", "--name", "nomem", "--", sys.executable, "-c", "print(1)")
         expect(rc == 75 and "NOT STARTED" in out and not (tmp / "jobs" / "nomem.json").exists(),

@@ -56,7 +56,13 @@ answer is -- each answer still meets every original row:
   * first: True stops at the first answer (status 1) -- for a loop that wants any answer, or to
     learn fast that one exists.  With no objective every solve already does.
 An infeasible model is still PROVEN infeasible (status 2) under all three; they only end an
-optimisation early.  HiGHS (HW_MILP=highs, or a continuous variable) ignores them.
+optimisation early.  HiGHS (HW_MILP=highs, or a continuous variable) honours `first` -- it solves
+the model without its objective -- and ignores hint and stall (a line on stderr).
+
+A CHECK ASKS FOR A VERDICT, NOT AN OPTIMUM.  A model solved only to learn whether an answer fits
+(a strip, a placement, a budget) has no use for its objective: `first: True`, and the solve is the
+search for one point.  And only status 2 is "no": `verdict(res)` returns "answer", "infeasible"
+or "undecided" -- a time limit with no answer proves nothing and must never become a cut.
 
 status as scipy's: 0 optimal (or every row met, with no objective), 1 the time limit (x is the
 best found, or None when none was), 2 infeasible -- PROVEN, 4 anything else.  The result also
@@ -110,11 +116,53 @@ class Result(dict):
 
 
 def _highs(why, c, integrality, bounds, constraints, options):
+    """scipy's HiGHS, one core.  `first` is honoured here too -- the model is solved WITHOUT its
+    objective, which is what "any answer" means and is where HiGHS is quick (board1's strip check:
+    a point in 1.0 s; with its objective the same solve ran to its 900 s limit, five times an
+    iteration, the gap never under 60 %).  `stall` and `hint` have no HiGHS equivalent through
+    scipy: one line on stderr says so, and a solve that ends at its time limit WITH an answer says
+    how far from proven it was -- that limit was the solve's whole duration."""
     from scipy.optimize import milp as highs
     if why:
         print(f"cpsat_milp: {why}; HiGHS solves this one", file=sys.stderr)
-    opts = {k: v for k, v in (options or {}).items() if k not in ("workers", "hint", "stall", "first")}
-    return highs(c, integrality=integrality, bounds=bounds, constraints=constraints, options=opts)
+    options = dict(options or {})
+    opts = {k: v for k, v in options.items() if k not in ("workers", "hint", "stall", "first")}
+    c = np.asarray(c, float)
+    t0 = time.time()
+    if options.get("first") and np.any(c):
+        r = highs(np.zeros(len(c)), integrality=integrality, bounds=bounds, constraints=constraints, options=opts)
+        if r.x is not None:
+            r.fun, r.status, r.success = float(c @ r.x), 1, False
+            r.message = f"Stopped at the first answer (first): HiGHS solved the model without its objective. ({r.message})"
+            r.mip_dual_bound = r.mip_gap = None
+        r.wall_time = time.time() - t0
+        return r
+    if options.get("stall") is not None and np.any(c):
+        print("cpsat_milp: stall is CP-SAT's; HiGHS runs to its optimum or to time_limit (first: True is honoured: "
+              "the model without its objective)", file=sys.stderr)
+    r = highs(c, integrality=integrality, bounds=bounds, constraints=constraints, options=opts)
+    r.wall_time = time.time() - t0
+    if r.status == 1 and r.x is not None and np.any(c):
+        gap = getattr(r, "mip_gap", None)
+        print(f"cpsat_milp: HiGHS ended at its limit after {r.wall_time:.0f} s with an answer"
+              + (f", {100 * gap:.0f} % from proven" if gap is not None else "")
+              + " -- one core, and the limit was the whole solve. For a verdict alone: options first=True; "
+              "for a better point: a shorter time_limit costs little once the answer has stopped moving.",
+              file=sys.stderr)
+    return r
+
+
+def verdict(res):
+    """What a solve PROVED, for a loop that turns a failed check into a cut:
+        "answer"      res.x is a point that meets every row (optimal or not);
+        "infeasible"  PROVEN to have none (status 2) -- the only result a cut may be built on;
+        "undecided"   anything else: a time limit with no answer, an error.  Nothing was proven:
+                      solve longer, or stop -- never a cut (the first project read a 180 s miss as
+                      "infeasible" in one loop and a 900 s miss as "does not fit" in another).
+    """
+    if getattr(res, "x", None) is not None:
+        return "answer"
+    return "infeasible" if getattr(res, "status", None) == 2 else "undecided"
 
 
 def milp(c, *, integrality=None, bounds=None, constraints=None, options=None):
