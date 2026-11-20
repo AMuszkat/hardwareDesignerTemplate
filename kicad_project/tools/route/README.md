@@ -748,6 +748,14 @@ its docstring. What the spec has to be told:
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.
+- **Plans checked one at a time on one copy are not proven together.** `check` judges a plan
+  against the board as it stands, so plans made side by side each pass and still collide when
+  applied: a through via one plan lays (an in-pad via for a net changing layer) crosses another
+  layer's plan, and two plans on one layer meet at their seam -- a via whose inner ring appears
+  only once the other plan's track joins it (board1 R1, 2026-11-20: 8 relays each CHECK PASS,
+  then 4 failed applied in turn). Lay what every plan must see first (the vias), then route and
+  `apply` the plans one after another on the copy, each against the ones before it; the copy
+  that took every plan is the proof, filed as the rehearsed scratch board.
 - **A scratch copy lives OUTSIDE `kicad_project/`, never in `<board>/tmpWork/`.** `boardsel`
   resolves any path inside a board's folder to the board's folder itself, so `route.py apply
   --board <board>/tmpWork/x/cp/<board>` checks against and WRITES the real board (board1 R1,
