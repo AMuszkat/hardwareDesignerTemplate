@@ -26,6 +26,17 @@ copper on every layer.  This places them, on the board as it is plus the zones o
           middle (a standoff ring) is not dropped this way.  Run it BEFORE the signal groups
           that would wall the pads in (board2: R5's inner-layer routes left eight GND pads no
           site; laid first, R5 routed round them).
+  near    with --near REGEX (no tie / ring / grid), every via of a net whose name matches the
+          regex and that has no via of --net within --within mm (centre to centre, "a ground
+          stitching via within 50 mil of every signal via") is a wanted spot: its site search
+          goes outward from that via, only to --within.  The most constrained via (fewest legal
+          sites left) goes first and takes its nearest site; each stitch placed drops every
+          wanted via it now serves, so one stitch may serve several.  --except NET,NET@X:Y,...
+          leaves out a net, or one via of it (a decision's exception), and lists it.  Printed:
+          each wanted via with its distance to the nearest --net via before -> after, and each
+          one no legal site serves, with what blocks the least-blocked site in its disc (the
+          rule, and the pad, via, track or fill that breaks it) and a tally over the whole disc.
+          `stitch.py --net GND --near '^MEM_' --within 1.27 --except MEM_ZQ,MEM_CK_T@12.5:20.25 --via 0.4/0.2 ...`
 
 A site is legal when, for a via of --via pad / drill:
   - its pad lies inside the net's FILL on every layer the net pours (it joins them), and
@@ -44,6 +55,7 @@ a plan (vias, plus --plan's zones and keys when --merge) for `route.py check` / 
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -80,11 +92,18 @@ def main():
     ap.add_argument("--only-pads", action="store_true", help="--pads, and no tie / ring / grid")
     ap.add_argument("--pad-list", default="", help="REF.PAD, comma separated: drop only these")
     ap.add_argument("--skip-pads", default="", help="REF or REF.PAD, comma separated: not dropped")
+    ap.add_argument("--near", default="", metavar="REGEX",
+                    help="a stitch within --within of every via of the nets matching REGEX (their short "
+                         "names, re.search) that has none; no tie / ring / grid")
+    ap.add_argument("--within", type=float, default=1.27, help="--near: mm, signal via centre to stitch centre")
+    ap.add_argument("--except", dest="except_", default="",
+                    help="--near: NET or NET@X:Y (one via), comma separated: not served, listed")
     ap.add_argument("--merge", action="store_true", help="write --plan's zones and keys into the output too")
     ap.add_argument("--group", default=None)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     a.board = R.P.board_dir_arg(a.board)
+    no_pour = a.only_pads or bool(a.near)                # --only-pads / --near: no tie, ring, grid
     B = R.RBoard(a.board)
     pn, b, mm, FM = B.pn, B.b, B.pn.ToMM, B.pn.FromMM
     pad_d, drill = (float(x) for x in a.via.split("/"))
@@ -235,7 +254,7 @@ def main():
     missed = []
     z_relief = max([z.GetThermalReliefGap() for z in b.Zones() if z.GetNetname() == full] or [0])
     # 1. tie every island that holds no via of the net
-    for k in ([] if a.only_pads else sorted(pours)):
+    for k in ([] if no_pour else sorted(pours)):
         s = own_fill[k]
         for i in range(s.OutlineCount()):
             isl = pn.SHAPE_POLY_SET()
@@ -278,7 +297,7 @@ def main():
 
     # 2. the ring: every Edge.Cuts contour, just inside the band, every --pitch mm
     off = edge + r + (a.inset if a.inset else r / 2 + 0.25)
-    for i in range(0 if a.only_pads else board.OutlineCount()):
+    for i in range(0 if no_pour else board.OutlineCount()):
         rings = [board.Outline(i)] + [board.Hole(i, h) for h in range(board.HoleCount(i))]
         for ri, ln in enumerate(rings):
             ring = pn.SHAPE_POLY_SET()
@@ -310,7 +329,7 @@ def main():
     n_ring = len(placed) - n_tie
 
     # 3. the inside grid
-    if a.grid and not a.only_pads:
+    if a.grid and not no_pour:
         bb = board.BBox()
         x0, y0, x1, y1 = mm(bb.GetX()), mm(bb.GetY()), mm(bb.GetRight()), mm(bb.GetBottom())
         y = y0 + a.grid / 2
@@ -419,6 +438,141 @@ def main():
                 new_links.append(((cx, cy), (x, y), w, p_))
                 n_pad += 1
 
+    # 5. --near: a stitch within --within of every via of the matching nets that has none
+    near_lines, n_near = [], 0
+    if a.near:
+        rx = re.compile(a.near)
+        exc_net, exc_at = set(), []
+        for e in (q.strip() for q in a.except_.split(",") if q.strip()):
+            if "@" in e:
+                en, xy = e.split("@", 1)
+                exc_at.append((en, *(float(v) for v in xy.split(":"))))
+            else:
+                exc_net.add(e)
+        sig, excepted = [], []
+        for t in b.GetTracks():
+            if t.Type() != pn.PCB_VIA_T or t.GetNetname() == full or not rx.search(R.short(t.GetNetname())):
+                continue
+            sn, x, y = R.short(t.GetNetname()), mm(t.GetPosition().x), mm(t.GetPosition().y)
+            if sn in exc_net or any(sn == en and math.dist((x, y), (ex, ey)) < 0.01 for en, ex, ey in exc_at):
+                excepted.append((sn, x, y))
+            else:
+                sig.append((sn, x, y))
+        sig.sort()
+
+        def nearest_own(x, y):
+            return min((math.dist((x, y), (vx, vy)) for vx, vy, own in vias if own), default=None)
+        before = [nearest_own(x, y) for _n, x, y in sig]
+        want = [i for i, d in enumerate(before) if d is None or d > a.within + 1e-6]
+        st = 0.05
+        n_ = int(a.within / st) + 1
+        disc = sorted(((i * st, j * st) for i in range(-n_, n_ + 1) for j in range(-n_, n_ + 1)
+                       if 0 < math.hypot(i, j) * st <= a.within + 1e-9), key=lambda d: math.hypot(*d))
+
+        def disc_of(x, y):
+            for dx, dy in disc:
+                px, py = round(x + dx, 3), round(y + dy, 3)
+                d = math.dist((x, y), (px, py))
+                if d <= a.within + 1e-9:
+                    yield d, px, py
+        cands = {i: [c for c in disc_of(sig[i][1], sig[i][2]) if legal(c[1], c[2])] for i in want}
+        open_, new_at, served_by = set(want), [], {}
+        while open_:
+            live = {i: [c for c in cands[i] if all(math.dist(c[1:], q) >= a.sep - 1e-6 for q in new_at)] for i in open_}
+            for i in [i for i in open_ if not live[i]]:
+                open_.discard(i)                             # no legal site left: listed below
+            if not open_:
+                break
+            i = min(open_, key=lambda i: (len(live[i]), sig[i]))    # the most constrained first
+            d, px, py = live[i][0]                           # its nearest legal site
+            if not legal(px, py):                            # (only --sep changed since; belt and braces)
+                cands[i].remove((d, px, py))
+                continue
+            got = sorted(j for j in open_ if math.dist(sig[j][1:], (px, py)) <= a.within + 1e-6)
+            for j in got:
+                open_.discard(j)
+                served_by[j] = (px, py)
+            vias.append((px, py, True))
+            new_at.append((px, py))
+            placed.append({"net": full, "at": [px, py], "pad": pad_d, "drill": drill,
+                           "why": "stitches " + ", ".join(f"{sig[j][0]} ({sig[j][1]:.3f}, {sig[j][2]:.3f}) "
+                                                          f"{math.dist(sig[j][1:], (px, py)):.2f} mm" for j in got)})
+            near_lines.append(f"  NEAR-STITCH ({px}, {py}): " + placed[-1]["why"][len("stitches "):])
+            n_near += 1
+
+        allv = [(mm(t.GetPosition().x), mm(t.GetPosition().y), R.short(t.GetNetname()))
+                for t in b.GetTracks() if t.Type() == pn.PCB_VIA_T] + [(q[0], q[1], net) for q in new_at]
+
+        def blocked(x, y, named):
+            """every rule legal() tests that (x, y) breaks; named: with the object that breaks it"""
+            v, out = V(x, y), []
+            if not inner.Contains(v):
+                out.append("edge band")
+            if padz.Contains(v):
+                if named:
+                    hit = {f"{p_.GetParentFootprint().GetReference()}.{p_.GetNumber()} "
+                           f"({R.short(p_.GetNetname()) or 'no net'})" for p_, one, _g in padpolys if one.Contains(v)}
+                    out.append("pad gap " + (", ".join(sorted(hit)) if hit else "(a hole)"))
+                else:
+                    out.append("pad gap")
+            close = [(math.dist((x, y), (vx, vy)), vn, vx, vy) for vx, vy, vn in allv
+                     if math.dist((x, y), (vx, vy)) < a.sep - 1e-6]
+            if close:
+                out.append("via sep " + (", ".join(f"{vn} ({vx:.3f}, {vy:.3f}) {d_:.2f} mm" for d_, vn, vx, vy in sorted(close))
+                                         if named else ""))
+            for k in cu:
+                if k in pours and not inside[k].Contains(v):
+                    out.append(f"outside the {net} fill on {k}")
+                if forbid[k].Contains(v):
+                    if not named:
+                        out.append(f"copper on {k}")
+                        continue
+                    who = set()
+                    for t in b.GetTracks():
+                        if t.Type() != pn.PCB_VIA_T and B.canon(t.GetLayerName()) == k and \
+                                not (t.GetNetname() == full and k in pours) and \
+                                t.HitTest(v, own_grow if t.GetNetname() == full else grow):
+                            who.add(f"track {R.short(t.GetNetname())}")
+                    for z in b.Zones():
+                        if not z.GetIsRuleArea() and z.GetNetname() != full and lid[k] in list(z.GetLayerSet().CuStack()) \
+                                and z.GetFilledPolysList(lid[k]).Collide(v, grow):
+                            who.add(f"fill {R.short(z.GetNetname())}")
+                    out.append(f"copper on {k}: " + (", ".join(sorted(who)) or "?"))
+            return [o.rstrip() for o in out]
+
+        for i in range(len(sig)):
+            sn, x, y = sig[i]
+            if i not in want:
+                continue
+            aft = nearest_own(x, y)
+            near_lines.append(f"  NEAR {sn} via ({x:.3f}, {y:.3f}): nearest {net} via "
+                              + (f"{before[i]:.3f}" if before[i] is not None else "none") + f" -> {aft:.3f} mm"
+                              + ("" if i in served_by else "  UNSERVED"))
+        for i in [i for i in want if i not in served_by]:
+            sn, x, y = sig[i]
+            tally, best = {}, None
+            for d, px, py in disc_of(x, y):
+                bl = blocked(px, py, False)
+                for o in bl:
+                    tally[o] = tally.get(o, 0) + 1
+                if best is None or (len(bl), d) < (best[0], best[1]):
+                    best = (len(bl), d, px, py)
+            ndisc = sum(1 for _ in disc_of(x, y))
+            near_lines.append(f"  UNSERVED {sn} via ({x:.3f}, {y:.3f}): no legal site within {a.within:g} mm "
+                              f"({ndisc} lattice sites; broken: " + ", ".join(f"{o} {c}" for o, c in sorted(
+                                  tally.items(), key=lambda kv: -kv[1])) + ")")
+            if best:
+                near_lines.append(f"      least blocked: ({best[2]}, {best[3]}) {best[1]:.2f} mm -- "
+                                  + "; ".join(blocked(best[2], best[3], True)))
+        for sn, x, y in excepted:
+            d = nearest_own(x, y)
+            near_lines.append(f"  EXCEPTED {sn} via ({x:.3f}, {y:.3f}): nearest {net} via "
+                              + (f"{d:.3f} mm" if d is not None else "none"))
+        near_lines.insert(0, f"  near: {len(sig)} via(s) of /{a.near}/ judged ({len(excepted)} excepted), "
+                             f"{len(want)} without a {net} via within {a.within:g} mm; {n_near} stitch(es) serve "
+                             f"{len(served_by)}, {len(want) - len(served_by)} unserved; {net} pours on "
+                             + ", ".join(sorted(pours)))
+
     def coverage():
         """[(where, [p0, p1, length, farthest])]: the ring stretches farther than pitch / 2 from a
         via or a through-hole pin of the net"""
@@ -460,7 +614,7 @@ def main():
         return gaps
 
     gaps = []
-    if not a.only_pads:
+    if not no_pour:
         n_fill = 0
         for _round in range(4 if a.fill_gaps else 0):
             added = 0
@@ -477,8 +631,10 @@ def main():
     out["group"] = a.group or plan.get("group") or "stitch"
     why = (f"{net} stitching ({Path(__file__).name}): {n_tie} tie, {n_ring} ring at {a.pitch:g} mm"
            + (f", {n_grid} grid at {a.grid:g} mm" if a.grid else "")
-           + (f", {n_fill} gap fill(s)" if (a.fill_gaps and not a.only_pads) else "")
-           + (f", {n_pad} pad(s) dropped" if (a.pads or a.only_pads) else "") + f"; via {a.via}, sep {a.sep:g}")
+           + (f", {n_fill} gap fill(s)" if (a.fill_gaps and not no_pour) else "")
+           + (f", {n_pad} pad(s) dropped" if (a.pads or a.only_pads) else "")
+           + (f", {n_near} stitch(es) within {a.within:g} mm of /{a.near}/ vias" if a.near else "")
+           + f"; via {a.via}, sep {a.sep:g}")
     out["why"] = (plan.get("why", "") + " -- " if a.merge and plan else "") + why
     out["vias"] = (plan.get("vias", []) if a.merge and plan else []) + [
         {k: v for k, v in p.items() if k != "why"} for p in placed]
@@ -488,6 +644,8 @@ def main():
     for where, (p0, p1, L, d, _w) in gaps:
         print(f"  GAP {where} ({p0[0]:.2f}, {p0[1]:.2f}) -> ({p1[0]:.2f}, {p1[1]:.2f}): {L:.1f} mm of the ring "
               f"farther than {a.pitch / 2:g} mm from a {net} via or pin (at most {d:.2f} mm)")
+    for m in near_lines:
+        print(m)
     for m in diag45:
         print(f"  45-DEGREE {m}")
     for m in missed:

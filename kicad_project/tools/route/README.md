@@ -1229,10 +1229,11 @@ copper.
 
     tools/kpy tools/route/stitch.py --board board2 --plan routing/R6_pours.json --net GND --pitch 5 --merge --out routing/R6_gnd.json
     tools/kpy tools/route/stitch.py --board board2 --net GND --only-pads [--diag] [--pad-list REF.PAD,..] --out routing/R6_pads.json
+    tools/kpy tools/route/stitch.py --board board1 --net GND --near '^DRAM_' --within 1.27 --except NET,NET@X:Y --out routing/R1_stitch.json
 
 A layout's "stitching vias every 5 mm along the pours' edges and round the cut-out" is a few hundred
 placements that each have to clear every other net's copper on every layer. `stitch.py` lays the
-plan's zones in memory, fills them, and places vias where one is legal:
+plan's zones, tracks and vias in memory, fills the zones, and places vias where one is legal:
 - inside the net's fill on every layer it pours;
 - clear of other nets' copper on every layer by the clearance;
 - the via-to-pad gap from every pad;
@@ -1248,6 +1249,18 @@ It places them in three passes:
 `--pads` drops every SMD pad of the net that no track touches to a via on one of its axes, linked
 straight out of its centre; `--diag` falls back to a straight 45° link. A spot or pad with no site is
 listed (`MISSED`), never forced. Its output is an ordinary plan for `route.py check` / `apply`.
+
+`--near REGEX` (no tie / ring / grid) is "a ground stitching via within 50 mil of every signal via":
+each via of a matching net with no `--net` via within `--within` gets the nearest legal site in that
+disc, the most constrained first, one stitch serving every wanted via it reaches; `--except` leaves
+out a net or one via (`NET@X:Y`). Each wanted via prints its distance before -> after, and one with
+no site prints what blocks the least-blocked site in its disc (the pad, via, track or fill by name).
+
+- **`--near` judges every site at one `--clearance`.** A signal via inside a BGA's courtyard, where
+  the fab's area rule allows less, finds no site at the class clearance: run a second pass on what
+  is left at the area rule's clearance (`--plan` the first pass's output, `--merge`) and let
+  `route.py check`'s DRC judge it (board1 R1: one DRAM via had none at either; the least-blocked
+  site's single blocker, a track, names what would have to move).
 
 - **Drop the GND pads before the signal groups that wall them in.** board2 routed R5 (In2.Cu / B.Cu)
   first, and eight GND pads had no via site left. Two of them had none even against the power group,
