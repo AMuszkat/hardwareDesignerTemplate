@@ -702,13 +702,29 @@ def cmd_kill(a):
         if not t.running():
             print(f"{t.label}: already ended")
             continue
+        # the whole SESSION, not only the group: `timeout` puts its child in a process group of its
+        # own (same session), so a group signal left a `timeout ... netgroup.py` running with its
+        # shell gone, and the SIGKILL sweep below ran only while the leader lived (board1 R1,
+        # 2026-11-20: an orphaned netgroup after `kill`)
+        strays = set(session_pids(t.pid)) - {t.pid}
         try:
             os.killpg(t.pid, signal.SIGTERM)
         except OSError as e:
             print(f"{t.label}: SIGTERM to group {t.pid}: {e}")
+        for p in strays:
+            try:
+                os.kill(p, signal.SIGTERM)
+            except OSError:
+                pass
         t0 = time.monotonic()
-        while t.running() and time.monotonic() - t0 < a.grace:
+        while (t.running() or session_pids(t.pid)) and time.monotonic() - t0 < a.grace:
             time.sleep(0.05)
+        for p in session_pids(t.pid):              # what outlived the grace, the leader gone or not
+            if p != t.pid:
+                try:
+                    os.kill(p, signal.SIGKILL)
+                except OSError:
+                    pass
         if t.running():
             for p in set(session_pids(t.pid)) | {t.pid}:
                 try:
