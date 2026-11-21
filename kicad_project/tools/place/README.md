@@ -383,3 +383,8 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
      12 free parts OPTIMAL in 232 s, 3 free in 1 s, where the whole model was UNKNOWN after 1500 s).
   4. *Boxes go to the solver as integers rounded OUTWARD* (floor the low edge, ceil the high). `round()` dropped
      a 0.1 um safety and left a pair at exactly the courtyard gap, which `place.py check` refuses.
+- **`apply` keeps ONE backup, `<board>.kicad_pcb.place-bak`, and every apply overwrites it.** After a second
+  apply on the same scratch copy it is the board before THAT apply, not the board you started from. A baseline
+  a later gate compares against (the DRC before the plan, the board to restore for the next variant) is copied
+  to its own folder before the first apply (board1 D116: a scratch's DRC baseline was its `.place-bak`, and the
+  cap plan's apply replaced it).
