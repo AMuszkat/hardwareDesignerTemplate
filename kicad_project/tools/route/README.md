@@ -593,6 +593,11 @@ its docstring. What the spec has to be told:
   just routed: `place.py drc` / `route.py audit` mark such a count "AT KiCad's report limit -- at least that
   many". Judge a routed group by `route.py status`' open links and by walking each net's own copper from
   its first pad to its last via (track ends that stop inside a via's pad count as joined).
+- **A rip at the 199 limit shows old violations as new.** `route.py check` compares against a baseline
+  KiCad cut at 199 a test, so a plan that REMOVES copper uncovers violations that were there before
+  and hidden (board1 D115: 74 via_dangling). Prove they predate the plan (the same items on the
+  before copy, past the cap: DRC on the copy with the plan's area masked) and accept them in the
+  plan with that reason; never accept a new kind. A rip plan, like any plan, carries a "group" key.
 - **Via sites for a fan of track ends: least total length, then uncross.**
   Giving each end of one layer the nearest free site by squared length handed
   board1's In3 three knots of crossing nets, and no amount of banning sites
