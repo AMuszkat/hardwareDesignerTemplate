@@ -383,6 +383,17 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
      12 free parts OPTIMAL in 232 s, 3 free in 1 s, where the whole model was UNKNOWN after 1500 s).
   4. *Boxes go to the solver as integers rounded OUTWARD* (floor the low edge, ceil the high). `round()` dropped
      a 0.1 um safety and left a pair at exactly the courtyard gap, which `place.py check` refuses.
+  5. *"No two parts overlap" goes in as BOOLEANS, not as one `AddNoOverlap2D`, when the boxes are optional
+     candidates.* Tens of thousands of optional rectangles in one NoOverlap2D barely propagate (item 3). The
+     same constraint as clauses decides: take lattice points (a period above the smallest box, e.g. 0.2 mm;
+     per axis, count which residues the overlapping pairs' common rectangles contain and add residues
+     greedily), one `AddAtMostOne` over the candidates whose box covers each point, and a two-literal clause
+     for every overlapping pair no point catches. Prove the encoding by enumeration -- for a sample of
+     candidates, every overlapping partner is in a common clique or a pair clause -- not by two solves agreeing.
+     Measured (board1 tmpWork/D116_comb/capplan_clique.py, `--enc clique`): a 12-part neighbourhood OPTIMAL in
+     8 s against 195 s; the whole model (48,505 bools, passives pinned, ring thinned to a 0.2 mm lattice)
+     OPTIMAL in 27 s with no hint, where NoOverlap2D was UNKNOWN at 1500 s; and the nearest-K model of item 2
+     proven INFEASIBLE in 11 s. More cliques and fewer pair clauses solved faster, at four times the literals.
 - **`apply` keeps ONE backup, `<board>.kicad_pcb.place-bak`, and every apply overwrites it.** After a second
   apply on the same scratch copy it is the board before THAT apply, not the board you started from. A baseline
   a later gate compares against (the DRC before the plan, the board to restore for the next variant) is copied
