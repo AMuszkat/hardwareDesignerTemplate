@@ -910,6 +910,15 @@ its docstring. What the spec has to be told:
   `routing/`, change the copy with pcbnew (delete a via, move a part), run
   the same spec with `--board <copy>`: the cheapest proof that one obstacle,
   not the router, is what fails a group.
+- **A copy of the board keeps the project's file name.** `pcbnew.LoadBoard` takes the net
+  classes from the `.kicad_pro` of the SAME base name, and says nothing when there is none: a
+  baseline kept beside the project as `pre_apply.kicad_pcb` loads with every net in class
+  `Default` (`GetNetClassName()`; board1: 615 of 615 nets, where the same file named
+  `board1_module.kicad_pcb` gives 139 of them their classes). A script that took clearances
+  from such a load put a via 0.169 mm from a PCIE_85 track that asks 0.2032, and only the
+  route check's DRC saw it. Keep a baseline in a folder of its own under the project's name,
+  or resolve the classes from the `.kicad_pro`'s `netclass_patterns` yourself. Prove it by
+  counting the classes the load reports: all `Default` on a board that has classes is the trap.
 - **A fixed piece's free end goes ON the grid** (`window` origin + k x `pitch`;
   board2: x = 0.05 + 0.2k, y = 0.2k). The leg ending there reaches the nearest
   cell, and an end 0.15 mm off it joins with a jog the shape gate rejects.
