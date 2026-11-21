@@ -17,6 +17,7 @@ Memory, a search snippet, or "it's usually about…" are not sources.
 | **show the design survives** tolerances, temperature, supply range, ageing | robustness: worst case + Monte Carlo | `s02_divider_tolerance.py` |
 | **check a budget against a hard line** (thermal, power, noise, timing, error, cost) | budget at the corner | `s03_ldo_thermal.py` |
 | **compare options** (topologies, parts, packages, architectures) | trade study: one table, one verdict | the package table in `s03` |
+| **prove a BGA's fan-out closes** before its land or via rule is published (through vias in empty lattice sites, how many same-net power / GND balls must share one, what the top layer's outer rings carry) | a count on the ball map, seconds | `bga_fanout.site_vias` — the study passes the ball map and the fab's numbers |
 | **model behaviour** (a filter response, a control loop, a transient, a link budget) | simulation | — write your own |
 
 Do **not** write a study when the datasheet states the number: cite the page
