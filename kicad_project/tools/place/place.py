@@ -98,6 +98,27 @@ def pcbnew_module():
     return pcbnew
 
 
+# KiCad keeps every coordinate as a whole nanometre, and pcbnew.ToMM of one is the double nearest that number
+# of mm -- the same double as the number typed in placement.json or a plan.  Arithmetic on those doubles is
+# not: 19.53 - 0.025 is 19.505000000000003, and a courtyard drawn exactly ON a keep-out's edge then reads as
+# 3.6e-15 mm inside it; over a 5 um grid an exact touch came out as an overlap or as a gap at more than a
+# quarter of the places.  The tests are strict (a touch is not a hit), so only the arithmetic was wrong.
+# Two rules: an edge that is COMPUTED is put back on the grid (nm), and a distance compared with a limit is
+# AT the limit when it is within half a nanometre of it (below).  No verdict moves by more than that half
+# nanometre: an overlap of 1 nm, or a gap 1 nm under its minimum, still fails.
+HALF_NM = 5e-7                                      # mm
+
+
+def nm(v):
+    """A computed length in mm, on KiCad's 1 nm grid: the same double as that value typed."""
+    return round(v, 6)
+
+
+def below(v, limit):
+    """v < limit at KiCad's resolution: a value within half a nanometre of the limit is AT it."""
+    return v < limit - HALF_NM
+
+
 def rgap(a, c):
     """Edge-to-edge distance between two rectangles; negative = overlap depth.
     A 5-tuple (x0, y0, x1, y1, "circle") is a circle given by its bounding box."""
@@ -350,7 +371,9 @@ class Board:
         return "B" if f.IsFlipped() else "F"
 
     def courtyard(self, f):
-        """(side, box) with the 0.05 mm line's centreline as the edge, or None."""
+        """(side, box) with the 0.05 mm line's centreline as the edge, or None.
+        The centreline is the line's bounding box less half the line: a float sum, so each edge is put
+        back on the nanometre (nm) -- an edge on the grid is then the double a plan or a keep-out types."""
         s = self.side(f)
         items = [g for g in f.GraphicalItems() if g.GetLayer() == self.CRT[s]]
         if not items:
@@ -363,8 +386,8 @@ class Board:
             return (min(b[0] for b in pb), min(b[1] for b in pb),
                     max(b[2] for b in pb), max(b[3] for b in pb))
         cy = [g.GetBoundingBox() for g in items]
-        box = (min(self.mm(c.GetLeft()) for c in cy) + 0.025, min(self.mm(c.GetTop()) for c in cy) + 0.025,
-               max(self.mm(c.GetRight()) for c in cy) - 0.025, max(self.mm(c.GetBottom()) for c in cy) - 0.025)
+        box = (nm(min(self.mm(c.GetLeft()) for c in cy) + 0.025), nm(min(self.mm(c.GetTop()) for c in cy) + 0.025),
+               nm(max(self.mm(c.GetRight()) for c in cy) - 0.025), nm(max(self.mm(c.GetBottom()) for c in cy) - 0.025))
         if len(items) == 1 and items[0].GetShape() == self.pn.SHAPE_T_CIRCLE:
             return box + ("circle",)
         return box
@@ -389,7 +412,7 @@ class Board:
         if len(items) != 1 or items[0].GetShape() != self.pn.SHAPE_T_POLY:
             return [box]
         pts = [(self.mm(q.x), self.mm(q.y)) for q in items[0].GetPolyPoints()]
-        if len(pts) < 4 or any(abs(a[0] - b[0]) > 1e-6 and abs(a[1] - b[1]) > 1e-6
+        if len(pts) < 4 or any(abs(a[0] - b[0]) > 1e-6 + HALF_NM and abs(a[1] - b[1]) > 1e-6 + HALF_NM
                                for a, b in zip(pts, pts[1:] + pts[:1])):
             return [box]
 
@@ -399,8 +422,8 @@ class Board:
                 if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
                     c = not c
             return c
-        xs = sorted({round(q[0], 4) for q in pts})
-        ys = sorted({round(q[1], 4) for q in pts})
+        xs = sorted({nm(q[0]) for q in pts})        # the vertices' own nanometres: a strip edge is the polygon's
+        ys = sorted({nm(q[1]) for q in pts})
         rects = []
         for j in range(len(ys) - 1):
             run = None
@@ -518,16 +541,20 @@ def cmd_gaps(a):
 # ---------------------------------------------------------------------------
 
 def keepout_hits(B, box, side="F", ref=None):
+    """Names of the keep-outs the box ENTERS; a box that only touches one does not (strict tests).
+    Box and limits are put on the nanometre first (nm): the limit is a sum, outline + rect, and a caller's
+    box may be a shifted one (`auto`) -- at a touch the two are then equal doubles, never 1e-15 apart."""
     o = B.outline
+    box = [nm(v) for v in box[:4]]
     hits = []
     for k in B.cfg.get("keepouts", []):
         if k.get("side", "F") not in (side, "both") or ref in k.get("allow", []):
             continue
         r = k["rect"]
-        x0 = o[0] + r[0] if r[0] is not None else -1e9
-        y0 = o[1] + r[1] if r[1] is not None else -1e9
-        x1 = o[0] + r[2] if r[2] is not None else 1e9
-        y1 = o[1] + r[3] if r[3] is not None else 1e9
+        x0 = nm(o[0] + r[0]) if r[0] is not None else -1e9
+        y0 = nm(o[1] + r[1]) if r[1] is not None else -1e9
+        x1 = nm(o[0] + r[2]) if r[2] is not None else 1e9
+        y1 = nm(o[1] + r[3]) if r[3] is not None else 1e9
         if box[0] < x1 and box[2] > x0 and box[1] < y1 and box[3] > y0:
             hits.append(k["name"])
     return hits
@@ -586,7 +613,7 @@ def run_check(B, moves, verbose=True):
             A, Bp = after[a], after[b]
             pa = [p for p in A["pads"] if p["net"].split("/")[-1] == s["net"]]
             pb = [p for p in Bp["pads"] if p["net"].split("/")[-1] == s["net"]]
-            if not pa or not pb or math.dist(pa[0]["pos"], pb[0]["pos"]) > 0.01:
+            if not pa or not pb or math.dist(pa[0]["pos"], pb[0]["pos"]) > 0.01 + HALF_NM:
                 fails.append(f"SHARED PAD {a}/{b}: the {s['net']} pads do not coincide")
             if A["side"] != Bp["side"]:
                 fails.append(f"SHARED PAD {a}/{b}: not on one side")
@@ -602,19 +629,19 @@ def run_check(B, moves, verbose=True):
             pass                                         # overlapping courtyards by design
         elif X["box"] and Y["box"] and X["side"] == Y["side"]:
             g = min(rgap(a_, b_) for a_ in X["rects"] for b_ in Y["rects"])
-            if g < min_cy:
+            if below(g, min_cy):
                 fails.append(f"COURTYARD {x}-{y} ({X['side']}) gap {g:.3f}")
         for p in X["pads"]:
             for q in Y["pads"]:
                 if p["hole"] and q["hole"]:              # drilling: any nets, plated or not
                     hh = math.dist(p["pos"], q["pos"]) - p["drill"] / 2 - q["drill"] / 2
-                    if hh < B.hole_to_hole:
+                    if below(hh, B.hole_to_hole):
                         fails.append(f"HOLES {x}.{p['num']} - {y}.{q['num']} {hh:.3f} < {B.hole_to_hole:g}")
                 shared = (p["cu"] & q["cu"]) or (p["hole"] and q["cu"]) or (q["hole"] and p["cu"])
                 if not shared or (p["net"] and p["net"] == q["net"]):
                     continue
                 g = rgap(p["box"], q["box"])
-                if g < pad_min:
+                if below(g, pad_min):
                     fails.append(f"PADS {x}.{p['num']}({p['net'].split('/')[-1]}) - {y}.{q['num']}({q['net'].split('/')[-1]}) {g:.3f} < {pad_min:.2f}")
         for h_ref, c_ref in ((x, y), (y, x)):
             H, C = after[h_ref], after[c_ref]
@@ -623,14 +650,14 @@ def run_check(B, moves, verbose=True):
                     if p["hole"]:
                         hb = (p["pos"][0] - p["drill"] / 2, p["pos"][1] - p["drill"] / 2,
                               p["pos"][0] + p["drill"] / 2, p["pos"][1] + p["drill"] / 2)
-                        if any(rgap(hb, cr) < 0 for cr in C["rects"]):
+                        if any(below(rgap(hb, cr), 0) for cr in C["rects"]):
                             fails.append(f"PTH {h_ref}.{p['num']} inside {c_ref}'s courtyard")
         for s_ref, p_ref in ((x, y), (y, x)):
             S, P = after[s_ref], after[p_ref]
             for s in S["silk"]:
                 for q in P["pads"]:
                     on_side = S["side"] in q["cu"] or q["hole"]
-                    if on_side and rgap(s, q["box"]) < B.mask_exp + B.silk_clr:
+                    if on_side and below(rgap(s, q["box"]), B.mask_exp + B.silk_clr):
                         fails.append(f"SILK {s_ref} mark over {p_ref}.{q['num']} mask opening "
                                      f"({rgap(s, q['box']) - B.mask_exp:.3f} < {B.silk_clr:g})")
     o = B.outline
@@ -642,16 +669,16 @@ def run_check(B, moves, verbose=True):
             fails.append(f"NO COURTYARD {r}")
             continue
         bx = X["box"]
-        if r not in overhang and any(B.box_edge_dist(cr) < 0 for cr in X["rects"]):
+        if r not in overhang and any(below(B.box_edge_dist(cr), 0) for cr in X["rects"]):
             fails.append(f"OUTLINE {r}: courtyard off the board (list it under 'overhang' if a connector's pins are meant to)")
         for p in X["pads"]:
             e = B.box_edge_dist(p["box"])
-            if p["cu"] and e < B.edge_clr:
+            if p["cu"] and below(e, B.edge_clr):
                 fails.append(f"EDGE {r}.{p['num']} copper {e:.2f} mm from the edge (< {B.edge_clr:g})")
             if p["hole"]:
                 cx, cy = p["pos"]
                 he = B.edge_dist(cx, cy) - p["drill"] / 2
-                if he < B.hole_edge:
+                if below(he, B.hole_edge):
                     fails.append(f"EDGE {r}.{p['num']} hole {he:.2f} mm from the edge (< {B.hole_edge:g})")
         hits = sorted({h for cr in X["rects"] for h in keepout_hits(B, cr, X["side"], r)})
         if hits:
@@ -679,7 +706,7 @@ def run_check(B, moves, verbose=True):
             lays = {"F": "F.Cu", "B": "B.Cu"}
             pl = {lays.get(c, c) for c in p["cu"]}
             for lay, bx_, net_, what in cu_items:
-                if (lay is None or lay in pl or p["hole"]) and net_ != p["net"] and rgap(p["box"], bx_) < B.clearance:
+                if (lay is None or lay in pl or p["hole"]) and net_ != p["net"] and below(rgap(p["box"], bx_), B.clearance):
                     # a diagonal track's box is larger than its copper: only an axis-aligned one, or a via, is certain
                     if lay is None or bx_[2] - bx_[0] < 0.3 or bx_[3] - bx_[1] < 0.3:
                         fails.append(f"COPPER {r}.{p['num']}({p['net'].split('/')[-1] or 'no net'}) over a {what} of "

@@ -382,7 +382,8 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
      then place only the unplaced parts with every other pick fixed (`AddHint` + fixing all but a neighbourhood:
      12 free parts OPTIMAL in 232 s, 3 free in 1 s, where the whole model was UNKNOWN after 1500 s).
   4. *Boxes go to the solver as integers rounded OUTWARD* (floor the low edge, ceil the high). `round()` dropped
-     a 0.1 um safety and left a pair at exactly the courtyard gap, which `place.py check` refuses.
+     a 0.1 um safety and left a pair at exactly the courtyard gap, which `place.py check` refused -- by float
+     noise: exactly AT the gap passes since the nanometre bullet below, a pair `round()` leaves under it fails.
   5. *"No two parts overlap" goes in as BOOLEANS, not as one `AddNoOverlap2D`, when the boxes are optional
      candidates.* Tens of thousands of optional rectangles in one NoOverlap2D barely propagate (item 3). The
      same constraint as clauses decides: take lattice points (a period above the smallest box, e.g. 0.2 mm;
@@ -399,3 +400,17 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
   a later gate compares against (the DRC before the plan, the board to restore for the next variant) is copied
   to its own folder before the first apply (board1 D116: a scratch's DRC baseline was its `.place-bak`, and the
   cap plan's apply replaced it).
+- **A touch is not a hit, and `check` decides that on KiCad's nanometre, not by float noise.** The trap: a
+  courtyard edge was the line's bounding box less half the line, a float sum (`19.53 - 0.025` is
+  `19.505000000000003`), so a part planned exactly ON a keep-out's edge read as inside it -- board1 D116: C34
+  and C58 against 'radio (bottom)', `KEEPOUT`, an overlap of 3.6e-15 mm, where the plan's own sum (18.805 +
+  0.7) said touch. Swept over the 5 um grid, an exact touch was a KEEPOUT at 16 of 40 places and a pair at
+  exactly `min_courtyard_gap` a COURTYARD at 40 of 40. The rule now: every computed edge is put back on the
+  1 nm grid (`nm()`: courtyard edges, keep-out limits, a polygon courtyard's strips, which were on 0.1 um),
+  and a distance within half a nanometre of its limit is AT the limit and passes (`below()`, `HALF_NM`:
+  courtyard gap, pad gap, hole to hole, hole in a courtyard, silk, courtyard / copper / hole to edge, copper
+  under a pad). Nothing moves by more than that half nanometre, so a planner may put a box exactly on a limit.
+  Prove it: a plan with a part exactly on a keep-out's edge passes, and the same plan 1 um (or 1 nm) inside
+  fails -- 0 of 40 and 40 of 40 (board1 `tmpWork/D116_placefix/syn_probe.py`, old against new, in memory).
+  Still noisy, on purpose: `auto`'s own tests (noise only makes it stricter than `check`) and the COPPER
+  test's `< 0.3` mm box width, its stand-in for "axis-aligned track" (a rule to settle, not rounding).
