@@ -49,6 +49,23 @@ typed, else inside the board folder (`routing/R1.json`).
   layer has only pads'). A plan that gives a net its FIRST track on a layer can be failed for a notch that was there
   before (board1: a ring capacitor's unlinked power via 0.10 mm from its pad, shown when C63's link went in). Fix the
   old site in the same plan (link it), do not route round the gate with a polygon.
+- **`orphans.py` -- the copper a placement plan orphans, named before the plan is applied** (`tools/kpy
+  tools/route/orphans.py --board boardN PLACE.json [--out RIPS.json] [--merge PLAN.json OUT.json]`, read-only, about a second):
+  `place.py check` judges the parts and `route.py check` the plan's own copper, so neither sees the link and the via a
+  moved capacitor leaves behind, joined to no pad. board1's D116 moved 48 parts with their new copper in one plan, both
+  checks passed, and only a rehearsal apply showed four capacitors' old copper still there (4 GND segments on B.Cu and
+  3 vias; track_dangling 6 -> 8) -- the handoff's rule there: 'copper a move orphans is ripped by its group and laid again'. The tool
+  moves the plan's moving parts in memory (x, y on the nanometre, rotation, side; a part listed at its own place does
+  not move), reads KiCad's connectivity before and after, and lists each track and via of a cluster that lost a pad
+  and touches none now (`whole cluster`), or that hangs as a dead end between the lost pad and the first junction or
+  the first item still on a pad (`stub`); one line an item with its net, layer, ends, width, the group whose
+  `*.applied.json` holds its UUID and the pad it hung on, a via in a zone of its net marked `in_zone`. `--merge` writes
+  the group's route plan with them as `rips` / `ripvias` (each with its `why`; an item the plan already rips is not
+  added twice). What it prints as `shared -- decide by hand` is yours: the last track to a pin that stays (it will
+  dangle), a blob of short fat links joined along their bodies. It never looks through a zone. Exit 0 none, 1 listed.
+  Prove it: a plan holding only parts at their own place gives 0 items and exit 0; after `place.py apply` on a scratch
+  copy, `route.py check` of the merged plan says `removes N segments, M vias` and `CHECK PASS` (a rip that matches
+  nothing fails the plan), and track_dangling does not rise.
 - **`padvias.py` -- vias IN a pad** (a regulator's output or input capacitor, an exposed pad): `--pads REF.PAD[:N],...`
   keeps N centres (or as many as fit) inside each pad, legal on every copper layer (the other nets' copper by the larger
   class clearance, holes by 14_fab's hole gaps, the via-to-pad gap from every OTHER pad), `--pitch` apart, spread from a
@@ -927,6 +944,19 @@ its docstring. What the spec has to be told:
   that path to a file beside the plan for the later steps: emptying last run's folder instead
   needs an `rm` on a shell variable, which the session's safety check refuses, and what is left
   in a reused folder (a lock, a `.place-bak`, a second board) is the next run's false result.
+- **The tools' own scratch copies go to `$TMPDIR`, and a full `/tmp` stops a two-step apply half way.**
+  `route.py check` (and so `apply`, which runs it first) copies the board folder, `lib/` with its
+  3D models included (board1: 48 MB), into `tempfile`'s folder. On a
+  machine whose `/tmp` is a tmpfs with a user quota, a session's old scratch copies fill it, and the
+  copy dies with `shutil.Error ... [Errno 122] Disk quota exceeded` -- board1's D116: `place.py
+  apply` had written 71 placements, `route.py apply` died before its check, the board stood placed
+  and unrouted, and the dead run's `~<project>.kicad_pro.lck` in the board folder refused the next
+  one (`a STALE lock`: with no `kicad` / `kicad-cli` process, remove that one file by its full name).
+  Before an apply that follows a placement: `df -h /tmp` and `du -sh` the scratch folder; when it is
+  near full, `export TMPDIR=<a folder on disk>` for the run. An apply script keeps the baseline under
+  its own name first and can be resumed from the route step. Scratch copies of the board are 45 MB
+  each: a gate script that makes a fresh folder every run says so in its last line, and the session
+  lists the old ones for the user to clear.
 - **A fixed piece's free end goes ON the grid** (`window` origin + k x `pitch`;
   board2: x = 0.05 + 0.2k, y = 0.2k). The leg ending there reaches the nearest
   cell, and an end 0.15 mm off it joins with a jog the shape gate rejects.

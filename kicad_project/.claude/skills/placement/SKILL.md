@@ -55,7 +55,20 @@ tools/kpy tools/place/place.py check --board <board> plan.json
 ```
 
 Iterate until `CHECKS PASS`, reading the net-span report: a move that makes a
-critical loop longer is wrong even when it passes. Then apply:
+critical loop longer is wrong even when it passes.
+
+**Copper already on the board?** A move of a routed part leaves its old links
+and vias behind, joined to no pad, and neither `place.py check` nor
+`route.py check` sees them. Before `apply`, run
+`tools/kpy tools/route/orphans.py --board <board> plan.json`: it names the
+tracks and vias the move orphans; its rips go in the group's route plan
+(`--merge PLAN.json OUT.json`), and every `shared -- decide by hand` line is
+settled in that plan too. Exit 0: the move orphans nothing. The order on the
+board is then `place.py apply`, `route.py apply` of that plan, and
+`place.py labels` last (section 3) -- a moved part's designator stays where
+the part was until labels runs.
+
+Then apply:
 
 ```
 set_component_placements(board, placements=[…])     # KiCad open: one undo step
