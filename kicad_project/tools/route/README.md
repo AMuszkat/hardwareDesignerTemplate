@@ -1153,6 +1153,19 @@ net out on three layers. `fanout.py plan` proposes that model;
   with every ball and pad soft and prints the balls and pads it cannot serve: the count to ask with. Trap: caps
   placed under a field before its fan-out was planned bar sites wholesale (board1 U1: 86 of 243) -- plan the
   fan-out with `obstacles` BEFORE the back side is populated, or count each cap moved (board1 tmpWork/D115_plan2/movecount.py).
+  A ball's ONLY capacitor (#44's ball-only caps) is planned WITH the fan-out, not after it: `cap_room`
+  {caps: [{tag, ball}], fp, bounds, reach, clearance, own_gap, link_width[, free_vias]} makes the solve keep, at
+  whatever site the ball's via lands on, a legal spot for the cap -- power pad on that via or one axis link <=
+  reach, GND pad the same to a GND via (`free_vias`: or a cap-only via on a site no ball takes), the pads' and
+  links' clearance to every other net's via, courtyards never overlapping. board1 D116: the plan solved without
+  it (s1) left C64 / C65 (J15 / J14) no spot at all -- the lattice round them full of other nets -- and a cap
+  placer run afterwards over the fixed vias can only report it. Prove it with the cap placer's own model on the
+  new plan (board1 tmpWork/D116_u1_room/oracle.py); a plan without `cap_room` is unchanged (same vias).
+  Cap-only GND vias are reported in counts.solver.cap_room (`gnd_via_new`), NOT in `vias`: the cap placer adds them.
+  When a cap still has no spot, `soft_pads_first: true` re-solves with the caps first and names the BALL a cap
+  costs (board1 C65: G14, the x=29 site chain J14-G14-K/L, not the neighbour cap C64 it looked like) -- the term
+  to count is that ball's, not the caps'. `angles` adds rotated cap spots (angle 0 = the axis enumerator); a
+  rotated spot passes the solve on its bounding box only, so prove it by DRC on a scratch copy.
 
 - **The pitch decides which rules apply, and `plan` prints the arithmetic.**
   A via fits between four balls when `hypot(px, py) / 2 >= land/2 + clearance

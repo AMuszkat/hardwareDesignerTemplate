@@ -43,6 +43,22 @@ CONFIG (JSON, the board's numbers, each with its source):
      pad's axis, the via-links rule) | "diag" (45 degrees too, last resort) | "any" (one straight link at any
      angle: inside a BGA courtyard, where the guide's `bga field` row lifts the via-link rule), the link
      clear of other nets' pads and of every other net's via it would pass -- a legal straight link
+  "cap_room": {"caps": [{tag, ball[, ground_net, reach, fp]}], "fp": {d, pw, ph, cw, ch}, "bounds": [x0, y0,
+     x1, y1], "reach": 1.27, "clearance", "own_gap", "link_width", "ground_net": "GND", "grid": 0.02, "keep": 2,
+     "pin1_rot": {"0": [-1, 0], ...}, "source"}  a ball's ONLY capacitor must keep a legal spot AT THAT BALL'S
+     via (whichever site the solve gives it): its power pad ON that via or one straight axis link <= reach to it,
+     its ground pad the same to a via of the ground net, the courtyard inside `bounds`; a pad keeps `clearance`
+     to every other net's via (`own_gap` to its own outside the pad), a link via/2 + link_width/2 + clearance, a
+     link never runs back along the body.  The spots (grid `grid`, 4 directions; `fp` d = pad centre from the
+     cap's centre, pw x ph the pad along x x across, cw x ch the courtyard) are enumerated per ball site, and the
+     solve must pick one a cap, the vias its pads cannot live beside left out, courtyards + links of the caps
+     never overlapping (`link`: "axis" default | "diag" -- 45-degree links too, their copper not in the overlap
+     test).  Reported in counts.solver.cap_room (`pin1_rot` maps the power pad's direction to rot)
+     `angles`: [deg, ...] (cap_room or one cap): also the cap turned that far off the axes (each with its four
+     turns), judged in its own frame -- links along the pad's axes --, its courtyard's corners in `bounds`, only
+     the courtyard's bounding box in the overlap test (default none: the axis turns only; old configs unchanged)
+  "soft_pads_first": true  when the plan is infeasible, the relaxed solve meets the most required pads / cap
+     spots FIRST and then serves the most balls: its unserved list names the balls those pads would cost
 
 OUTPUT (--out): {"balls": {ball: {net, ring, kind, exit, side, lane | site, shared_with}}, "vias":
   [{x, y, net, balls}], "lanes": {side: {...}}, "rails": {net: {balls, vias, max_balls_a_via, A_a_via}},
@@ -371,6 +387,268 @@ def req_cands(F, cfg, r, obs):
     return out
 
 
+def _rect_gap(cx, cy, hw, hh, x, y):
+    return math.hypot(max(abs(x - cx) - hw, 0), max(abs(y - cy) - hh, 0))
+
+
+def _seg_pt(a, b, p):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dy * dy
+    t = 0 if L2 == 0 else max(0, min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
+    return math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy)
+
+
+def _seg_rect(a, b, r):
+    """Edge distance from the segment a-b to the rect (cx, cy, hw, hh) (0 when it enters it)."""
+    n = max(2, int(math.dist(a, b) / 0.005) + 1)
+    return min(_rect_gap(*r, a[0] + (b[0] - a[0]) * t / (n - 1), a[1] + (b[1] - a[1]) * t / (n - 1))
+               for t in range(n))
+
+
+def _seg_seg(a, b, c, d):
+    def ccw(p, q, r):
+        return (r[1] - p[1]) * (q[0] - p[0]) - (q[1] - p[1]) * (r[0] - p[0])
+    if ccw(a, b, c) * ccw(a, b, d) < 0 and ccw(c, d, a) * ccw(c, d, b) < 0:
+        return 0.0
+    return min(_seg_pt(a, b, c), _seg_pt(a, b, d), _seg_pt(c, d, a), _seg_pt(c, d, b))
+
+
+def cap_room_cands(F, cfg, cr, cap, q, psites, keys_at, key, knet):
+    """The spots a ball-only capacitor may take at ball q: [{sp, sg, forbid, ...}].
+
+    A spot is the cap's power pad ON (centre inside the pad) or ONE straight axis link of <= reach from the via
+    site sp the ball's stub ends in, its ground pad the same way to a site sg holding a via of the ground net,
+    the courtyard inside `bounds`, a link never running back along the cap's body nor within link_width/2 +
+    clearance of the other pad or the other link; `forbid` = the (site, key) vias the spot cannot live beside
+    (a pad's rect nearer a via than via/2 + clearance -- `own_gap` for its own net outside the pad -- or a link
+    nearer one than via/2 + link_width/2 + clearance).  Grid `grid` mm, the cap's pad geometry `fp`."""
+    fp = dict(cr["fp"], **cap.get("fp", {}))
+    d, grid, reach = fp["d"], cr.get("grid", 0.02), cap.get("reach", cr.get("reach", 1.27))
+    clr, own, wl = cr.get("clearance", cfg["clearance"]), cr.get("own_gap", cr.get("clearance", cfg["clearance"])), \
+        cr.get("link_width", cfg["width"])
+    vr = cfg["via"][0] / 2
+    gnet = cap.get("ground_net", cr.get("ground_net", "GND"))
+    diag = cr.get("link", "axis") == "diag"
+    bx0, by0, bx1, by1 = cr["bounds"]
+    pnet, pkey = short(F.at[q]["net"]), key[q]
+    gsites = [(t, k) for t, ks in keys_at.items() for k in sorted(ks) if knet[k] == gnet]
+    rnd = lambda v: round(round(v / grid) * grid, 4)
+    nstep = int(reach / grid + EPS)
+    best = {}
+    for sp in psites:
+        spx, spy = F.xy(sp)
+        for u in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            horiz = u[1] == 0
+            hw, hh = (fp["pw"] / 2, fp["ph"] / 2) if horiz else (fp["ph"] / 2, fp["pw"] / 2)
+            cw, ch = (fp["cw"], fp["ch"]) if horiz else (fp["ch"], fp["cw"])
+            p1s = [(rnd(spx + i * grid), rnd(spy + j * grid))
+                   for i in range(-int(hw / grid + EPS), int(hw / grid + EPS) + 1)
+                   for j in range(-int(hh / grid + EPS), int(hh / grid + EPS) + 1)]
+            p1s += [(rnd(spx - e[0] * k * grid), rnd(spy - e[1] * k * grid))
+                    for e in ((1, 0), (-1, 0), (0, 1), (0, -1)) for k in range(1, nstep + 1)]
+            if diag:
+                p1s += [(rnd(spx - e[0] * k * grid), rnd(spy - e[1] * k * grid))
+                        for e in ((1, 1), (-1, 1), (1, -1), (-1, -1)) for k in range(1, int(nstep / math.sqrt(2)) + 1)]
+            for P1 in p1s:
+                C = (round(P1[0] - u[0] * d, 4), round(P1[1] - u[1] * d, 4))
+                P2 = (round(C[0] - u[0] * d, 4), round(C[1] - u[1] * d, 4))
+                if not (bx0 <= C[0] - cw / 2 and C[0] + cw / 2 <= bx1 and by0 <= C[1] - ch / 2 and C[1] + ch / 2 <= by1):
+                    continue
+
+                def link(P, other, v, net):
+                    """None: illegal; 0: via in the pad; else the link length."""
+                    if abs(v[0] - P[0]) <= hw + EPS and abs(v[1] - P[1]) <= hh + EPS:
+                        return 0.0
+                    if not (abs(v[0] - P[0]) < 1e-6 or abs(v[1] - P[1]) < 1e-6
+                            or (diag and abs(abs(v[0] - P[0]) - abs(v[1] - P[1])) < 1e-6)):
+                        return None
+                    L = math.dist(P, v)
+                    if L > reach + EPS or _rect_gap(P[0], P[1], hw, hh, *v) < vr + own - EPS:
+                        return None
+                    if ((v[0] - P[0]) * u[0] + (v[1] - P[1]) * u[1]) * (1 if P == P1 else -1) < -EPS:
+                        return None                  # back along the cap's body
+                    if _seg_rect(P, v, (other[0], other[1], hw, hh)) < wl / 2 + clr - EPS:
+                        return None
+                    return L
+                L1 = link(P1, P2, (spx, spy), pnet)
+                if L1 is None:
+                    continue
+                for sg, gk in gsites:
+                    gx, gy = F.xy(sg)
+                    if abs(gx - P2[0]) > reach + hw or abs(gy - P2[1]) > reach + hh:
+                        continue
+                    L2 = link(P2, P1, (gx, gy), gnet)
+                    if L2 is None:
+                        continue
+                    if L1 > 0 and L2 > 0 and _seg_seg(P1, (spx, spy), P2, (gx, gy)) < wl + clr - EPS:
+                        continue
+                    forbid, ok = [], True
+                    for t, ks in keys_at.items():
+                        tx, ty = F.xy(t)
+                        if abs(tx - C[0]) > 2 * reach + 1 or abs(ty - C[1]) > 2 * reach + 1:
+                            continue
+                        for k in ks:
+                            nk = knet[k]
+                            bad = False
+                            for P, n in ((P1, pnet), (P2, gnet)):
+                                if abs(tx - P[0]) <= hw + EPS and abs(ty - P[1]) <= hh + EPS:
+                                    bad |= nk != n
+                                elif _rect_gap(P[0], P[1], hw, hh, tx, ty) < vr + (own if nk == n else clr) - EPS:
+                                    bad = True
+                            for P, v, n, L in ((P1, (spx, spy), pnet, L1), (P2, (gx, gy), gnet, L2)):
+                                if L > 0 and nk != n and _seg_pt(P, v, (tx, ty)) < vr + wl / 2 + clr - EPS:
+                                    bad = True
+                            if bad:
+                                if (t == sp and k == pkey) or (t == sg and k == gk):
+                                    ok = False
+                                    break
+                                forbid.append((t, k))
+                        if not ok:
+                            break
+                    if not ok:
+                        continue
+                    sig = (sp, sg, gk, frozenset(forbid))
+                    boxes = [(C[0] - cw / 2, C[1] - ch / 2, cw, ch)]
+                    for P, v, L in ((P1, (spx, spy), L1), (P2, (gx, gy), L2)):
+                        if L <= 0 or (abs(v[0] - P[0]) > 1e-6 and abs(v[1] - P[1]) > 1e-6):
+                            continue                 # a 45-degree link: its box is not modelled
+                        e = wl / 2 + clr / 2
+                        b = [min(P[0], v[0]) - e, min(P[1], v[1]) - e, max(P[0], v[0]) + e, max(P[1], v[1]) + e]
+                        if abs(v[1] - P[1]) < 1e-6:          # clip the part inside the courtyard
+                            b[0], b[2] = (max(b[0], C[0] + cw / 2), b[2]) if v[0] > P[0] else (b[0], min(b[2], C[0] - cw / 2))
+                        else:
+                            b[1], b[3] = (max(b[1], C[1] + ch / 2), b[3]) if v[1] > P[1] else (b[1], min(b[3], C[1] - ch / 2))
+                        if b[2] - b[0] > 1e-4 and b[3] - b[1] > 1e-4:
+                            boxes.append((b[0], b[1], b[2] - b[0], b[3] - b[1]))
+                    spot = dict(sp=sp, sg=sg, gkey=gk, forbid=forbid, centre=C, dir=u, p1=P1, p2=P2,
+                                L1=round(L1, 3), L2=round(L2, 3), boxes=boxes)
+                    best.setdefault(sig, []).append(spot)
+    out = []
+    keep = cr.get("keep", 2)
+    for sig, L in best.items():
+        L.sort(key=lambda s: (s["L1"] + s["L2"], s["centre"]))
+        kept = []
+        for s in L:
+            if all(math.dist(s["centre"], k["centre"]) > 0.09 for k in kept):
+                kept.append(s)
+            if len(kept) >= keep:
+                break
+        out += kept
+    for ang in cap.get("angles", cr.get("angles", [])):
+        if abs(((ang + 45) % 90) - 45) > 1e-6:      # a rotation off the axes; the axis ones are above
+            out += cap_room_cands_rot(F, cfg, cr, cap, q, psites, keys_at, key, knet, ang)
+    return out
+
+
+def cap_room_cands_rot(F, cfg, cr, cap, q, psites, keys_at, key, knet, ang):
+    """cap_room_cands for a cap rotated `ang` degrees off the axes (its four turns ang + k*90): the same rules,
+    judged in the cap's own frame (pads, links along the PAD's axes -- #48 (3) --, clearances, the body);
+    the courtyard's corners inside `bounds`; in the overlap test only the courtyard's bounding box (a link's
+    copper is not modelled, as for a 45-degree link)."""
+    fp = dict(cr["fp"], **cap.get("fp", {}))
+    d, grid, reach = fp["d"], cr.get("grid", 0.02), cap.get("reach", cr.get("reach", 1.27))
+    clr, own, wl = cr.get("clearance", cfg["clearance"]), cr.get("own_gap", cr.get("clearance", cfg["clearance"])), \
+        cr.get("link_width", cfg["width"])
+    vr = cfg["via"][0] / 2
+    gnet = cap.get("ground_net", cr.get("ground_net", "GND"))
+    diag = cr.get("link", "axis") == "diag"
+    bx0, by0, bx1, by1 = cr["bounds"]
+    pnet, pkey = short(F.at[q]["net"]), key[q]
+    hw, hh, cw, ch = fp["pw"] / 2, fp["ph"] / 2, fp["cw"], fp["ch"]
+    gsites = [(t, k) for t, ks in keys_at.items() for k in sorted(ks) if knet[k] == gnet]
+    nstep = int(reach / grid + EPS)
+    TOL = 1e-6
+    best = {}
+    for sp in psites:
+        O = F.xy(sp)
+        for turn in range(4):
+            phi = math.radians(ang + 90 * turn)
+            u, w = (math.cos(phi), math.sin(phi)), (-math.sin(phi), math.cos(phi))
+            loc = lambda p: ((p[0] - O[0]) * u[0] + (p[1] - O[1]) * u[1], (p[0] - O[0]) * w[0] + (p[1] - O[1]) * w[1])
+            glob = lambda l: (round(O[0] + l[0] * u[0] + l[1] * w[0], 4), round(O[1] + l[0] * u[1] + l[1] * w[1], 4))
+            p1s = [(i * grid, j * grid) for i in range(-int(hw / grid + EPS), int(hw / grid + EPS) + 1)
+                   for j in range(-int(hh / grid + EPS), int(hh / grid + EPS) + 1)]
+            p1s += [(-e[0] * k * grid, -e[1] * k * grid) for e in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                    for k in range(1, nstep + 1)]
+            if diag:
+                p1s += [(-e[0] * k * grid, -e[1] * k * grid) for e in ((1, 1), (-1, 1), (1, -1), (-1, -1))
+                        for k in range(1, int(nstep / math.sqrt(2)) + 1)]
+            near = [(t, loc(F.xy(t)), ks) for t, ks in keys_at.items()
+                    if abs(F.xy(t)[0] - O[0]) <= 2 * reach + 2 and abs(F.xy(t)[1] - O[1]) <= 2 * reach + 2]
+            for P1 in p1s:
+                C, P2 = (P1[0] - d, P1[1]), (P1[0] - 2 * d, P1[1])
+                corners = [glob((C[0] + sx * cw / 2, C[1] + sy * ch / 2)) for sx in (-1, 1) for sy in (-1, 1)]
+                if not all(bx0 <= x <= bx1 and by0 <= y <= by1 for x, y in corners):
+                    continue
+
+                def link(P, other, v, sgn):
+                    if abs(v[0] - P[0]) <= hw + EPS and abs(v[1] - P[1]) <= hh + EPS:
+                        return 0.0
+                    if not (abs(v[0] - P[0]) < TOL or abs(v[1] - P[1]) < TOL
+                            or (diag and abs(abs(v[0] - P[0]) - abs(v[1] - P[1])) < TOL)):
+                        return None
+                    L = math.dist(P, v)
+                    if L > reach + EPS or _rect_gap(P[0], P[1], hw, hh, *v) < vr + own - EPS:
+                        return None
+                    if (v[0] - P[0]) * sgn < -EPS:
+                        return None
+                    if _seg_rect(P, v, (other[0], other[1], hw, hh)) < wl / 2 + clr - EPS:
+                        return None
+                    return L
+                L1 = link(P1, P2, (0.0, 0.0), 1)
+                if L1 is None:
+                    continue
+                for sg, gk in gsites:
+                    G = loc(F.xy(sg))
+                    if abs(G[0] - P2[0]) > reach + hw or abs(G[1] - P2[1]) > reach + hw:
+                        continue
+                    L2 = link(P2, P1, G, -1)
+                    if L2 is None:
+                        continue
+                    if L1 > 0 and L2 > 0 and _seg_seg(P1, (0.0, 0.0), P2, G) < wl + clr - EPS:
+                        continue
+                    forbid, ok = [], True
+                    for t, T, ks in near:
+                        for k in ks:
+                            nk = knet[k]
+                            bad = False
+                            for P, n in ((P1, pnet), (P2, gnet)):
+                                if abs(T[0] - P[0]) <= hw + EPS and abs(T[1] - P[1]) <= hh + EPS:
+                                    bad |= nk != n
+                                elif _rect_gap(P[0], P[1], hw, hh, *T) < vr + (own if nk == n else clr) - EPS:
+                                    bad = True
+                            for P, v, n, L in ((P1, (0.0, 0.0), pnet, L1), (P2, G, gnet, L2)):
+                                if L > 0 and nk != n and _seg_pt(P, v, T) < vr + wl / 2 + clr - EPS:
+                                    bad = True
+                            if bad:
+                                if (t == sp and k == pkey) or (t == sg and k == gk):
+                                    ok = False
+                                    break
+                                forbid.append((t, k))
+                        if not ok:
+                            break
+                    if not ok:
+                        continue
+                    xs, ys = [c[0] for c in corners], [c[1] for c in corners]
+                    sig = (sp, sg, gk, frozenset(forbid))
+                    spot = dict(sp=sp, sg=sg, gkey=gk, forbid=forbid, centre=glob(C),
+                                dir=(round(u[0], 4), round(u[1], 4)), angle=round((ang + 90 * turn) % 360, 3),
+                                p1=glob(P1), p2=glob(P2), L1=round(L1, 3), L2=round(L2, 3),
+                                boxes=[(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))])
+                    best.setdefault(sig, []).append(spot)
+    out, keep = [], cr.get("keep", 2)
+    for sig, L in best.items():
+        L.sort(key=lambda s: (s["L1"] + s["L2"], s["centre"]))
+        kept = []
+        for s in L:
+            if all(math.dist(s["centre"], k["centre"]) > 0.09 for k in kept):
+                kept.append(s)
+            if len(kept) >= keep:
+                break
+        out += kept
+    return out
+
+
 def solve_sites(F, g, cls, cfg, workers, reqs=(), obs=(), soft=False):
     from ortools.sat.python import cp_model
     cap = cfg.get("share_cap", 4)
@@ -419,6 +697,56 @@ def solve_sites(F, g, cls, cfg, workers, reqs=(), obs=(), soft=False):
             if not soft:
                 m.Add(sum(z for _, z in zs) >= 1)
         zreq.append((r, zs))
+    zroom = []                                       # cap room: a ball-only cap's legal spot at its ball's via
+    cr = cfg.get("cap_room")
+    if cr:
+        qof = {F.at[q]["ball"]: q for q in F.at}
+        xi, yi = [], []
+        S = lambda v: int(round(v * 1000))
+        keys_at = {t: {key[b] for b in qs} for t, qs in by_site.items()}
+        yc, ycuse = {}, collections.defaultdict(list)   # cap-only vias: an empty site no ball takes (#44)
+        knet = dict(knet)
+        if cr.get("free_vias"):
+            fmr = cr.get("free_via_min_ring", cfg.get("min_site_ring", 2))
+            bar = cfg.get("_barred", {})
+            for n in {c.get("ground_net", cr.get("ground_net", "GND")) for c in cr["caps"]}:
+                k = "CAPVIA:" + n
+                knet[k] = n
+                for t in F.empties():
+                    if F.ring(t) >= fmr and t not in bar:
+                        yc[(t, k)] = m.NewBoolVar("")
+                        keys_at.setdefault(t, set()).add(k)
+                        real = [y[(t, k2)] for k2 in {key[b] for b in by_site.get(t, [])}]
+                        m.Add(sum(real) + yc[(t, k)] <= 1)
+        Y = lambda t, k: yc[(t, k)] if (t, k) in yc else y[(t, k)]
+        for cap in cr["caps"]:
+            q = qof.get(cap["ball"])
+            if q not in cand:
+                req_info.append(dict(tag=cap["tag"], net="?", why=f"ball {cap['ball']} takes no site via"))
+                continue
+            spots = cap_room_cands(F, cfg, cr, cap, q, cand[q], keys_at, key, knet)
+            zs = []
+            for sp in spots:
+                z = m.NewBoolVar("")
+                m.AddImplication(z, x[(q, sp["sp"])])
+                m.AddImplication(z, Y(sp["sg"], sp["gkey"]))
+                if (sp["sg"], sp["gkey"]) in yc:
+                    ycuse[(sp["sg"], sp["gkey"])].append(z)
+                for t, k in sp["forbid"]:
+                    m.AddImplication(z, Y(t, k).Not())
+                for bx, by, bw, bh in sp["boxes"]:
+                    xi.append(m.NewOptionalFixedSizeIntervalVar(S(bx), S(bw), z, ""))
+                    yi.append(m.NewOptionalFixedSizeIntervalVar(S(by), S(bh), z, ""))
+                zs.append((sp, z))
+            if not zs:
+                req_info.append(dict(tag=cap["tag"], net=short(F.at[q]["net"]), why="no legal spot at any site"))
+            elif not soft:
+                m.Add(sum(z for _, z in zs) >= 1)
+            zroom.append((cap, zs))
+        if xi:
+            m.AddNoOverlap2D(xi, yi)
+        for tk, v in yc.items():                     # a cap-only via exists only for a cap that uses it
+            m.Add(v <= sum(ycuse[tk])) if ycuse[tk] else m.Add(v == 0)
     if any("why" in i for i in req_info) and not soft:
         return None, dict(status="REQUIRED PAD WITH NO SITE", need=len(need), required=req_info), cand
     diag = collections.defaultdict(list)             # lattice square (lower-left corner) -> its diagonal stubs
@@ -447,7 +775,14 @@ def solve_sites(F, g, cls, cfg, workers, reqs=(), obs=(), soft=False):
                 b = m.NewBoolVar("")
                 m.Add(sum(z for _, z in zs) >= b)
                 mz.append(b)
+        for _, zs in zroom:
+            if zs:
+                b = m.NewBoolVar("")
+                m.Add(sum(z for _, z in zs) >= b)
+                mz.append(b)
         order = (("served", served, 1), ("required_met", sum(mz), 1)) + order[:1]
+        if cfg.get("soft_pads_first"):               # which balls the required pads / cap room would cost
+            order = (order[1], order[0], order[2])
     for name, obj, sense in order:
         m.Maximize(obj) if sense > 0 else m.Minimize(obj)
         st = sv.Solve(m)
@@ -465,6 +800,8 @@ def solve_sites(F, g, cls, cfg, workers, reqs=(), obs=(), soft=False):
         info["unserved"] = sorted(F.at[q]["ball"] + " " + short(F.at[q]["net"]) for q in need if q not in pick)
         info["required_unmet"] = sorted(r.get("tag", "?") + " " + r["net"] for r, zs in zreq
                                         if not any(sv.Value(z) for _, z in zs))
+        info["required_unmet"] += sorted(c["tag"] + " cap room at " + c["ball"] for c, zs in zroom
+                                         if not any(sv.Value(z) for _, z in zs))
         return pick, info, cand
     if reqs:
         rr = []
@@ -472,6 +809,20 @@ def solve_sites(F, g, cls, cfg, workers, reqs=(), obs=(), soft=False):
             got = sorted((math.dist((r["x"], r["y"]), F.xy(s)), F.xy(s)) for s, z in zs if sv.Value(z))
             rr.append(dict(tag=r.get("tag"), net=r["net"], via=list(got[0][1]), mm=round(got[0][0], 3)))
         info["required"] = rr
+    if zroom:
+        rr = []
+        for c, zs in zroom:
+            sp = next(s for s, z in zs if sv.Value(z))
+            e = dict(tag=c["tag"], ball=c["ball"], spots=len(zs), power_via=list(F.xy(sp["sp"])),
+                     gnd_via=list(F.xy(sp["sg"])), gnd_via_new=sp["gkey"].startswith("CAPVIA:"), centre=list(sp["centre"]), power_dir=list(sp["dir"]),
+                     power_pad=list(sp["p1"]), gnd_pad=list(sp["p2"]), L_power=sp["L1"], L_gnd=sp["L2"])
+            if cr.get("pin1_rot"):
+                e["rot"] = next((float(r) for r, v in cr["pin1_rot"].items() if tuple(v) == tuple(sp["dir"])), None)
+            if "angle" in sp:                         # a rotated spot: power pad toward `angle` (y down)
+                e["angle"] = sp["angle"]
+                e["rot"] = round(((180 - sp["angle"]) + 180) % 360 - 180, 3)
+            rr.append(e)
+        info["cap_room"] = rr
     return pick, info, cand
 
 
@@ -522,7 +873,7 @@ def cmd_plan(a):
         info["why"] = {k: why.get(k) for k in ("stages", "unserved", "required_unmet")}
         print(f"  INFEASIBLE -- relaxed (most balls served, then required pads): {why.get('stages')}")
         print(f"    unserved balls ({len(why.get('unserved') or [])}): {' '.join(why.get('unserved') or [])}")
-        if reqs:
+        if reqs or cfg.get("cap_room"):
             print(f"    required pads unmet ({len(why.get('required_unmet') or [])}): "
                   f"{' '.join(why.get('required_unmet') or [])}")
 
@@ -630,6 +981,12 @@ def cmd_plan(a):
     for r in info.get("required", []):
         if "why" in r:
             print(f"  REQUIRED {r['tag']} {r['net']}: {r['why']}")
+    for r in info.get("cap_room", []):
+        print(f"  cap room {r['tag']} at {r['ball']}: power via {r['power_via']} (link {r['L_power']}), GND via "
+              f"{r['gnd_via']}{' NEW (cap only)' if r['gnd_via_new'] else ''} (link {r['L_gnd']}), centre {r['centre']} power pad toward {r['power_dir']}"
+              f" -- one of {r['spots']} spots")
+    if cfg.get("cap_room") and pick:
+        print(f"cap room: {len(info['cap_room'])} of {len(cfg['cap_room']['caps'])} ball-only caps have a legal spot")
     if reqs and pick:
         far = max(info["required"], key=lambda r: r["mm"])
         print(f"required pads: {len(reqs)} of {len(reqs)} get a same-net via on their axis in reach "
