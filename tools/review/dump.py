@@ -33,6 +33,7 @@ own nanometre grid, so nothing is lost.
   vias          uuid, net, at, d (pad diameter), drill, type, layers (every
                 copper layer of its span, top first), flashed (the layers
                 where KiCad draws its pad; the others carry its bare hole)
+                drop_unused (its 'remove unconnected layers' property)
   zones         uuid, net, name, layers, priority, keepout (a rule area: what
                 it forbids), clearance, min_width, box, outline (polygons with
                 holes), and filled per layer: area and the islands, each with
@@ -332,7 +333,8 @@ def dump(board_dir):
                 uuid=t.m_Uuid.AsString(), net=t.GetNetname(), at=xy(t.GetPosition()),
                 d=r6(mm(t.GetWidth(top))), drill=r6(mm(t.GetDrillValue())),
                 type=VIA_TYPES.get(t.GetViaType(), str(t.GetViaType())),
-                layers=[name(lid) for lid in span], flashed=[name(lid) for lid in span if t.FlashLayer(lid)]))
+                layers=[name(lid) for lid in span], flashed=[name(lid) for lid in span if t.FlashLayer(lid)],
+                drop_unused=bool(t.GetRemoveUnconnected())))
         elif cls == "PCB_ARC":
             pts, sweep = arc_points(t)
             out["arcs"].append(dict(

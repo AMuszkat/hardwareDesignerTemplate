@@ -194,7 +194,8 @@ def hand_board():
         board=dict(copper_layers=["F.Cu", "B.Cu"], outline_box=[-2, -2, 20, 20], edges=[], thickness=1.6,
                    rules=dict(clearance=0.2), netclasses={}, net_class={}),
         parts=[dict(ref=r, value="", footprint="", at=at, rot=0, side="F", courtyard=None, box=None, dnp=False)
-               for r, at in (("R1", [12, 0]), ("R2", [15, 5]), ("R4", [12.3, 2.4]), ("R5", [3, 6]), ("J1", [2, 15]), ("H1", [2, 17]))],
+               for r, at in (("R1", [12, 0]), ("R2", [15, 5]), ("R4", [12.3, 2.4]), ("R5", [3, 6]), ("J1", [2, 15]), ("H1", [2, 17]))]
+        + [dict(ref="V1", value="", footprint="", at=[60, 0], rot=0, side="F", courtyard=[58, -2, 62, 2], box=None, dnp=False)],
         tracks=[
             tr("A", "F.Cu", (0, 0), (10, 0)), tr("B", "F.Cu", (0, 0.5), (10, 0.5)),
             # net C: a chain with a 45, a 45, a 90 and a 26.57-degree joint, and a tee
@@ -225,7 +226,17 @@ def hand_board():
               dict(uuid="vP", net="P", at=[40, 0], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
                    flashed=["F.Cu", "B.Cu"]),
               dict(uuid="vG", net="GNDX", at=[40, 3], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
-                   flashed=["F.Cu", "B.Cu"])],
+                   flashed=["F.Cu", "B.Cu"]),
+              # in V1's courtyard (58, -2)-(62, 2): one drops its unconnected pads, one keeps them, one on the
+              # courtyard's corner from a dump without the key; a fourth 2 mm outside
+              dict(uuid="vd", net="VV", at=[59, 0], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
+                   flashed=["F.Cu"], drop_unused=True),
+              dict(uuid="vk", net="VV", at=[61, 0], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
+                   flashed=["F.Cu", "B.Cu"], drop_unused=False),
+              dict(uuid="vu", net="VV", at=[62, 2], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
+                   flashed=["F.Cu", "B.Cu"]),
+              dict(uuid="vo", net="VV", at=[64, 0], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
+                   flashed=["F.Cu", "B.Cu"], drop_unused=False)],
         pads=[
             pad("R1", "1", "B", (12, 1.0), rect(12, 1.0, 1.0, 0.5), 0.0),
             pad("R1", "2", "A", (12, -1.0), [[12, -1.0]], 0.4),
@@ -409,6 +420,16 @@ def hand_checks(geom, path, c):
     c.eq("conn C: one piece", [(p["pads"], p["tracks"]) for p in cn["pieces"]], [(["R5.1"], 6)])
     c.eq("conn C: its three open ends", sorted(e["at"] for e in cn["loose"]), [(0.0, 5.0), (4.0, 9.0), (6.0, 8.5)])
     c.eq("conn M: the arc joins its track; two open ends", (len(G.conn("M")["pieces"]), len(G.conn("M")["loose"])), (1, 2))
+    # bare: P1.1 has its track's end, P2.1 its B.Cu track's, R5.1 the tracks through it; P3.1's stub ends
+    # 0.1 short; R1.2 (r 0.4 at (12, -1)) is 0.3 from its net's via (r 0.3 at (12, 0)); R1.1's net B runs 2 mm away
+    c.eq("bare: the pads no copper of their net reaches", [r["pad"] for r in G.bare(["P1", "P2", "P3", "R5", "R1"])],
+         ["R1.1", "R1.2", "P3.1"])
+    c.eq("bare: a pad a pour holds is not bare; a pad with no net is not asked", G.bare(["H1", "P1"]), [])
+    # unused-pads: the vias in V1's courtyard, its edge included
+    up = G.unused_pads([58, -2, 62, 2])
+    c.eq("unused-pads: vias in the box", [r["via"]["uuid"] for r in up], ["vd", "vk", "vu"])
+    c.eq("unused-pads: drops / keeps / unknown", [r["drop"] for r in up], [True, False, None])
+    c.eq("unused-pads: pads on, of layers", [(r["flashed"], r["span"]) for r in up], [(1, 2), (2, 2), (2, 2)])
     # lengths
     ln = {r["net"]: r for r in G.lengths()}
     c.eq("lengths P", (round(ln["P"]["total"], 9), ln["P"]["layers"], ln["P"]["segments"], ln["P"]["vias"]),

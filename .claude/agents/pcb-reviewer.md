@@ -145,6 +145,10 @@ query on the base snapshot (the folder `CHANGES.md` names in its first line).
 | every net's length at once: per layer and summed, only tracks a width or narrower (a neck-down's whole length on a net), only inside a rectangle, only nets over a limit | `lengths [NETS] [--max-width W] [--box X0,Y0,X1,Y1] [--layer L,L] [--over D]` |
 | is a net one piece joining all its pads; its loose track ends (the DRC row's *unconnected* is a capped list) | `conn NET` |
 | the nearest via of a net to each via, centre to centre (the `stitch via` check's measure) | `stitch SEL --to GND [--over D]` |
+| which pads of a part no copper of their net reaches -- a supply or GND ball with no stub, no via and no pour (an unrouted signal is bare too: name the nets) | `bare REF [REF ...] --net 'GND,+1V8,VDD_*'` |
+| the vias in a part's courtyard (or a rectangle): which drop their unconnected inner pads and which keep a pad on every layer -- the fab page's non-functional-pads row; no DRC rule and no board gate tests the property | `unused-pads REF` or `unused-pads X0,Y0,X1,Y1` |
+| a via or track a moved part left behind: a piece of its net with no pad in it (`pieces` rows with 0 pads) | `conn NET` |
+| a capacitor to the ball it is named for, pad centre to ball centre (the `centre` column) | `gap C12.1 U1.A5 --any-layer` |
 | the length a track runs nearer than G to each foreign net on its layer (crosstalk spacing, a class clearance an area rule switches off) | `coupled SEL --within G [--ignore NET] [--no-pours]` |
 | the length a track lies over or under foreign copper on the adjacent layers, in plan view, and with copper on both sides at once (no plane beside it) | `overlap SEL [--adjacent L1,L2] [--margin M] [--ignore NET]` |
 | what a via at a point would meet: nearest copper per layer, hole to hole, the outline | `probe X,Y --radius R --drill D [--net NET]` |

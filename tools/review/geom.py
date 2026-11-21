@@ -27,6 +27,9 @@ cannot answer is written as a script in tmpWork/ and NAMED in the report's
     overlap  SEL [--adjacent L,L] [--margin M]   the length its tracks lie over / under foreign copper of other layers
     probe    X,Y [--radius R] [--drill D] [--net N]   what a disc at a point would meet on each layer, hole and edge
     box      X0,Y0,X1,Y1         every object in a rectangle
+    bare     REF [REF ...] [--net N,N]   the pads of a part that no copper of their net reaches (a ball with no stub, no via, no pour)
+    unused-pads REF | X0,Y0,X1,Y1   the vias in a part's courtyard (or a rectangle): which drop their unconnected inner
+                                 pads (KiCad's 'remove unconnected layers') and which keep a pad on every layer
 
 SEL -- what a query is about:
 
@@ -778,6 +781,44 @@ class Geometry:
                 out.append(it)
         return out
 
+    def bare(self, refs):
+        """The pads of the named parts that no copper of their net reaches: [{pad, net, at}].
+
+        A pad is BARE when it has a net (not empty, not KiCad's 'unconnected-(...)') and no
+        track, arc, via (its pad or, where it has none on that layer, its hole), copper shape or
+        pour of that net touches it on a layer the pad is on -- the same touch as `conn` (copper
+        overlapping or gap 0.0, or one's first point inside the other).  Another PAD of the net
+        does not count: two lands side by side are not joined by standing close."""
+        want, rows = set(refs), []
+        fills = [i for i in self.items if i.kind == "pour"]
+        for it in self.items:
+            if it.kind != "pad" or it.src["ref"] not in want or not it.net or it.net.startswith("unconnected-"):
+                continue
+            mine, hit = it.edges(), False
+            for j, edges in self._near(it.box, 0.0).items():
+                o = self.items[j]
+                if o.net != it.net or o.kind in ("pad", "pad-hole", "hole") or not (o.layers & it.layers):
+                    continue
+                g = min(seg_seg(a, e, c, d)[0] for a, e in mine for c, d in edges) - it.r - o.r
+                if g <= 1e-9 or o.contains(it.pts[0]) or it.contains(o.pts[0]):
+                    hit = True
+                    break
+            if not hit:
+                hit = any(o.net == it.net and (o.layers & it.layers) and o.contains(it.pts[0]) for o in fills)
+            if not hit:
+                rows.append(dict(pad=f"{it.src['ref']}.{it.src['num']}", net=it.net, at=tuple(it.src["at"][:2])))
+        return rows
+
+    def unused_pads(self, box):
+        """The vias whose centre lies in a rectangle (its edge included), each with what it does
+        with its unconnected pads: [{via, drop, flashed, span}].  drop is the via's own property
+        (KiCad's 'remove unconnected layers'; None when the dump is older than the key); flashed
+        and span count the copper layers it has a pad on and the layers it crosses."""
+        x0, y0, x1, y1 = min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3])
+        e = 1e-9
+        return [dict(via=v, drop=v.get("drop_unused"), flashed=len(v.get("flashed", v["layers"])), span=len(v["layers"]))
+                for v in self.d.get("vias", []) if x0 - e <= v["at"][0] <= x1 + e and y0 - e <= v["at"][1] <= y1 + e]
+
     def others_in_box(self, box):
         """What is in a rectangle besides copper: {parts, texts, zones}.  A part is in when its
         courtyard box (its pads' box without one) overlaps the rectangle; a text when its box
@@ -1160,7 +1201,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("snapshot", help="a PCB snapshot folder (out/reviews/<board>/<id>-pcb) or a geometry.json")
     ap.add_argument("query", choices=["info", "show", "nearest", "gap", "label", "joints", "via-pad", "holes",
-                                      "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box"])
+                                      "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box",
+                                      "bare", "unused-pads"])
     ap.add_argument("args", nargs="*", help="the query's SEL / NET / REF / box")
     ap.add_argument("--layer", help="one copper layer")
     ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest; "
@@ -1174,7 +1216,8 @@ def main(argv=None):
     ap.add_argument("--box", dest="in_box", help="lengths: X0,Y0,X1,Y1 -- only the length inside this rectangle")
     ap.add_argument("--radius", type=float, default=0.0, help="probe: the disc's radius (a via's pad / 2)")
     ap.add_argument("--drill", type=float, help="probe: a hole of this diameter at the point, for hole to hole")
-    ap.add_argument("--net", help="probe: the net the disc would be of (its own copper is not foreign)")
+    ap.add_argument("--net", help="probe: the net the disc would be of (its own copper is not foreign); "
+                    "bare: only pads of these nets (names or patterns, comma-separated)")
     ap.add_argument("--below", type=float, help="via-pad, holes, label: only rows under this (mm); holes default 1.0")
     ap.add_argument("--ignore", action="append", default=[], help="nearest, coupled, overlap: a net (or pattern) that is not foreign (a pair's other half); repeatable")
     ap.add_argument("--no-pours", action="store_true", help="nearest, coupled: leave zone fills out")
@@ -1189,9 +1232,11 @@ def main(argv=None):
     d = G.d
     q = a.query
     need = {"show": 1, "nearest": 1, "gap": 2, "copper": 1, "box": 1, "conn": 1, "stitch": 1, "coupled": 1,
-            "overlap": 1, "probe": 1}
+            "overlap": 1, "probe": 1, "unused-pads": 1}
     if q in need and len(a.args) != need[q]:
         ap.error(f"{q} takes {need[q]} argument(s)")
+    if q == "bare" and not a.args:
+        ap.error("bare takes one or more part references")
     if q == "lengths" and len(a.args) > 1:
         ap.error("lengths takes one net name or pattern, or none (every net)")
     if q == "stitch" and not a.to:
@@ -1404,6 +1449,43 @@ def main(argv=None):
         print("texts: " + (", ".join(f"'{t['text']}' {t['layer']} {fmt_pt(t['at'])}" for t in o["texts"]) or "none"))
         print("zones: " + (", ".join(f"{short(z['net'])} {'/'.join(z['layers'])}" + (" (rule area)" if z.get("keepout") else "")
                                      for z in o["zones"]) or "none"))
+    elif q == "bare":
+        rows = G.bare(a.args)
+        if a.net:
+            only = {n for pat in a.net.split(",") for n in G.net_list(pat)}
+            rows = [r for r in rows if r["net"] in only]
+        emit(a, ["pad", "net", "at"], [[r["pad"], short(r["net"]), fmt_pt(r["at"])] for r in cut(rows)], rows,
+             (more(rows) + "\n" if more(rows) else "")
+             + f"{len(rows)} pad(s) of {', '.join(a.args)}" + (f" on {a.net}" if a.net else "") + f" with a net and no track, via, shape or pour of it touching them")
+    elif q == "unused-pads":
+        arg = a.args[0]
+        part = next((p for p in d.get("parts", []) if p["ref"] == arg), None)
+        if part:
+            box = part.get("courtyard") or part.get("box")
+            if not box:
+                ap.error(f"{arg} has no courtyard and no pad box in this dump")
+            where = f"{arg}'s courtyard"
+        else:
+            try:
+                box = [float(v) for v in arg.replace("box:", "").split(",")]
+                assert len(box) == 4
+            except (ValueError, AssertionError):
+                ap.error(f"unused-pads takes a part reference or X0,Y0,X1,Y1; no part is named {arg}")
+            where = "the rectangle"
+        rows = G.unused_pads(box)
+        keep = [r for r in rows if r["drop"] is False]
+        unknown = [r for r in rows if r["drop"] is None]
+        if a.json:
+            print(json.dumps(dict(box=box, vias=len(rows), drop=sum(1 for r in rows if r["drop"]), keep=len(keep), unknown=len(unknown),
+                                  keeping=[dict(net=r["via"]["net"], at=r["via"]["at"], flashed=r["flashed"], span=r["span"]) for r in keep]), indent=1))
+            return 0
+        print(f"{where} ({', '.join(f'{v:g}' for v in box)}): {len(rows)} via(s); {sum(1 for r in rows if r['drop'])} drop their "
+              f"unconnected pads, {len(keep)} keep a pad on every layer" + (f", {len(unknown)} unknown (a dump older than the key: "
+              "re-dump the board)" if unknown else ""))
+        table(["via that keeps its pads", "pads on", "of layers"],
+              [[f"{short(r['via']['net'])} {fmt_pt(r['via']['at'])}", r["flashed"], r["span"]] for r in cut(keep)])
+        if more(keep):
+            print(more(keep))
     return 0
 
 
