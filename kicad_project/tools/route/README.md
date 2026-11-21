@@ -1115,6 +1115,22 @@ GND vias into the depopulated ball sites, as NXP's EVK does, let every DRAM
 net out on three layers. `fanout.py plan` proposes that model;
 `fanout.py layers` says how many nets it lets out, all layers at once.
 
+- **`bga_fanout.py` -- the ring/site rule as an exact plan, counts included** (board1 D115, NXP AN10778
+  §4.3). `tools/.venv/bin/python tools/route/bga_fanout.py plan --board B --config <board>/routing/U1_fanout.json
+  --out P.json --vias-out V.json` (OR-Tools; it fetches the balls through `tools/kpy` itself). Rings 1..R leave on
+  the top layer and are matched exactly to lanes per side (a gap between two ring-1 lands, or an empty ring-1
+  site; corner ring-2 balls either side); ring-1 power/GND goes out of the field; every other connected ball gets
+  an EMPTY adjacent site by CP-SAT: one net a site, a signal alone, power/GND up to `share_cap` a via, no two
+  diagonal stubs in a square, no site in a ring under `min_site_ring` (it walls the lanes), then lexicographically
+  the most vias, the core nets sharing last, the fewest diagonals. It prints the clearance arithmetic (site via to
+  land, diagonal stub to lands and vias, lane gap) and drops a diagonal that does not clear; per rail: balls, vias,
+  balls-a-via histogram and A a via (`rail_current_A` -- say whose number it is). `--vias-out` is `fanout.py`'s
+  model format, for `escape_bound.py` / `fanout.py layers` -- the escape is NOT proved by this tool. Trap: the
+  board's pad size is taken from `land` in the config, so a footprint not yet changed to its new land still
+  plans at the new one -- say so. Classify by NET (`power_nets`), not by the pinout's group: board1's B25 is a
+  'dedicated' ball on VDD_SNVS_0V8, and s18 counted it a signal (256 / 211 vs the tool's 257 / 224 with the 14
+  DNP-strap BOOT_CFG balls).
+
 - **The pitch decides which rules apply, and `plan` prints the arithmetic.**
   A via fits between four balls when `hypot(px, py) / 2 >= land/2 + clearance
   + via/2` (and the pitch >= via + clearance). Then the field is **dog-bone**:
