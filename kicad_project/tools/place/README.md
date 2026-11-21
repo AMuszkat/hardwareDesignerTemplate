@@ -365,3 +365,21 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
   (board1 tmpWork/D116_comb/world.py + chkfilt.py): export from a scratch board what check judges against, run
   check's per-part tests (its `rgap` imported) on each candidate, and prove the filter by reproducing a known
   check log exactly on an old plan.
+- **A candidate planner that does not decide: read the solver's own log and count, before giving it more time.**
+  board1 D116, a CP-SAT cap planner (100 parts, 56,000 candidate spots): three runs, 76 minutes, nothing decided.
+  What it was, each found by a count and none by waiting:
+  1. *Generation ran on one core and was repeated in every run* (44 of the 76 minutes). Save the candidates (a
+     pickle beside the plan, `--cands`) and generate them with `par.pmap`, one job a footprint/net group; prove the
+     parallel result EQUAL to the serial one (583 s -> 119 s, the two pickles identical).
+  2. *The candidates were cut to the nearest K legal spots a part.* Forty parts shared one patch, so the last
+     five had no legal spot left against the others' picks and the hard model could never close. Keep every legal
+     spot (thin by a coarser lattice when the count must drop), never the nearest K -- and before re-solving,
+     probe each unplaced part: how many of its candidates are legal against the plan's picks (0 at K = 500,
+     455-988 with every spot), and which parts block the rest.
+  3. *The search did not move.* With `log_search_progress` on, 20 workers showed about 1,000 conflicts each in
+     two minutes on ONE `AddNoOverlap2D` of 52,755 optional rectangles. That is a model to shrink, not a time
+     limit to raise: pin what will not move (44 passives were 47 % of the bools; two moved), solve soft first,
+     then place only the unplaced parts with every other pick fixed (`AddHint` + fixing all but a neighbourhood:
+     12 free parts OPTIMAL in 232 s, 3 free in 1 s, where the whole model was UNKNOWN after 1500 s).
+  4. *Boxes go to the solver as integers rounded OUTWARD* (floor the low edge, ceil the high). `round()` dropped
+     a 0.1 um safety and left a pair at exactly the courtyard gap, which `place.py check` refuses.
