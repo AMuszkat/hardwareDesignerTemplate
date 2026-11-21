@@ -358,3 +358,10 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
 - **After a redraw, read the board's net names before writing a plan.** A net that now runs between two sheets takes the
   ROOT's name (`/BT_HOST_WAKE`, no sheet path); `schupdate.py` renames it on the board and the copper follows, but a plan
   or a build script that still spells the old path stops with "net not on the board".
+- **A script that generates candidate spots for parts (a cap planner, a search) filters every spot with
+  `place.py check`'s own tests BEFORE its solve -- import them, do not re-model them.** board1 D116: a cap
+  planner with its own obstacle model left out the keep-outs of `placement.json`, the unmoved parts and the
+  board's other copper; its FEASIBLE plan then failed `place.py check` 21 times and the solve was wasted. Pattern
+  (board1 tmpWork/D116_comb/world.py + chkfilt.py): export from a scratch board what check judges against, run
+  check's per-part tests (its `rgap` imported) on each candidate, and prove the filter by reproducing a known
+  check log exactly on an old plan.
