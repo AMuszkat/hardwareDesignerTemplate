@@ -27,8 +27,9 @@
   edge    audit the copper already on the board against the copper-to-edge
           minimum (the guide's "copper to edge", else Board Setup's).
   audit   every rule of the guide on the copper already laid: DRC, angles,
-          edge, copper shape, via links, ground beside, pour islands.  One
-          PASS/FAIL line each; exit 1 on a failure.  The group report quotes it.
+          edge, copper shape, via links, ground beside, non-functional pads,
+          pour islands.  One PASS/FAIL line each; exit 1 on a failure.  The
+          group report quotes it.
   rules   print the rules the guide's table switches on, each with its source.
 
 THE GATE IS KICAD'S DRC, NOT ARITHMETIC OF MINE.  A hand-written clearance
@@ -48,9 +49,21 @@ A plan may carry, besides tracks/vias/zones:
   ripvias   [{"net", "at": [x, y]}]                                  vias to remove first
   polyrips  [{"net", "layer", "at": [x0, y0]}]                      net-tied polygons to remove (first vertex)
   polys     [{"net", "layer", "pts": [[x, y], ...]}]                 net-tied copper polygons to add
+  nfpvias   [{"net", "at": [x, y]}]                                  vias ON THE BOARD that take "remove unconnected
+                                                                     layers" IN PLACE (their UUID, and so the manifest
+                                                                     of the group that laid them, is kept)
   thermals  true                                                     type the guide's thermal policy, then refill
 `apply` lays them in that order, in one save, and the manifest records what
 was added (by UUID) and what was removed (a rip is undone from the backup).
+
+NON-FUNCTIONAL PADS.  Where the fab removes the unconnected inner pads of the
+vias inside named courtyards (14_fab), <board>/routing/prelayout.json names
+them: "nfp_vias": {"refs": ["U1", "U300"], "why": "<the handoff line>"}.  Then
+`check` refuses a plan that leaves a via inside such a courtyard without
+KiCad's "remove unconnected layers" (a plan via carries "nfp": true), `apply`
+reads the flag back from the saved file, and `audit` fails on every such via
+on the board (the "nfp" line).  DRC never sees it: the inner via-to-via rule
+allows the pads.  Without the key the rule is not run, and `audit` says so.
 
 A STALE PLAN IS REFUSED BEFORE ANY GATE (origin.py; exit 5).  A planner writes
 <plan>.origin.json beside its plan: the spec's hash and the board file's.
@@ -370,13 +383,37 @@ class RBoard(Board):
             n["polyrips"] += 1
         return n
 
+    def retype_plan(self, plan):
+        """The plan's "nfpvias": each names a via ON THE BOARD (net and position, as
+        "ripvias" does) that takes KiCad's "remove unconnected layers" in place -- the
+        fab's non-functional pad removal (14_fab), start and end layers kept.  The via
+        keeps its UUID, so the manifest of the group that laid it still names it and
+        `rip` of that group still removes exactly its copper; ripping the via and laying
+        it again would move it into this plan's manifest.  Returns the vias named (one
+        already typed is named too: the plan states the board's state, it does not
+        depend on it)."""
+        mm = self.pn.ToMM
+        out = []
+        vias = [t for t in self.b.GetTracks() if t.Type() == self.pn.PCB_VIA_T] if plan.get("nfpvias") else []
+        for r in plan.get("nfpvias", []):
+            hit = [t for t in vias if (t.GetNetname() == r["net"] or short(t.GetNetname()) == r["net"])
+                   and abs(mm(t.GetPosition().x) - r["at"][0]) < 0.01 and abs(mm(t.GetPosition().y) - r["at"][1]) < 0.01]
+            if len(hit) != 1:
+                die(f"plan types a {r['net']} via at {r['at']} for \"remove unconnected layers\" (nfpvias) and "
+                    f"{'it is not on the board' if not hit else f'{len(hit)} vias of that net stand there'}")
+            hit[0].Padstack().SetUnconnectedLayerMode(self.pn.UNCONNECTED_LAYER_MODE_REMOVE_EXCEPT_START_AND_END)
+            out.append(hit[0])
+        return out
+
     def write_plan(self, plan):
         """Everything the plan declares, onto this in-memory board, in order:
-        rips, then polygons, tracks, vias and zones, then the thermal policy,
-        then a refill.  Returns the items added (and the removal counts)."""
+        rips, the vias re-typed in place ("nfpvias"), then polygons, tracks, vias and
+        zones, then the thermal policy, then a refill.  Returns the items added (and
+        the removal counts, and the vias re-typed)."""
         import poly as POLY
         made = {"tracks": [], "vias": [], "zones": [], "polys": []}
         made["removed"] = self.rip_plan(plan)
+        made["retyped"] = self.retype_plan(plan)
         for q in plan.get("polys", []):
             made["polys"].append(POLY.add(self.b, self.pn, q))
         for t in plan.get("tracks", []):
@@ -661,6 +698,66 @@ def rule_gates(B, plan):
             bad.append(f"plane: a zone on {z['layer']} must be {q['net']}, not {z['net']} ({q['source']})")
     return bad
 
+
+
+# ---------------------------------------------------------------------------
+# non-functional pads: the vias that must drop their unconnected inner pads
+# ---------------------------------------------------------------------------
+
+NFP_SPEC = "routing/prelayout.json"
+
+
+def nfp_rule(B):
+    """The footprints inside whose courtyard every via carries KiCad's "remove unconnected
+    layers" -- the fab's non-functional pad removal, where the handoff's fab page asks for it.
+    From <board>/routing/prelayout.json: "nfp_vias": {"refs": ["U1", "U300"], "why": "<the
+    handoff line>"}.  None when the board does not name any: the rule is then not run.
+
+    No gate tested the flag (board1 RV22.4: 3 vias of a hand-merged plan; RV59.1: all 259 of
+    two courtyards, laid by a merged plan whose vias had no "nfp") and KiCad's DRC cannot: the
+    pads that stay are legal copper, they only thin the planes' webs and make the order's
+    "remove non-functional pads" say something the board does not."""
+    p = B.dir / NFP_SPEC
+    r = json.loads(p.read_text()).get("nfp_vias") if p.exists() else None
+    if not r:
+        return None
+    refs = r.get("refs") or []
+    if not refs or not isinstance(refs, list):
+        die(f"{NFP_SPEC}: \"nfp_vias\" takes {{\"refs\": [\"U1\", ...], \"why\": \"<the handoff line>\"}}")
+    areas = []
+    for ref in refs:
+        fp = B.b.FindFootprintByReference(ref)
+        if fp is None:
+            die(f"{NFP_SPEC}: \"nfp_vias\" names {ref}, which is not on the board")
+        polys = [q for q in (fp.GetCourtyard(B.pn.F_CrtYd), fp.GetCourtyard(B.pn.B_CrtYd)) if q.OutlineCount()]
+        if not polys:
+            die(f"{NFP_SPEC}: \"nfp_vias\" names {ref}, whose footprint has no courtyard")
+        areas.append((ref, polys))
+    return {"refs": refs, "areas": areas, "source": r.get("why") or f"{NFP_SPEC} (no source given)"}
+
+
+def nfp_lacking(B, rule):
+    """The vias on B's board whose centre lies inside one of the rule's courtyards and that
+    keep their unconnected inner pads: [(ref, net, x, y, uuid)], in the board's order."""
+    out = []
+    for t in B.b.GetTracks():
+        if t.Type() != B.pn.PCB_VIA_T or t.GetRemoveUnconnected():
+            continue
+        p = t.GetPosition()
+        ref = next((ref for ref, polys in rule["areas"] if any(q.Contains(p) for q in polys)), None)
+        if ref:
+            out.append((ref, t.GetNetname(), B.mm(p.x), B.mm(p.y), str(t.m_Uuid.AsString())))
+    return out
+
+
+def nfp_text(lack, n=4):
+    """'259 (U1 225, U300 34): GND (26.500, 19.000), ...' -- the count, per part, the first few."""
+    per = defaultdict(int)
+    for ref, *_ in lack:
+        per[ref] += 1
+    return (f"{len(lack)} ({', '.join(f'{r} {k}' for r, k in per.items())}): "
+            + ", ".join(f"{short(net)} ({x:.3f}, {y:.3f})" for _r, net, x, y, _u in lack[:n])
+            + (" ..." if len(lack) > n else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -1030,7 +1127,7 @@ def cmd_check(a, quiet=False, gate=True):
     group = group_of(a.plan, plan)
     for k in plan:
         if k not in ("group", "why", "tracks", "vias", "zones", "necks", "accept", "edge_ok",
-                     "rips", "ripvias", "polyrips", "polys", "thermals", "marks", "guides"):
+                     "rips", "ripvias", "polyrips", "polys", "nfpvias", "thermals", "marks", "guides"):
             die(f"plan: unknown key {k!r}")
     # the baseline: from the cache, else kicad-cli started NOW, running while the scratch is built
     base_run = drccache.start(B.pcb)
@@ -1058,6 +1155,18 @@ def cmd_check(a, quiet=False, gate=True):
         ocs = (open_conn(str(Path(B.pcb).resolve())), open_conn(S.b))
         copper_notes, cbad = copper_gates(B, S)
         bad += cbad
+        nfp = nfp_rule(B)
+        if nfp:
+            # a via this plan leaves inside a named courtyard with its unconnected inner pads: one it
+            # lays without "nfp": true.  Those already on the board are the audit's, counted here
+            n0 = nfp_lacking(B, nfp)
+            n1 = nfp_lacking(S, dict(nfp, areas=nfp_rule(S)["areas"]))
+            old = {u for *_x, u in n0}
+            new_nfp = [v for v in n1 if v[4] not in old]
+            copper_notes.append(f"nfp: {len(n0)} via(s) inside the courtyards of {', '.join(nfp['refs'])} keep their "
+                                f"unconnected inner pads before, {len(n1)} with this plan ({len(new_nfp)} new) ({nfp['source']})")
+            bad += [f"nfp: the plan's {short(net)} via at ({x:.3f}, {y:.3f}) is inside {ref}'s courtyard and has no "
+                    f"\"nfp\": true -- it would keep a pad on every layer ({nfp['source']})" for ref, net, x, y, _u in new_nfp]
         # a pour this plan splits: DRC passes a pour in pieces, and the audit found it only
         # after apply (board2 R5: vias' antipads cut J1's +5V pins off on a 6 mm2 island)
         i0, i1 = pour_islands(B, a.board), pour_islands(S, a.board)
@@ -1102,6 +1211,7 @@ def cmd_check(a, quiet=False, gate=True):
         print(f"{group}: {nseg} segments, {len(made['vias'])} vias, {len(made['zones'])} zones, "
               f"{len(made['polys'])} polygons" + (f"; removes {rm['rips']} segments, {rm['ripvias']} vias, "
                                                   f"{rm['polyrips']} polygons" if any(rm.values()) else "")
+              + (f"; {len(made['retyped'])} vias typed \"remove unconnected layers\" in place" if made["retyped"] else "")
               + ("; thermals re-typed" if plan.get("thermals") else ""))
         oc0, oc1 = ocs
         print(f"open connections {oc0} -> {oc1} ({oc0 - oc1} closed; KiCad's connectivity)")
@@ -1170,6 +1280,8 @@ def cmd_apply(a):
     shutil.copy2(B.pcb, backup)
     made = B.write_plan(plan)
     removed = made.pop("removed")
+    retyped = [str(v.m_Uuid.AsString()) for v in made.pop("retyped")]
+    want_nfp = set(retyped) | {str(v.m_Uuid.AsString()) for v, q in zip(made["vias"], plan.get("vias", [])) if q.get("nfp")}
     uuids = {k: [str(i.m_Uuid.AsString()) for i in v] for k, v in made.items()}
     moved = B.save()
     if moved:
@@ -1182,12 +1294,28 @@ def cmd_apply(a):
     if missing:
         shutil.copy2(backup, B.pcb)
         die(f"read-back failed: {len(missing)} items are not on the saved board; restored", 4)
+    # ... and every via this plan typed "remove unconnected layers" ("nfp": true, "nfpvias") has
+    # it in the SAVED file; none of the plan's stands inside a named courtyard without it
+    lost = [t for t in C.b.GetTracks() if t.Type() == C.pn.PCB_VIA_T
+            and str(t.m_Uuid.AsString()) in want_nfp and not t.GetRemoveUnconnected()]
+    nfp = nfp_rule(C)
+    nfp_left = nfp_lacking(C, nfp) if nfp else []
+    mine = set(uuids["vias"]) | set(retyped)
+    nfp_mine = [v for v in nfp_left if v[4] in mine]
+    if lost or nfp_mine:
+        shutil.copy2(backup, B.pcb)
+        die(f"read-back failed: {len(lost)} via(s) the plan types \"remove unconnected layers\" do not have it on the "
+            f"saved board" + (f"; {nfp_text(nfp_mine)} of the plan's vias inside the courtyards keep their unconnected "
+                              f"inner pads ({nfp['source']})" if nfp_mine else "") + "; restored", 4)
     man.parent.mkdir(exist_ok=True)
     rec = {"group": group, "why": plan.get("why", ""),
            "applied": time.strftime("%Y-%m-%d %H:%M"),
            "plan": str(Path(a.plan).resolve().relative_to(ROOT)
                        if str(Path(a.plan).resolve()).startswith(str(ROOT)) else Path(a.plan).name),
            "open_before": before, "open_after": None, "removed": removed, **uuids}
+    if retyped:
+        # NOT this group's copper: `rip` leaves these vias (and their flag) where they are
+        rec["retyped"] = {"nfpvias": retyped}
     # The manifest FIRST: copper without one cannot be ripped, and the DRC
     # below can fail for reasons that have nothing to do with the copper.
     man.write_text(json.dumps(rec, indent=1) + "\n")
@@ -1199,7 +1327,13 @@ def cmd_apply(a):
     print(f"applied {group}: {len(uuids['tracks'])} segments, {len(uuids['vias'])} vias, "
           f"{len(uuids['zones'])} zones, {len(uuids['polys'])} polygons (read back and matched)"
           + (f"; removed {removed['rips']} segments, {removed['ripvias']} vias, {removed['polyrips']} polygons"
-             if any(removed.values()) else ""))
+             if any(removed.values()) else "")
+          + (f"; {len(retyped)} vias typed \"remove unconnected layers\" in place (read back)" if retyped else ""))
+    if nfp:
+        print(f"nfp read-back: {len(want_nfp)} via(s) of this plan carry \"remove unconnected layers\" on the saved board; "
+              + (f"NOT this plan's, still without it inside the courtyards -- {nfp_text(nfp_left)} -- `audit` fails on them"
+                 if nfp_left else f"no via inside the courtyards of {', '.join(nfp['refs'])} is without it")
+              + f" ({nfp['source']})")
     print(f"open connections {before} -> {rec['open_after']} (KiCad's connectivity)")
     print(f"manifest {man.relative_to(a.board)}; backup {backup.name}")
     return 0
@@ -1219,6 +1353,10 @@ def cmd_rip(a):
         print(f"note: {a.plan} also REMOVED {rm.get('rips', 0)} segments, {rm.get('ripvias', 0)} vias and "
               f"{rm.get('polyrips', 0)} polygons when it was applied; rip takes back only what it added -- "
               f"the removed copper is in the backup {B.pcb.name}.{a.plan}-bak")
+    rt = (j.get("retyped") or {}).get("nfpvias") or []
+    if rt:
+        print(f"note: {a.plan} also typed {len(rt)} vias of other groups \"remove unconnected layers\" in place; rip "
+              f"leaves them and their flag -- they are not this group's copper")
     shutil.copy2(B.pcb, B.pcb.with_suffix(f".kicad_pcb.{a.plan}-rip-bak"))
     sha_before = origin.sha_file(B.pcb)
     n = 0
@@ -1346,6 +1484,10 @@ def cmd_rules(a):
     print("\n".join(guide.describe(B.gates)))
     lo, src = edge_min(B)
     print(f"  copper-to-edge used by `edge`: {lo} mm ({src})")
+    nfp = nfp_rule(B)
+    print(f"  non-functional pads: every via inside the courtyards of {', '.join(nfp['refs'])} carries \"remove unconnected "
+          f"layers\" ({NFP_SPEC} \"nfp_vias\": {nfp['source']})" if nfp else
+          f"  non-functional pads: not run -- {NFP_SPEC} has no \"nfp_vias\"")
     return 0
 
 
@@ -1466,6 +1608,17 @@ def cmd_audit(a):
             gate(name, not sites, f"{CK.label(key, rule)}: " + (f"{len(sites)} site(s): " + "; ".join(sites[:4])
                                                                  + (" ..." if len(sites) > 4 else "") if sites else "holds")
                  + f" ({rule['source']})")
+    nfp = nfp_rule(B)
+    if nfp:
+        lack = nfp_lacking(B, nfp)
+        inside = sum(1 for t in B.b.GetTracks() if t.Type() == B.pn.PCB_VIA_T
+                     and any(q.Contains(t.GetPosition()) for _r, polys in nfp["areas"] for q in polys))
+        gate("nfp", not lack, (f"{nfp_text(lack)} of the {inside} via(s) inside the courtyards of {', '.join(nfp['refs'])} keep "
+                               f"their unconnected inner pads" if lack else
+                               f"{inside} via(s) inside the courtyards of {', '.join(nfp['refs'])}, each drops its unconnected "
+                               f"inner pads") + f" ({nfp['source']})")
+    else:
+        print(f"  {'nfp':13s} ----  not run: {NFP_SPEC} has no \"nfp_vias\" (the vias that drop their unconnected inner pads)")
     pours = [z for z in B.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]
     if pours:
         # pour.py's report, in-process on the board already loaded: no second interpreter, pcbnew

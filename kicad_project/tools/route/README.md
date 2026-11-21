@@ -66,6 +66,22 @@ typed, else inside the board folder (`routing/R1.json`).
   Prove it: a plan holding only parts at their own place gives 0 items and exit 0; after `place.py apply` on a scratch
   copy, `route.py check` of the merged plan says `removes N segments, M vias` and `CHECK PASS` (a rip that matches
   nothing fails the plan), and track_dangling does not rise.
+  **The trap: a via that never touched its pad has no pad to lose.** A capacitor's power via set beside the pad at the
+  via-to-pad gap, with no link, waiting for a pour (board1: 43 vias with no pad and no track before D116) touches no pad and
+  no track, so 'touched before, not after' never names it: D116 left two behind (VDDA_1V8 0.102 mm of copper from C48.1,
+  VDD_GPU_VPU_DRAM 0.420 mm from C11.1; review RV59.5). `route.py audit` could not show them either: via_dangling stood
+  at KiCad's 199 limit before and after, all 199 listed on GND. So a BARE cluster (no pad before the move, none after)
+  is judged by what it stands BESIDE -- the pads of its net whose centre is within `--reach MM` of one of its vias'
+  (default 1.27, the handoff's distance for a capacitor's own via; give the board's own; 0 = off): beside a pad before
+  the move and beside none after, of any part, it is named `unlinked, beside C48.1`. A pad that stays in reach, or a
+  moved pad that lands in reach, keeps it; one standing in a zone of its net is a plane via and is only printed
+  (`beside -- decide by hand`, never a rip). It names what THIS plan strands, on the board as it is BEFORE the apply:
+  run after the apply it finds nothing, and a via stranded by an earlier move is a rip you write. Prove it: a plan
+  that moves only the capacitor far away names its bare via; one that shifts it 0.3 mm does not; with two parts in
+  reach (board1: C100.1 and L100.2 at (32.42, 13.1)) moving one names nothing and moving both names it; `--reach 0`
+  prints the list as it was. To see what is already stranded: every via with no pad and no track in KiCad's
+  connectivity and no pad of its net within the reach (board1 after D116: 14 of 36, the two and 12 GND vias older
+  than the move).
 - **`padvias.py` -- vias IN a pad** (a regulator's output or input capacitor, an exposed pad): `--pads REF.PAD[:N],...`
   keeps N centres (or as many as fit) inside each pad, legal on every copper layer (the other nets' copper by the larger
   class clearance, holes by 14_fab's hole gaps, the via-to-pad gap from every OTHER pad), `--pitch` apart, spread from a
@@ -721,8 +737,19 @@ its docstring. What the spec has to be told:
 - **A via a plan lays inside a BGA courtyard carries `"nfp": true`, and the board is read back for it.** Where the fab
   removes non-functional pads (14_fab), a via without it keeps a pad on every layer: DRC is silent, the planes lose
   0.02 mm a side round each one and the order form says something the board does not (board 1's RV22.4: three site
-  vias a hand-merged plan laid; the fanout tools set it, a merged plan does not). `GetRemoveUnconnected()` on each
-  new via before the request.
+  vias a hand-merged plan laid; the fanout tools set it, a merged plan does not). It is a gate now, not a thing to
+  remember -- the rule came back at 259 vias (RV59.1: a 280-via plan built by a script that never wrote the key).
+  Name the parts in `<board>/routing/prelayout.json`, `"nfp_vias": {"refs": ["U1", "U300"], "why": "<the handoff
+  line>"}`, and: `route.py check` refuses a plan via whose centre is inside one of those courtyards without the
+  key (`RULE nfp`; a via already on the board is counted in the note, not charged to the plan); `apply` reads the
+  SAVED board back and restores the backup when a via of the plan lost the flag; `audit` has an `nfp` line that
+  fails on any such via on the board, with the count per part and the first positions (`nfp ---- not run` without
+  the key -- `route.py rules` says which). To repair vias already laid, do not rip and re-lay them: the plan key
+  `"nfpvias": [{"net", "at"}]` sets the flag IN PLACE, so each via keeps its UUID and the group that laid it still
+  rips whole (`ripped 594 of 594`); laid again they belong to the fixing group and the first group's rip leaves
+  them standing (`ripped 335 of 594`, exit 0). Prove the gate both ways on a copy: `audit` fails before and passes
+  after; a one-via plan inside the courtyard without `"nfp"` is refused, the same via with it and a via outside
+  without it are not.
 - **An area rule whose area is wider than the fab's is a hole in DRC: measure what it relaxes.** KiCad's
   `intersectsCourtyard` relaxes a gap wherever BOTH items touch the courtyard -- a track laid along the courtyard
   line is relaxed for its whole length -- and a memory's courtyard can be 3 mm wider each way than its ball array,
