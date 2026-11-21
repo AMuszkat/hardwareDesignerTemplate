@@ -8,7 +8,7 @@ that. Each reads the board's `general_routing_guide.md` (the table) and the
 `.kicad_pro` beside the board; none writes the board — a fix is a `route.py`
 plan, judged by `route.py check` and laid by `route.py apply` like any group.
 
-    tools/kpy tools/copper/shape.py     [--board B] [--out SITES.json] [--dump COPPER.json]
+    tools/kpy tools/copper/shape.py     [--board B] [--out SITES.json] [--dump COPPER.json] [--trackless]
     tools/kpy tools/copper/vialink.py   [--board B] [--out SITES.json]
     tools/kpy tools/copper/vianeed.py   [--board B] [--out OUT.json]
     tools/kpy tools/copper/viafix.py    [--board B] [--out PREFIX] [--push ...]

@@ -1302,14 +1302,25 @@ def copper_gates(B, S):
         # every free end of it reads as a "nub" (a 0.1016 inner-layer track against the 0.055 default)
         thin = min((B.mm(t.GetWidth()) for t in S.b.GetTracks() if t.Type() != B.pn.PCB_VIA_T), default=0.2)
         open_ = min(0.055, thin / 2 - 0.005)
-        s0 = SHAPE.audit(B.b, B.pn, FIELDS=fields, OPEN=open_)
-        s1 = SHAPE.audit(S.b, S.pn, FIELDS=fields, OPEN=open_)
+        # shape.py runs its nub / notch morphology only where a net has a track on the layer.  The plan's FIRST track
+        # of a net on a layer would bring every slot already there (two of its vias, a pad and its unlinked via) into
+        # the count as "new", however far the track is: each board is also judged where only the other has tracks
+        tracked = lambda R: {(t.GetNetname(), t.GetLayerName()) for t in R.b.GetTracks()
+                             if t.Type() == R.pn.PCB_TRACE_T and t.GetStart() != t.GetEnd()}
+        k0, k1 = tracked(B), tracked(S)
+        s0 = SHAPE.audit(B.b, B.pn, FIELDS=fields, OPEN=open_, TRACKLESS=k1 - k0)
+        s1 = SHAPE.audit(S.b, S.pn, FIELDS=fields, OPEN=open_, TRACKLESS=k0 - k1)
         near = lambda x, L: any(t["kind"] == x["kind"] and t["net"] == x["net"] and t["layer"] == x["layer"]
                                 and abs(t["at"][0] - x["at"][0]) <= 0.3 and abs(t["at"][1] - x["at"][1]) <= 0.3 for t in L)
         new = [x for x in s1 if not near(x, s0)]
         gone = [x for x in s0 if not near(x, s1)]
+        hid = [x for x in s0 if x.get("trackless") and near(x, s1)]
         notes.append(f"shape: {len(s0)} sites before, {len(s1)} with this plan ({len(new)} new, {len(gone)} gone) "
                      f"({G['shape']['source']})")
+        for x in hid:
+            notes.append(f"shape: on the board already, not this plan's: {x['kind']} on {x['net']} {x['layer']} at {x['at']} size "
+                         f"{x['size']} -- no audit lists it while the net has no track on that layer; this plan lays the first, "
+                         f"so `audit` lists it once the plan is applied (shape.py --trackless shows it today)")
         bad += [f"shape: new {x['kind']} on {x['net']} {x['layer']} at {x['at']} size {x['size']}" for x in new]
     if G.get("via_link"):
         _, l0, _ = VL.run(B.b, G, B.dir)

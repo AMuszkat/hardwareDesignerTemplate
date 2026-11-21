@@ -3,7 +3,7 @@
 one net make a shape that is not a clean union.  None of these is a DRC error
 or an angle error; all of them are copper the user saw and did not want.
 
-    tools/kpy tools/copper/shape.py [--board B] [--out SITES.json] [--dump COPPER.json]
+    tools/kpy tools/copper/shape.py [--board B] [--out SITES.json] [--dump COPPER.json] [--trackless]
     tools/kpy tools/copper/shape.py --pcb scratch.kicad_pcb --guide <board dir> ...
 
 Each site: kind, net, layer, a point, a size, the item uuids -- for the crop
@@ -26,7 +26,11 @@ Each site: kind, net, layer, a point, a size, the item uuids -- for the crop
 Exempt: a straight 45-degree via link (vialink.py lists it), a round via end,
 the courtyards of the guide's `via field` parts (a BGA's dog-bone V is the
 escape's own shape) and any (net, layer) that has a pour of that net (the pour
-fills the voids; pour.py judges it).  Pieces under --area mm^2, or thinner on
+fills the voids; pour.py judges it).  nub and notch are judged only where a net
+has a TRACK on the layer: a slot between two of its vias, or between a pad and
+its unlinked via, on a layer it has no track on is not listed -- `--trackless`
+lists those too (route.py check judges its before and after on the same nets
+and layers this way).  Pieces under --area mm^2, or thinner on
 average than 0.01 mm, are polygoniser noise and dropped.  OPEN must stay under
 half the thinnest track or the opening eats the track itself.  The .kicad_pro
 must sit beside the board (class widths)."""
@@ -95,8 +99,13 @@ def mask_bare(b, pcbnew, LAYERS, ERR, infield):
     return out
 
 
-def audit(b, pcbnew, LAYERS=None, OPEN=0.055, CLOSE=0.15, AMIN=0.003, FIELDS=(), dump=None):
-    """The sites of the loaded board.  LAYERS: copper layer names (default all)."""
+def audit(b, pcbnew, LAYERS=None, OPEN=0.055, CLOSE=0.15, AMIN=0.003, FIELDS=(), dump=None, TRACKLESS=()):
+    """The sites of the loaded board.  LAYERS: copper layer names (default all).
+    TRACKLESS: (full net name, layer) pairs whose nub / notch morphology is judged although the net has
+    no track on that layer here; True: every such pair that holds a via or a net-tied polygon.  Their
+    sites carry trackless=True.  The morphology otherwise runs only where a net has a track, so the FIRST
+    track a plan lays of a net on a layer brings every slot between that net's vias and pads there into
+    the count: a before / after comparison passes each board the pairs the other one has tracks on."""
     mm = pcbnew.ToMM; FM = pcbnew.FromMM; sh = CM.short
     LAYERS = LAYERS or CM.copper_layers(b, pcbnew)
     ERR = FM(0.005); RND = pcbnew.CORNER_STRATEGY_ROUND_ALL_CORNERS
@@ -337,7 +346,8 @@ def audit(b, pcbnew, LAYERS=None, OPEN=0.055, CLOSE=0.15, AMIN=0.003, FIELDS=(),
                     wall = sum(1 for q in verts if onpv(q)) / max(1, len(verts))
                     if (apex and wall < 0.4) or (not npad and not nvia): skipped['notch at a track joint (a tee or a bend)'] += 1; continue
             site(kind, net, L, x, y, max(mm(bb.GetWidth()), mm(bb.GetHeight())), [], area=round(area, 4), wall=round(wall, 2), apex=apex,
-                 poly=[[round(mm(o.CPoint(i).x), 3), round(mm(o.CPoint(i).y), 3)] for i in range(o.PointCount())])
+                 poly=[[round(mm(o.CPoint(i).x), 3), round(mm(o.CPoint(i).y), 3)] for i in range(o.PointCount())],
+                 **({'trackless': True} if (cur_code, L) in forced else {}))
     joints = collections.defaultdict(list)       # every point where two same-net segments share an end, or one ends on another
     for (code, L), ss in segs.items():
         ends = [(P(t.GetStart()), P(t.GetEnd()), mm(t.GetWidth())) for t in ss]
@@ -348,8 +358,14 @@ def audit(b, pcbnew, LAYERS=None, OPEN=0.055, CLOSE=0.15, AMIN=0.003, FIELDS=(),
                     if math.hypot(C[0] - e[0], C[1] - e[1]) < SNAP or math.hypot(D[0] - e[0], D[1] - e[1]) < SNAP or pt_seg(e, C, D)[0] < SNAP:
                         joints[(code, L)].append(e); break
     keys = sorted(set(segs) | set(pads), key=lambda k: (k[1], k[0]))
-    for code, L in keys:
-        if not segs.get((code, L)): continue                 # a net with no track on this layer has only pads: nothing to judge
+    # a net with no track on a layer is not judged (its pads alone are footprint geometry) -- unless the caller names it
+    held = lambda *ds: {k for d_ in ds for k, v in d_.items() if v and not segs.get(k)}
+    if TRACKLESS is True: forced = held(vias, polys)
+    else:
+        want = {tuple(k) for k in (TRACKLESS or ())}
+        forced = {k for k in held(vias, polys, pads) if (b.FindNet(k[0]).GetNetname(), k[1]) in want} if want else set()
+    for code, L in sorted(set(keys) | forced, key=lambda k: (k[1], k[0])):
+        if not segs.get((code, L)) and (code, L) not in forced: continue
         net = netname(code); cur_code = code
         if (code, L) in poured: skipped['poured ' + net + ' ' + L] += 1; continue
         U = union(code, L)
@@ -415,13 +431,16 @@ def main():
     ap.add_argument("--open", type=float, default=0.055)
     ap.add_argument("--close", type=float, default=0.15)
     ap.add_argument("--area", type=float, default=0.003)
+    ap.add_argument("--trackless", action="store_true",
+                    help="also judge nub / notch where a net has vias or polygons on a layer and no track "
+                         "(sites marked trackless: a slot between two vias, a pad and its unlinked via)")
     a = CM.args(ap)
     b = CM.load(a)
     pcbnew = CM.pcbnew_module()
     import guide
     fields = guide.field_boxes(b, CM.G, pcbnew)
     sites = audit(b, pcbnew, a.layers.split(",") if a.layers else None, a.open, a.close, a.area, fields,
-                  str(CM.out_in_board(a, a.dump)) if a.dump else None)
+                  str(CM.out_in_board(a, a.dump)) if a.dump else None, TRACKLESS=a.trackless)
     out = CM.out_path(a, "shape_sites.json")
     json.dump(sites, open(out, "w"), indent=1)
     cnt = collections.Counter(s["kind"] for s in sites)

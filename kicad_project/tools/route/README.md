@@ -583,9 +583,16 @@ its docstring. What the spec has to be told:
 - **`gndislands.py`: a plane island before there is a pour** (`dump` with KiCad's python, `find` with numpy / scipy): rasters a GND
   layer as a pour would fill it and lists every piece that does not reach the window's border, with the ground vias in it,
   and any escape under a named pad. A standing gate wherever escapes end on a ground layer.
-- **A GND or rail track in a plan puts that whole net before the shape rule**: two short bottom links brought 15 pad-and-via
-  notches of GND / +1V8 from all over the board up as "new". Keep rail and ground links for the power group, where the net's
-  shape is settled once; a signal group brings vias in pads, which the rule passes.
+- **The first track of a net on a layer puts that whole net and layer before the shape rule.** `shape.py` judges nub and
+  notch only where a net has a track on the layer, so a slot between two of its vias, or between a pad and its unlinked via,
+  is listed by no audit until then. `route.py check` compared a baseline that skipped the net with a scratch copy that did
+  not, and called every such slot "new" however far away the plan's track lay (two short bottom links: 15 pad-and-via
+  notches of GND / +1V8 from all over the board; two cap links on B.Cu: notches 9 and 16 mm from them). `check` now judges
+  both copies on the same nets and layers: such a site is a note, "on the board already, not this plan's", and no failure
+  -- but `audit` lists it once the plan is applied. So link the pad or join the vias in the same group, or keep rail and
+  ground links for the power group, where the net's shape is settled once (a signal group brings vias in pads, which the
+  rule passes). To see them before any plan: `shape.py --trackless` (sites marked `trackless`). To prove the comparison: a
+  plan holding only one far track of such a net reports `0 new` and the note.
 - **A site ends at its via.** A link from a site via to a far pad through several bends is judged by the via-link rule (one
   straight segment); draw such links with the onward routes, not with the escape group.
 - **KiCad's DRC report stops at 199 violations a test and 499 unconnected items.** On an unrouted board
