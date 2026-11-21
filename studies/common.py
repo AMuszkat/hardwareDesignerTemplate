@@ -115,3 +115,34 @@ def _refs(cell):
         elif tok:
             out_.add(tok)
     return out_
+
+
+def via_barrel(drill_mm, wall_mm, length_mm, rho20_ohm_mm, tcr_per_k=0.0, hot_c=20.0, k_w_mmk=None):
+    """A plated via barrel carrying current along its length.
+    -> dict(area mm^2, r ohm at hot_c, rise K per A^2 or None).
+
+    area   the barrel's mean circumference times its wall, pi (d + t) t
+    r      rho(hot_c) L / area, with rho = rho20 (1 + tcr (hot_c - 20))
+    rise   the hottest point's rise above the copper the barrel ENDS in, for
+           1 A: a uniformly heated rod cooled through ONE end only, the other
+           end and the laminate round it taken as insulators (an upper bound:
+           a real barrel is sunk at every plane it joins, and the current
+           leaves at an inner layer).  dT = I^2 rho L^2 / (2 k area^2).
+
+    Why not IPC-2221's trace fit: that curve is a long conductor in laminate
+    with no copper to sink into; a barrel is about a millimetre long between
+    planes.  Judge a via by its drop and this rise, a planar neck by the fit.
+    """
+    import math
+    area = math.pi * (drill_mm + wall_mm) * wall_mm
+    rho = rho20_ohm_mm * (1 + tcr_per_k * (hot_c - 20.0))
+    r = rho * length_mm / area
+    rise = rho * length_mm ** 2 / (2 * k_w_mmk * area ** 2) if k_w_mmk else None
+    return dict(area=area, r=r, rise=rise)
+
+
+def ipc2221_a(area_mm2, rise_k=10.0, internal=True):
+    """IPC-2221's current fit for a planar conductor: I = k dT^0.44 A^0.725, A in mil^2,
+    k 0.024 internal / 0.048 external."""
+    return (0.024 if internal else 0.048) * rise_k ** 0.44 * (area_mm2 / 0.00064516) ** 0.725
+
