@@ -919,6 +919,14 @@ its docstring. What the spec has to be told:
   route check's DRC saw it. Keep a baseline in a folder of its own under the project's name,
   or resolve the classes from the `.kicad_pro`'s `netclass_patterns` yourself. Prove it by
   counting the classes the load reports: all `Default` on a board that has classes is the trap.
+- **A scratch copy is a folder of its own, with ONE `.kicad_pcb`, and a new folder every run.**
+  `--board <folder>` stops on a second board file ("expected one .kicad_pcb, found 2"), so a
+  baseline is copied IN as the board (`cp base/pre_apply.kicad_pcb "$S"/<project>.kicad_pcb`),
+  never kept beside it. A script that runs a plan through its gates makes
+  `S=<scratch>/<name>_$(date +%H%M%S)` (rsync without `*.lck`, `~*`, `*.place-bak`) and writes
+  that path to a file beside the plan for the later steps: emptying last run's folder instead
+  needs an `rm` on a shell variable, which the session's safety check refuses, and what is left
+  in a reused folder (a lock, a `.place-bak`, a second board) is the next run's false result.
 - **A fixed piece's free end goes ON the grid** (`window` origin + k x `pitch`;
   board2: x = 0.05 + 0.2k, y = 0.2k). The leg ending there reaches the nearest
   cell, and an end 0.15 mm off it joins with a jog the shape gate rejects.

@@ -395,6 +395,25 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
      8 s against 195 s; the whole model (48,505 bools, passives pinned, ring thinned to a 0.2 mm lattice)
      OPTIMAL in 27 s with no hint, where NoOverlap2D was UNKNOWN at 1500 s; and the nearest-K model of item 2
      proven INFEASIBLE in 11 s. More cliques and fewer pair clauses solved faster, at four times the literals.
+  6. *A plan that adds vias is filtered with the route check's via tests too, at the clearance KiCad itself
+     would ask: the net classes AND the board's custom rules.* Spots that pass `place.py check` are not yet
+     spots a via can stand on, and each miss costs a whole solve plus the gates. board1 D116, two in a row:
+     the via test judged every pair at Default's clearance (its copper dump took each class from
+     `GetNetClassName()` on a board file not named like its project -- `tools/route/README.md`), so a cap's
+     in-pad vias sat 0.169 mm from a pair that asks 0.2032; then, with the real classes, it lacked the
+     `.kicad_dru`'s LAST clearance rule (the later rule wins), refused a spot KiCad passes, and the model
+     was INFEASIBLE in 17 s for no reason of the board's. Pattern (board1 `tmpWork/D116_comb/cudump.py` +
+     `viatest.py`): dump every layer's copper with its net and class, and each part's courtyard; per
+     candidate test its vias against other-net copper on every layer and hole to hole, an in-pad via
+     against the part's other pad, the same-net slot, the joints of a part that stays. Prove the filter
+     BOTH ways before a solve: it flags the violation the DRC reported on an old plan, and nothing more
+     (0 of 280 vias flagged on the plan that then passed `route.py check`).
+  7. *A cache the planner cannot find is an error, never a reason to regenerate.* `--cands X` with X
+     missing made the planner generate its own nearest-K set, save it under that name and prove
+     INFEASIBLE a model nobody had asked about. X was missing because the script that writes it was
+     piped into `head -1`: it prints its summary, THEN writes, and `head` closing the pipe killed it
+     before the file. A step whose product is a file logs to a file; the next step stops unless the file
+     is there AND the consumer's log says it loaded it.
 - **`apply` keeps ONE backup, `<board>.kicad_pcb.place-bak`, and every apply overwrites it.** After a second
   apply on the same scratch copy it is the board before THAT apply, not the board you started from. A baseline
   a later gate compares against (the DRC before the plan, the board to restore for the next variant) is copied
