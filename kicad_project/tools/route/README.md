@@ -1135,6 +1135,24 @@ net out on three layers. `fanout.py plan` proposes that model;
   plans at the new one -- say so. Classify by NET (`power_nets`), not by the pinout's group: board1's B25 is a
   'dedicated' ball on VDD_SNVS_0V8, and s18 counted it a signal (256 / 211 vs the tool's 257 / 224 with the 14
   DNP-strap BOOT_CFG balls).
+  A DEPOPULATED package (an eMMC's 153 balls on a 14 x 14 lattice): rings are the lattice's bounding box, which
+  is the populated outline only when the outer frame is solid -- print the ball map first and say so. A ring-2
+  power/GND ball with NO empty site beside it (a solid 3-deep frame) goes `out` on the top layer through a lane,
+  like a ring-2 signal (#39 (4)), and is listed (`ring2_pg_out_no_site`); a ring-3+ ball with no site stays
+  INFEASIBLE. Trap: the solve is not reproducible run to run (CP-SAT, several workers, tied optima) -- two runs of
+  one config differ in which balls share; prove a tool change by its solver inputs (classes, lanes, candidate
+  sites) and the counts, not by diffing the plan (board1 U300, D115).
+  The plan must also pass #45 and #44, so three optional keys (absent: the plan is unchanged -- board1 D115
+  re-ran its old config: the unchanged tool's vias exactly): `via_current` {A_a_via, rail_A} caps a net's balls a via at
+  floor(A_a_via x its balls / rail_A) (`share_cap_net` sets one by hand, the smaller wins) -- the D83 neck rule
+  a global `share_cap` cannot say; `obstacles` (the OTHER side's pads under the field, discs or {x,y,hw,hh,net,tag}
+  boxes) bar every site whose through via would come nearer than `obstacle_clearance`, own net included;
+  `require_vias` (a decoupling cap's pads) make each pad get a via of its net within `require_reach`, its straight
+  link (`require_link` axis | diag | any -- `any` inside a BGA courtyard, where the guide's `bga field` row lifts the
+  via-link rule) clear of other pads and of every other net's via it passes. An infeasible plan is solved again
+  with every ball and pad soft and prints the balls and pads it cannot serve: the count to ask with. Trap: caps
+  placed under a field before its fan-out was planned bar sites wholesale (board1 U1: 86 of 243) -- plan the
+  fan-out with `obstacles` BEFORE the back side is populated, or count each cap moved (board1 tmpWork/D115_plan2/movecount.py).
 
 - **The pitch decides which rules apply, and `plan` prints the arithmetic.**
   A via fits between four balls when `hypot(px, py) / 2 >= land/2 + clearance

@@ -31,6 +31,18 @@ CONFIG (JSON, the board's numbers, each with its source):
    "power_nets": "^(GND|VDD|NVCC|\\\\+)", "core_nets": "^(VDD_ARM|VDD_SOC)$",
    "weights": {"core": 4, "power": 2, "ground": 1}, "ground_nets": "^GND$",
    "rail_current_A": {"VDD_ARM": 3.0, ...}, "source": "10_layout.md #39 ..."}
+  optional (each absent = the rule above unchanged):
+  "share_cap_net": {"VDD_GPU_VPU_DRAM": 3}  a net's own cap (the smaller of it and share_cap wins)
+  "via_current": {"A_a_via": 0.527, "rail_A": {"VDD_ARM": 2.2}, "source": ...}  a net's cap from what one via
+     may carry: floor(A_a_via / (rail_A / the net's connected balls)), at least 1 (the D83 neck rule)
+  "obstacles": path | [[x, y, r] | {x, y, r} | {x, y, hw, hh, net, tag}]  copper a through via passes (the
+     other side's pads under the field): a site whose via pad comes nearer than `obstacle_clearance`
+     (default `clearance`) is barred, for every net -- its own net's pad too (a via never touches a pad)
+  "require_vias": path | [{net, x, y, hw, hh, tag[, reach]}]  a pad (a decoupling cap's) that must get a via
+     of its net, `require_reach` (default 1.27) centre to centre, `require_link`: "axis" (default: on the
+     pad's axis, the via-links rule) | "diag" (45 degrees too, last resort) | "any" (one straight link at any
+     angle: inside a BGA courtyard, where the guide's `bga field` row lifts the via-link rule), the link
+     clear of other nets' pads and of every other net's via it would pass -- a legal straight link
 
 OUTPUT (--out): {"balls": {ball: {net, ring, kind, exit, side, lane | site, shared_with}}, "vias":
   [{x, y, net, balls}], "lanes": {side: {...}}, "rails": {net: {balls, vias, max_balls_a_via, A_a_via}},
@@ -119,6 +131,11 @@ class Field:
                 sys.exit(f"ball {b['ball']} off the lattice")
             self.at[(i, j)] = b
 
+    def empties(self):
+        if not hasattr(self, "_empties"):
+            self._empties = [(i, j) for i in range(self.nx) for j in range(self.ny) if (i, j) not in self.at]
+        return self._empties
+
     def xy(self, q):
         return (round(self.x0 + q[0] * self.p, 4), round(self.y0 + q[1] * self.p, 4))
 
@@ -198,9 +215,11 @@ def lanes(F, cls):
     side_lanes = collections.defaultdict(set)
     r1 = collections.Counter()
     for q, c in cls.items():
-        if c["kind"] == "none" or c.get("exit") != "top":
+        if c["kind"] == "none" or c.get("exit") not in ("top", "out"):
             continue
         if c["ring"] == 1:
+            if c["exit"] == "out":
+                continue                             # ring-1 power/ground: straight out, no lane counted
             for s, k in F.sides(q)[:1]:
                 r1[s] += 1
         elif c["ring"] == 2:
@@ -237,18 +256,128 @@ def lanes(F, cls):
 
 
 # ----------------------------------------------------------------------------- sites (CP-SAT)
-def solve_sites(F, g, cls, cfg, workers):
+def site_steps(g):
+    return [(1, 0), (-1, 0), (0, 1), (0, -1)] + ([(1, 1), (1, -1), (-1, 1), (-1, -1)] if g["diag_ok"] else [])
+
+
+def site_cands(F, g, cfg, q):
+    """The empty lattice sites a ball may take a via in: next to it, inside the field, ring >= min_site_ring."""
+    msr = cfg.get("min_site_ring", 2)
+    bar = cfg.get("_barred", ())
+    return [(q[0] + di, q[1] + dj) for di, dj in site_steps(g)
+            if F.inside((q[0] + di, q[1] + dj)) and (q[0] + di, q[1] + dj) not in F.at
+            and F.ring((q[0] + di, q[1] + dj)) >= msr and (q[0] + di, q[1] + dj) not in bar]
+
+
+def ring2_fallback(F, g, cls, cfg):
+    """A ring-2 power/ground ball with NO empty site beside it (a depopulated package's solid outer frame) goes
+    out of the field on the top layer through a lane, as a ring-2 signal does (#39 (4): 'a ring-2 power / GND
+    ball may go outside the field instead').  A ring-3+ ball with no site stays unserved -- the solve says so."""
+    moved = []
+    for q, c in cls.items():
+        if c.get("pg") and c["ring"] == 2 and c.get("exit") == "site" and not site_cands(F, g, cfg, q):
+            c["exit"], c["why"] = "out", "no empty site beside it"
+            moved.append(F.at[q]["ball"])
+    return sorted(moved)
+
+
+def load_list(v, bdir):
+    if isinstance(v, str):
+        p = Path(v)
+        if not p.is_absolute() and bdir and (bdir / p).exists():
+            p = bdir / p
+        return json.load(open(p))
+    return v or []
+
+
+def obstacle_gap(o, x, y):
+    """Edge distance from (x, y) to an obstacle: a disc [x, y, r] / {x, y, r} or a box {x, y, hw, hh}."""
+    if isinstance(o, (list, tuple)):
+        return math.dist((x, y), o[:2]) - o[2]
+    if "r" in o:
+        return math.dist((x, y), (o["x"], o["y"])) - o["r"]
+    return math.hypot(max(abs(x - o["x"]) - o["hw"], 0), max(abs(y - o["y"]) - o["hh"], 0))
+
+
+def seg_box_gap(a, b, o):
+    """Edge distance from the segment a-b to an obstacle (sampled at 0.01 mm: a report-grade bound)."""
+    n = max(2, int(math.dist(a, b) / 0.01) + 1)
+    return min(obstacle_gap(o, a[0] + (b[0] - a[0]) * t / (n - 1), a[1] + (b[1] - a[1]) * t / (n - 1))
+               for t in range(n))
+
+
+def barred_sites(F, cfg, obs):
+    """Empty lattice sites whose via pad comes nearer an obstacle than the clearance: {site: tag}."""
+    clr = cfg.get("obstacle_clearance", cfg["clearance"])
+    r = cfg["via"][0] / 2
+    out = {}
+    for i in range(F.nx):
+        for j in range(F.ny):
+            q = (i, j)
+            if q in F.at:
+                continue
+            x, y = F.xy(q)
+            for o in obs:
+                if obstacle_gap(o, x, y) < r + clr - EPS:
+                    out[q] = o.get("tag", "obstacle") if isinstance(o, dict) else "obstacle"
+                    break
+    return out
+
+
+def net_caps(F, cls, cfg):
+    """{net: max balls a via} from share_cap_net and via_current; nets in neither are absent."""
+    caps = dict(cfg.get("share_cap_net", {}))
+    vc = cfg.get("via_current")
+    if vc:
+        nb = collections.Counter(short(F.at[q]["net"]) for q, c in cls.items() if c["kind"] != "none")
+        for n, I in vc.get("rail_A", {}).items():
+            if nb[n]:
+                k = max(1, int(math.floor(vc["A_a_via"] * nb[n] / I + EPS)))
+                caps[n] = min(caps.get(n, k), k)
+    return caps
+
+
+def req_cands(F, cfg, r, obs):
+    """The lattice sites a required pad may take its via in, with the sites its link crosses: [(site, [between])]."""
+    reach = r.get("reach", cfg.get("require_reach", 1.27))
+    clr = cfg.get("obstacle_clearance", cfg["clearance"])
+    w = cfg["width"]
+    bar = cfg.get("_barred", {})
+    out = []
+    for i in range(F.nx):
+        for j in range(F.ny):
+            s = (i, j)
+            if s in F.at or s in bar:
+                continue
+            x, y = F.xy(s)
+            dx, dy = x - r["x"], y - r["y"]
+            d = math.hypot(dx, dy)
+            if d > reach + EPS:
+                continue
+            axis = abs(dx) < 1e-3 or abs(dy) < 1e-3
+            diag = abs(abs(dx) - abs(dy)) < 1e-3
+            mode = cfg.get("require_link", "diag" if cfg.get("require_diag") else "axis")
+            if not (axis or (mode == "diag" and diag) or mode == "any"):
+                continue
+            if any(obstacle_gap(o, r["x"], r["y"]) > EPS and (not isinstance(o, dict) or o.get("net") != r["net"])
+                   and seg_box_gap((r["x"], r["y"]), (x, y), o) < w / 2 + clr - EPS for o in obs):
+                continue
+            between = []                       # empty sites whose via would come too near the link
+            lim = cfg["via"][0] / 2 + w / 2 + clr
+            for u in F.empties():
+                if u != s and seg_box_gap((r["x"], r["y"]), (x, y), [*F.xy(u), 0]) < lim - EPS:
+                    between.append(u)
+            out.append((s, between))
+    return out
+
+
+def solve_sites(F, g, cls, cfg, workers, reqs=(), obs=(), soft=False):
     from ortools.sat.python import cp_model
     cap = cfg.get("share_cap", 4)
-    msr = cfg.get("min_site_ring", 2)
+    ncap = cfg.get("_net_caps", {})
     wts = cfg.get("weights", {"core": 4, "power": 2, "ground": 1})
-    steps = [(1, 0), (-1, 0), (0, 1), (0, -1)] + ([(1, 1), (1, -1), (-1, 1), (-1, -1)] if g["diag_ok"] else [])
     need = [q for q, c in cls.items() if c.get("exit") == "site"]
-    cand = {}
-    for q in need:
-        cand[q] = [(q[0] + di, q[1] + dj) for di, dj in steps
-                   if F.inside((q[0] + di, q[1] + dj)) and (q[0] + di, q[1] + dj) not in F.at
-                   and F.ring((q[0] + di, q[1] + dj)) >= msr]
+    cand = {q: site_cands(F, g, cfg, q) for q in need}
     m = cp_model.CpModel()
     x = {(q, s): m.NewBoolVar("") for q in need for s in cand[q]}
     key = {q: (short(F.at[q]["net"]) if cls[q]["pg"] else "SIG:" + F.at[q]["ball"]) for q in need}
@@ -265,9 +394,33 @@ def solve_sites(F, g, cls, cfg, workers):
             for v in mine:
                 m.AddImplication(v, y[(s, k)])
             m.Add(sum(mine) >= y[(s, k)])
-            m.Add(sum(mine) <= (cap if not k.startswith("SIG:") else 1))
+            m.Add(sum(mine) <= (min(cap, ncap.get(k, cap)) if not k.startswith("SIG:") else 1))
     for q in need:
-        m.Add(sum(x[(q, s)] for s in cand[q]) == 1)
+        m.Add(sum(x[(q, s)] for s in cand[q]) == 1) if not soft else m.Add(sum(x[(q, s)] for s in cand[q]) <= 1)
+    knet = {key[q]: short(F.at[q]["net"]) for q in need}
+    zreq = []                                        # required pads: one same-net via in reach, link clear
+    req_info = []
+    for r in reqs:
+        zs = []
+        for s, between in req_cands(F, cfg, r, obs):
+            ks = [k for k in {key[q] for q in by_site.get(s, [])} if knet[k] == r["net"]]
+            if not ks:
+                continue
+            z = m.NewBoolVar("")
+            m.Add(sum(y[(s, k)] for k in ks) >= z)
+            for t in between:
+                for k in {key[q] for q in by_site.get(t, [])}:
+                    if knet[k] != r["net"]:
+                        m.Add(z + y[(t, k)] <= 1)
+            zs.append((s, z))
+        if not zs:
+            req_info.append(dict(tag=r.get("tag"), net=r["net"], why="no site of its net in reach"))
+        else:
+            if not soft:
+                m.Add(sum(z for _, z in zs) >= 1)
+        zreq.append((r, zs))
+    if any("why" in i for i in req_info) and not soft:
+        return None, dict(status="REQUIRED PAD WITH NO SITE", need=len(need), required=req_info), cand
     diag = collections.defaultdict(list)             # lattice square (lower-left corner) -> its diagonal stubs
     for (q, s), v in x.items():
         if q[0] != s[0] and q[1] != s[1]:
@@ -285,7 +438,17 @@ def solve_sites(F, g, cls, cfg, workers):
     sv.parameters.num_workers = workers
     sv.parameters.max_time_in_seconds = 120
     stages = []
-    for name, obj, sense in (("vias", nvias, 1), ("weighted", wv, 1), ("diagonals", nd, -1)):
+    order = (("vias", nvias, 1), ("weighted", wv, 1), ("diagonals", nd, -1))
+    if soft:                                         # what an infeasible rule leaves: the most balls, then pads
+        served = sum(x.values())
+        mz = []
+        for _, zs in zreq:
+            if zs:
+                b = m.NewBoolVar("")
+                m.Add(sum(z for _, z in zs) >= b)
+                mz.append(b)
+        order = (("served", served, 1), ("required_met", sum(mz), 1)) + order[:1]
+    for name, obj, sense in order:
         m.Maximize(obj) if sense > 0 else m.Minimize(obj)
         st = sv.Solve(m)
         if st not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -297,7 +460,19 @@ def solve_sites(F, g, cls, cfg, workers):
             m.AddHint(v, sv.Value(v))
         m.Add(obj == val) if st == cp_model.OPTIMAL else (m.Add(obj >= val) if sense > 0 else m.Add(obj <= val))
     pick = {q: s for (q, s), v in x.items() if sv.Value(v)}
-    return pick, dict(status="ok", stages=stages, need=len(need)), cand
+    info = dict(status="ok" if not soft else "relaxed", stages=stages, need=len(need))
+    if soft:
+        info["unserved"] = sorted(F.at[q]["ball"] + " " + short(F.at[q]["net"]) for q in need if q not in pick)
+        info["required_unmet"] = sorted(r.get("tag", "?") + " " + r["net"] for r, zs in zreq
+                                        if not any(sv.Value(z) for _, z in zs))
+        return pick, info, cand
+    if reqs:
+        rr = []
+        for r, zs in zreq:
+            got = sorted((math.dist((r["x"], r["y"]), F.xy(s)), F.xy(s)) for s, z in zs if sv.Value(z))
+            rr.append(dict(tag=r.get("tag"), net=r["net"], via=list(got[0][1]), mm=round(got[0][0], 3)))
+        info["required"] = rr
+    return pick, info, cand
 
 
 # ----------------------------------------------------------------------------- plan
@@ -327,9 +502,29 @@ def cmd_plan(a):
           f"{g['lane_pitch_gap']:.4f} edge to edge -> {'fits' if g['lane_ok'] else 'DOES NOT FIT'}")
     if not g["site_ok"]:
         return 2
+    obs = load_list(cfg.get("obstacles"), bdir)
+    reqs = load_list(cfg.get("require_vias"), bdir)
+    if obs:
+        cfg["_barred"] = barred_sites(F, cfg, obs)
+        print(f"  obstacles: {len(obs)}; {len(cfg['_barred'])} of {F.nx * F.ny - len(F.at)} empty sites barred "
+              f"(via pad {cfg['via'][0] / 2} + {cfg.get('obstacle_clearance', c)} from them)")
     cls = classify(F, cfg)
+    if cfg.get("share_cap_net") or cfg.get("via_current"):
+        cfg["_net_caps"] = net_caps(F, cls, cfg)
+        print(f"  per-net share caps: {cfg['_net_caps']}")
+    fb = ring2_fallback(F, g, cls, cfg)
+    if fb:
+        print(f"  ring-2 power/ground with no empty site beside it -> out on the top layer: {' '.join(fb)}")
     got, unmatched, lrep = lanes(F, cls)
-    pick, info, cand = solve_sites(F, g, cls, cfg, a.workers)
+    pick, info, cand = solve_sites(F, g, cls, cfg, a.workers, reqs, obs)
+    if not pick:                                     # why: the same rule with every ball and pad made soft
+        _, why, _ = solve_sites(F, g, cls, cfg, a.workers, reqs, obs, soft=True)
+        info["why"] = {k: why.get(k) for k in ("stages", "unserved", "required_unmet")}
+        print(f"  INFEASIBLE -- relaxed (most balls served, then required pads): {why.get('stages')}")
+        print(f"    unserved balls ({len(why.get('unserved') or [])}): {' '.join(why.get('unserved') or [])}")
+        if reqs:
+            print(f"    required pads unmet ({len(why.get('required_unmet') or [])}): "
+                  f"{' '.join(why.get('required_unmet') or [])}")
 
     cnt = collections.Counter()
     for q, cc in cls.items():
@@ -358,6 +553,12 @@ def cmd_plan(a):
                 sd = F.sides(q)
                 e["side"] = "".join(s for s, _ in sd)
                 e["diagonal"] = len(sd) > 1
+                if cc["ring"] >= 2:
+                    e["side"] = got[q][0] if q in got else sd[0][0]
+                    e["lane"] = got[q][1] / 2 if q in got else None
+                    e["diagonal"] = False
+                if cc.get("why"):
+                    e["why"] = cc["why"]
             elif pick and q in pick:
                 s = pick[q]
                 e["site"] = list(F.xy(s))
@@ -400,7 +601,11 @@ def cmd_plan(a):
         vias=len(vlist), signal_vias=sig_site, pg_vias=pg_vias,
         pg_balls_without_own_via=pg_site_balls - pg_vias,
         diagonal_stubs=sum(1 for e in out_b.values() if e.get("stub") == "diagonal"),
-        ring2_no_lane=[F.at[q]["ball"] for q in unmatched], solver=info)
+        ring2_no_lane=[F.at[q]["ball"] for q in unmatched], ring2_pg_out_no_site=fb, solver=info)
+    if obs:
+        counts["barred_sites"] = sorted(list(F.xy(q)) for q in cfg["_barred"])
+    if cfg.get("_net_caps"):
+        counts["net_caps"] = cfg["_net_caps"]
     plan = dict(ref=cfg["ref"], config=str(cp), balls_from=bsrc, geometry=g, counts=counts, lanes=lrep,
                 rails=rails, vias=vlist, balls=out_b, source=cfg.get("source", ""))
     json.dump(plan, open(a.out, "w"), indent=1)
@@ -422,6 +627,13 @@ def cmd_plan(a):
     for s, r in lrep.items():
         print(f"  {s}: ring-1 {r['ring1_tracks']:3d} straight; ring-2 {r['ring2_tracks']:3d} tracks, {r['lanes']:3d}"
               f" lanes, {r['ring2_laned']:3d} laned" + (f"  NO LANE: {' '.join(r['no_lane'])}" if r['no_lane'] else ""))
+    for r in info.get("required", []):
+        if "why" in r:
+            print(f"  REQUIRED {r['tag']} {r['net']}: {r['why']}")
+    if reqs and pick:
+        far = max(info["required"], key=lambda r: r["mm"])
+        print(f"required pads: {len(reqs)} of {len(reqs)} get a same-net via on their axis in reach "
+              f"(farthest {far['tag']} {far['mm']} mm)")
     if a.vias_out:
         vo = Path(a.vias_out)
         if bdir and not vo.is_absolute():
