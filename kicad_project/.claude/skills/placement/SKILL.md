@@ -168,6 +168,10 @@ After `fp.py tidy`, `derive` or a land change:
   changed while KiCad was open.** It writes back its stale in-memory copy.
   KiCad closed: `tools/kpy tools/place/refresh.py` (front-side parts only; it
   refuses while a lock file exists).
+  ⚠ **A land change (pad size, mask or paste margin) is `tools/place/landsync.py
+  REF...`, not refresh.py** -- refresh.py copies graphics only. KiCad closed:
+  `tools/kpy tools/place/landsync.py --board boardN U1 U300` ("n of n pads take
+  the library's land"), then `place.py sync` and `place.py drc`.
 - **New library id** (a derived stock footprint, a renamed land): change the
   symbol's Footprint field with Konnect `batch_edit_schematic_components` (one
   call per sheet; the schematic editor closed). Then the user runs F8 with
