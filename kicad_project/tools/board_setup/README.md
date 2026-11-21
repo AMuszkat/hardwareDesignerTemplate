@@ -123,3 +123,24 @@ and this step should move to it.
 - **Choosing numbers.** A rule that blocks the layout is a `QUESTIONS.md`
   item. Neither the page nor the output of `apply` gets edited to make DRC
   pass.
+
+## A named rule area: `rulearea.py`
+
+A page rule that tests `intersectsArea('NAME')` leaves the area to the board
+("the rule area U1_FIRST_MM_NORTH, x ..., y ..., every copper layer, no
+keep-outs"). `board_setup.py` writes the rule; the area is drawn by
+
+    tools/kpy tools/board_setup/rulearea.py draw  --board B --name NAME --rect X0,Y0,X1,Y1 [--layers copper|F.Cu,..] [--keepout tracks,vias,pads,pour,footprints]
+    tools/kpy tools/board_setup/rulearea.py check --board B --name NAME --rect X0,Y0,X1,Y1   # exit 1 on a difference
+
+- Idempotent: every rule area of that name is replaced by one; KiCad closed
+  (refused on a lock file), backup in `.board_setup_backups/<ts>-rulearea/`,
+  read back after the save. Keep-outs default to none: this KiCad's `ZONE`
+  has `SetDoNotAllowZoneFills`, not `SetDoNotAllowCopperPour` (a `hasattr`
+  guard skipped it silently in an earlier one-off script).
+- A rule whose area is missing is simply false in DRC -- no error. Prove the
+  rule bites on a scratch copy: two tracks at the reduced gap inside the area
+  (DRC 0 clearance), the same outside (1), and a pair the rule excludes inside
+  (1). Pours on that layer are unfilled in the test copy, and the free spot
+  avoids only the courtyards a fab rule tests (board1 D114, 2026-11-21:
+  `tmpWork/R1_d114_setup/bite_test.py`).
