@@ -192,6 +192,46 @@ class Rules:
         return max(self._clr(net), self._clr(other))
 
 
+def evaluate(lanes, blocked, routed):
+    """The gates, from the lanes and the set of blocked (ball, lane key) pairs: ring-1 balls without their
+    straight lane (fail1), ring-2 balls without a lane of their own under an exact matching (fail2), and
+    each gate's failing balls.  judge() and a caller that asks "what if this copper were added" (sites.py)
+    both count through here, so a search and route.py check cannot disagree on what shuts a ball."""
+    by = collections.defaultdict(list)
+    for L in lanes:
+        by[L["ball"]].append(L)
+    r1 = sorted({L["ball"] for L in lanes if L["ring"] == 1})
+    r2 = sorted({L["ball"] for L in lanes if L["ring"] == 2})
+    need1 = [b for b in r1 if b not in routed]
+    need2 = [b for b in r2 if b not in routed]
+    fail1 = [b for b in need1 if any((b, L["key"]) in blocked for L in by[b] if L["ring"] == 1)]
+    opts = collections.defaultdict(list)
+    for L in lanes:
+        if L["ring"] == 2 and (L["ball"], L["key"]) not in blocked and L["key"] not in opts[L["ball"]]:
+            opts[L["ball"]].append(L["key"])
+    # a routed ring-2 ball keeps the lane its own track is in; the others match among the rest
+    match = {}
+
+    def aug(b, seen):
+        for kk in opts[b]:
+            if kk in seen:
+                continue
+            seen.add(kk)
+            if kk not in match or aug(match[kk], seen):
+                match[kk] = b
+                return True
+        return False
+
+    fail2 = [b for b in need2 if not aug(b, set())]
+    shut = [L for L in lanes if (L["ball"], L["key"]) in blocked and L["ball"] not in routed]
+    plan_lane_fail = {L["ball"] for L in shut if L["ring"] == 1 or L["tag"] == "plan"}
+    gate_balls = {"assign": sorted(set(fail1) | set(fail2)),
+                  "plan": sorted(set(fail1) | set(fail2) | plan_lane_fail),
+                  "strict": sorted({L["ball"] for L in shut})}
+    return dict(ring1=r1, ring2=r2, fail1=fail1, fail2=fail2, assign={b: kk for kk, b in match.items()},
+                opts=opts, gate_balls=gate_balls)
+
+
 # ----------------------------------------------------------------------------- the judge
 def judge(B, ref, plan=None, side=None, width=None, clearance=None, power=None, rings=None,
           gate="assign", all_balls=False):
@@ -403,34 +443,10 @@ def judge(B, ref, plan=None, side=None, width=None, clearance=None, power=None, 
             d = edge_dist(it, s)
             if d < need - 1e-4:
                 hits.append(dict(lane=L, item=it, edge=round(d, 4), need=round(need, 4)))
-    blocked = collections.defaultdict(list)
-    for h in hits:
-        blocked[(h["lane"]["ball"], h["lane"]["key"])].append(h)
-    r1 = sorted({L["ball"] for L in lanes if L["ring"] == 1})
-    r2 = sorted({L["ball"] for L in lanes if L["ring"] == 2})
+    blocked = {(h["lane"]["ball"], h["lane"]["key"]) for h in hits}
     drop = sorted(set(judged) & routed)
-    need1 = [b for b in r1 if b not in routed]
-    need2 = [b for b in r2 if b not in routed]
-    fail1 = [b for b in need1 if any(blocked[(b, L["key"])] for L in lanes if L["ball"] == b)]
-    opts = collections.defaultdict(list)
-    for L in lanes:
-        if L["ring"] == 2 and not blocked[(L["ball"], L["key"])] and L["key"] not in opts[L["ball"]]:
-            opts[L["ball"]].append(L["key"])
-    # a routed ring-2 ball keeps the lane its own track is in; the others match among the rest
-    match = {}
-
-    def aug(b, seen):
-        for kk in opts[b]:
-            if kk in seen:
-                continue
-            seen.add(kk)
-            if kk not in match or aug(match[kk], seen):
-                match[kk] = b
-                return True
-        return False
-
-    fail2 = [b for b in need2 if not aug(b, set())]
-    own = {b: kk for kk, b in match.items()}
+    ev = evaluate(lanes, blocked, routed)
+    r1, r2, fail1, fail2, own, opts = (ev[k] for k in ("ring1", "ring2", "fail1", "fail2", "assign", "opts"))
     # the items that make each gate fail
     by = collections.OrderedDict()
 
@@ -453,17 +469,47 @@ def judge(B, ref, plan=None, side=None, width=None, clearance=None, power=None, 
         if L["ring"] == 1 or L["tag"] == "plan":
             add("plan", h)
         add("strict", h)
-    plan_lane_fail = sorted({h["lane"]["ball"] for h in hits if h["lane"]["ball"] not in routed
-                             and (h["lane"]["ring"] == 1 or h["lane"]["tag"] == "plan")})
-    gate_balls = {"assign": sorted(set(fail1) | set(fail2)),
-                  "plan": sorted(set(fail1) | set(fail2) | set(plan_lane_fail)),
-                  "strict": sorted({h["lane"]["ball"] for h in hits if h["lane"]["ball"] not in routed})}
+    gate_balls = ev["gate_balls"]
     gate_items = {g: [e for e in by.values() if g in e["gates"]] for g in GATES}
     return dict(ref=ref, layer=lname, pitch=P, lattice=(NX, NY), courtyard=cy, rings=rings, kind_rule=kind_rule,
                 rules=rules.source, balls=balls, judged=judged, ring1=r1, ring2=r2, routed=drop, corners=sorted(corners),
                 offside=sorted(offside), lanes=lanes, hits=hits, fail1=fail1, fail2=fail2, assign=own, opts=opts,
-                gate=gate, gate_balls=gate_balls, gate_items=gate_items,
+                gate=gate, gate_balls=gate_balls, gate_items=gate_items, rule=rules, blocked=blocked,
                 ok=not gate_balls[gate], keys={("ball", b) for b in gate_balls[gate]})
+
+
+def blocked_by(r, it):
+    """The (ball, lane key) pairs of judge() result R that one more copper item IT would block -- an item
+    dict as judge() builds them (k "via" with x, y, r; "track" with seg, r; "pad"/"poly" with x, y, polys),
+    on R's exit layer, with its full net name.  The same lanes, bounding boxes, edge distance and
+    width/2 + clearance as judge(); pairs already blocked on the board are left out (nothing new is shut)."""
+    out = set()
+    ix, iy = (it["x"], it["y"]) if "x" in it else (it["seg"][0], it["seg"][1])
+    for L in r["lanes"]:
+        k = (L["ball"], L["key"])
+        if k in r["blocked"] or it["net"] == L["net"] or L["ball"] in r["routed"]:
+            continue
+        s = L["seg"]
+        lb = (min(s[0], s[2]) - 1, min(s[1], s[3]) - 1, max(s[0], s[2]) + 1, max(s[1], s[3]) + 1)
+        if it["k"] == "track":
+            q = it["seg"]
+            if max(q[0], q[2]) < lb[0] or min(q[0], q[2]) > lb[2] or max(q[1], q[3]) < lb[1] or min(q[1], q[3]) > lb[3]:
+                continue
+        elif not (lb[0] - 2 < ix < lb[2] + 2 and lb[1] - 2 < iy < lb[3] + 2):
+            continue
+        need = r["rule"].width(L["net"]) / 2 + r["rule"].clearance(L["net"], it["net"])
+        if edge_dist(it, s) < need - 1e-4:
+            out.add(k)
+    return out
+
+
+def shuts(r, extra):
+    """The balls that fail R's gate with the (ball, lane key) pairs EXTRA blocked as well, and did not
+    before: what one more piece of copper costs, counted as route.py check counts it."""
+    if not extra:
+        return []
+    g = evaluate(r["lanes"], r["blocked"] | set(extra), set(r["routed"]))["gate_balls"][r["gate"]]
+    return sorted(set(g) - set(r["gate_balls"][r["gate"]]))
 
 
 def item_text(it):

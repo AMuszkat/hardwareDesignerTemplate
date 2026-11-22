@@ -284,6 +284,19 @@ clearance (only the pad the via belongs to may be close), and a via a plan has
 not written yet is invisible to the next part — `tools/route/decap.py` feeds them back in as
 it goes. It moves nothing.
 
+- **A via site that shuts a BGA's exit lane is dropped, not ranked first.** `sites.py` (and `decap.py`, which
+  takes its sites) read `<board>/routing/prelayout.json` `"exit_lanes"` by default (`--lanes FILE`: that key or
+  a bare list; `--no-lanes`: off) and judge every candidate via, and every position's own pad copper on the
+  BGA's exit layer, with `tools/route/exitlane.py`'s geometry and gate imported (`blocked_by`, `shuts` -- the
+  count `route.py check`'s `RULE exitlane` makes): a site whose via newly leaves a ball without a lane, with
+  what this part already put in lanes, is skipped for the next one, the pad line says `[nearer (x, y) dropped:
+  shuts U1 P26]`, and a summary counts the dropped sites by ball. A position whose pads shut a lane is
+  skipped (search) or fails (`--plan`); a `decap.py --pin` or stub that shuts one is a WARNING and exit 1.
+  Paste-only pads (no copper layer) need no via and are skipped. board1 RV61_u1gap / RV61_c28: C28 at (23.18,
+  21.5, 0) ranked first with its VDD_ARM via at (22.088, 21.5), which `check` then refused for U1 P26; the
+  two-via positions in U1's west corridor all shut a ball. Prove it both ways: a part far from any BGA prints
+  the same as with `--no-lanes`, and a known lane-shutting site is named with its ball.
+
 ## `pack.py` — a search, when a block must be re-arranged
 
 `check` judges a placement; it does not find one. `pack.py` anneals a handful

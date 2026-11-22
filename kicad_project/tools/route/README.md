@@ -794,6 +794,9 @@ its docstring. What the spec has to be told:
   Prove it both ways on copies: the board before the fix fails naming the known items (board1: U1 5 vias, 9
   balls; U300 the via and its two stub segments), the board after passes; a one-via plan back on a lane is
   refused by `check`, a rip-only plan is not.
+  For a search: `exitlane.evaluate(lanes, blocked, routed)` is the gate on a set of blocked (ball, lane key)
+  pairs, `blocked_by(result, item)` the pairs one via / pad / track would newly block, `shuts(result, extra)`
+  the balls that then fail -- `tools/place/sites.py` drops via sites with them (board1 RV61_c28).
 - **An area rule whose area is wider than the fab's is a hole in DRC: measure what it relaxes.** KiCad's
   `intersectsCourtyard` relaxes a gap wherever BOTH items touch the courtyard -- a track laid along the courtyard
   line is relaxed for its whole length -- and a memory's courtyard can be 3 mm wider each way than its ball array,

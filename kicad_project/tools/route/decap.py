@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--clr", type=float, help="clearance to foreign copper (default: largest class clearance)")
     ap.add_argument("--own", type=float, help="via centre to its own pad")
     ap.add_argument("--reach", type=float, help="how far from its pad a via may be")
+    ap.add_argument("--lanes", help="exit-lane entries from this file (default: routing/prelayout.json \"exit_lanes\")")
+    ap.add_argument("--no-lanes", action="store_true", help="do not skip via sites that shut a BGA's exit lane")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
     B = P.Board(a.board)
@@ -84,6 +86,9 @@ def main():
     sys.path.insert(0, str(ROOT / "tools" / "route"))
     import route as R
     RB = R.RBoard(a.board)
+    LN = S.load_lanes(RB, a.lanes, a.no_lanes)   # a site that shuts a BGA ball's exit lane is skipped
+    held = {}                                    # the lanes this plan's copper already stands in
+    shut_by_hand = 0                             # a pinned via or a stub that shuts a lane: exit 1
     width = lambda net: class_width(a.board, RB.netclass, net)
     skip = set(a.skip.split(",")) if a.skip else set()
     pin = {}
@@ -96,10 +101,13 @@ def main():
     for ref in a.refs.split(","):          # board does not know about it yet
         f = B.fps.get(ref) or P.die(f"{ref} is not on the board")
         W_ = S.World(B, ignore={ref})
+        W_.lanes = LN
         W_.vias += made_vias
         W_.tracks += made_tracks
         rects, info = [], []
         for p in f.Pads():
+            if not p.IsOnCopperLayer():
+                continue                 # a paste aperture needs no via
             bb = p.GetBoundingBox()
             rects.append((mm(bb.GetLeft()), mm(bb.GetTop()), mm(bb.GetRight()), mm(bb.GetBottom())))
             info.append((p.GetNumber(), p.GetNetname()))
@@ -114,8 +122,15 @@ def main():
                 if not W_.via_ok(x, y, [r]):
                     P.die(f"{key}: the pinned via site ({x}, {y}) is not legal")
                 v = (S.rect_dist(x, y, *r), x, y)
+                if LN:
+                    k_ = LN.via_keys(x, y, info[k][1], VIA / 2)
+                    sh = LN.shut(held, k_)
+                    if sh:
+                        print(f"WARNING {key}: the pinned via site ({x}, {y}) shuts {', '.join(sh)}'s exit lane")
+                        shut_by_hand += 1
+                    LN.add(held, k_)
             else:
-                v = W_.nearest_via(r, rects, skip=[q for q in chosen if q])
+                v = W_.nearest_via(r, rects, skip=[q for q in chosen if q], net=info[k][1], held=held)
             if v is None:
                 P.die(f"{ref}.{info[k][0]}: no legal via site within {S.REACH} mm")
             chosen.append((v[1], v[2]))
@@ -130,6 +145,14 @@ def main():
                 tracks.append(dict(net=net, layer="B.Cu" if f.IsFlipped() else "F.Cu", width=w, pts=pts,
                                    _=f"{ref}.{info[k][0]} to its via, {v[0]:.2f} mm from the pad"))
                 made_tracks += [(tuple(pts[i]), tuple(pts[i + 1]), w) for i in range(len(pts) - 1)]
+                if LN:
+                    for i in range(len(pts) - 1):
+                        k_ = LN.track_keys(pts[i], pts[i + 1], w, net, "B" if f.IsFlipped() else "F")
+                        sh = LN.shut(held, k_)
+                        if sh:
+                            print(f"WARNING {ref}.{info[k][0]}: its stub shuts {', '.join(sh)}'s exit lane")
+                            shut_by_hand += 1
+                        LN.add(held, k_)
     zones = json.loads(P.boardsel.in_board(a.board, a.zone).read_text()) if a.zone else []
     if isinstance(zones, dict):                 # a plan file: take its "zones"
         zones = zones.get("zones", [])
@@ -138,6 +161,12 @@ def main():
     Path(a.plan).write_text(json.dumps(
         {"group": a.group, "why": a.why, "tracks": tracks, "vias": vias, "zones": zones}, indent=1) + "\n")
     print(f"wrote {a.plan}: {len(tracks)} stubs, {len(vias)} vias, {len(zones)} zone(s)")
+    if LN:
+        print(LN.summary())
+    if shut_by_hand:
+        print(f"LANES FAIL: {shut_by_hand} pinned via(s) or stub(s) shut an exit lane (the plan is written; "
+              f"move the pin, or --no-lanes to accept it)")
+        return 1
     return 0
 
 
