@@ -21,6 +21,14 @@ The rule, exactly:
     it lies in the other's copper; a via goes when one thing at most holds it, a zone of its net counted as
     one), then its neighbours are asked the same -- so the peel stops at the first junction, at a plane via
     another track still uses, and at the first item that reaches a pad, and that item stays;
+  * the peel takes a VIA only when nothing holds it: a via that copper still reaching a pad holds, or that stands on
+    a pad's land, is that pad's fan-out via -- printed `kept`, neither a rip nor a decision (board1 RV59: a capacitor
+    under U1 sat on four GND balls' dog-bone vias, and each was listed `stub of C10.2` with the ball's track left to
+    dangle);
+  * a via the board names as stitching -- the guide's `stitch via` row (of its net, within the distance of a via of
+    the class this plan does not rip), or the group that laid it (the via's own `why` in the plan its
+    `*.applied.json` names says stitch, or the plan is stitch.py's) -- is printed `stitch -- decide by hand`, never
+    written as a rip (board1 RV59: the pairs' GND stitching via of R3head, listed `unlinked, beside C54.2`);
   * a BARE cluster -- it touched no pad before the move either: a capacitor's power via set beside its pad at the
     via-to-pad gap, with no link, for a pour to join -- has no pad to lose, so it is judged by what it stands
     BESIDE: the pads of its net whose centre is within --reach (1.27 mm, centre to centre; 0 switches it off) of
@@ -42,6 +50,7 @@ orphaned, 1 items listed, 2 usage or load error.
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -65,7 +74,7 @@ def main():
         plan = json.loads(Path(a.merge[0]).read_text()) if a.merge else None
     except (OSError, ValueError) as e:
         R.P.die(f"cannot read {e}")
-    B = R.P.Board(a.board)
+    B = R.RBoard(a.board)
     pn, b, mm = B.pn, B.b, B.pn.ToMM
     if [r for r in moves if r not in B.fps]:
         R.P.die(f"{a.place} names parts that are not on the board: {sorted(r for r in moves if r not in B.fps)}")
@@ -111,10 +120,57 @@ def main():
     B.apply_moves(moving)
     after, pads1 = scan(), pads_now()
     nb = {u: v[1] for u, v in before.items()}
-    group = {}
+    group, plan_of = {}, {}
     for f in sorted((a.board / "routing").glob("*.applied.json")):
-        for v in json.loads(f.read_text()).values():
-            group.update({u: f.name[:-len(".applied.json")] for u in (v if isinstance(v, list) else []) if isinstance(u, str)})
+        man = json.loads(f.read_text())
+        for v in man.values():
+            for u in (v if isinstance(v, list) else []):
+                if isinstance(u, str):
+                    group[u], plan_of[u] = f.name[:-len(".applied.json")], man.get("plan")
+    plans = {}
+
+    def laid_by(u):
+        """(the plan's why, the via's own why) in the plan whose manifest holds the via's UUID, or None"""
+        rel, t = plan_of.get(u), items[u]
+        if not rel:
+            return None
+        if rel not in plans:
+            plans[rel] = None
+            for f in (a.board / "routing" / Path(rel).name, a.board.parent / rel):   # the board's own copy first: a scratch copy too
+                try:
+                    plans[rel] = json.loads(f.read_text())
+                    break
+                except (OSError, ValueError):
+                    continue
+        d, c = plans[rel], t.GetPosition()
+        if not isinstance(d, dict):
+            return None
+        own = next((v.get("why", "") for v in d.get("vias", []) if isinstance(v, dict) and len(v.get("at") or ()) == 2
+                    and R.short(v.get("net", "")) == R.short(t.GetNetname())
+                    and abs(pn.FromMM(v["at"][0]) - c.x) <= 5000 and abs(pn.FromMM(v["at"][1]) - c.y) <= 5000), "")
+        return str(d.get("why", "")), str(own)
+
+    def stitching(u, ripped):
+        """Why the via is a known stitching via, or None: the guide's `stitch via` row (a via of its named net within the
+        distance of a via of a net in the class that this plan does not rip too), or the record of the group that laid it
+        (its own `why` in that plan says stitch, or the plan is stitch.py's)"""
+        t = items[u]
+        c, net = t.GetPosition(), R.short(t.GetNetname())
+        for r in B.gates.get("stitch") or ():
+            if net != R.short(r["net"]):
+                continue
+            for w, o in items.items():
+                if is_via[w] and w not in ripped and R.short(o.GetNetname()) != net and r["class"] in B.netclasses(o.GetNetname()):
+                    q = o.GetPosition()
+                    if math.hypot(q.x - c.x, q.y - c.y) <= pn.FromMM(r["within"]) + 1:
+                        return (f"the guide's 'stitch via' row ({r['class']}: {r['net']} within {r['within']:g} mm) holds it for "
+                                f"{R.short(o.GetNetname())} via ({mm(q.x):.3f}, {mm(q.y):.3f})")
+        rec = laid_by(u)
+        if rec and re.search(r"stitch", rec[1], re.I):
+            return f"group {group[u]} laid it as {rec[1]!r}"
+        if rec and re.search(r"stitching \(stitch\.py\)", rec[0]):
+            return f"group {group[u]} is stitch.py's: {rec[0][:80]!r}"
+        return None
 
     def in_zone(v):
         p = v.GetPosition()
@@ -135,7 +191,24 @@ def main():
         ends = [{i for i, p in enumerate((t.GetStart(), t.GetEnd())) if at(o, p)} for o in live]
         return len(set().union(*ends)) if all(ends) else None
 
-    out, shared, byhand, seen = [], [], [], set()
+    def goes(u, dead):
+        """The peel takes a track held at one end at most, and a via only when NOTHING holds it: a via that copper still
+        reaching a pad holds is that pad's own fan-out via (a BGA ball's dog-bone that a moved capacitor's pad sat on)"""
+        h = held(u, dead)
+        return h is not None and h <= (0 if is_via[u] else 1)
+
+    def reaches(u, dead):
+        """the pads the item reaches after the move through the copper the peel left, itself included"""
+        got, seen_, st = set(), set(), [u]
+        while st:
+            w = st.pop()
+            if w not in seen_:
+                seen_.add(w)
+                got |= set(after[w][0])
+                st += [o for o in nb[w] if o not in dead]
+        return sorted(got)
+
+    out, shared, byhand, seen, kept_v, stitch = [], [], [], set(), [], []
     for u0 in items:
         if u0 in seen:
             continue
@@ -164,11 +237,16 @@ def main():
         while todo:
             u = todo.pop()
             asked.add(u)
-            if u not in dead and not after[u][0] and (held(u, dead) or 0) <= 1 and held(u, dead) is not None:
+            if u not in dead and not after[u][0] and goes(u, dead):
                 dead.add(u)
                 todo += nb[u] - dead
         # not decided: what lost a pad and stands, and where the peel stopped at a dead end on a pad or a body joint
         left = sorted({u for u in mem if lost[u]} - dead | {u for u in asked - dead if (held(u, dead) or 0) <= 1})
+        for u in [u for u in left if is_via[u] and reaches(u, dead)]:      # a pad's own fan-out via: kept, not a decision
+            left.remove(u)
+            r = reaches(u, dead)
+            kept_v.append(dict(net=items[u].GetNetname(), at=[round(mm(q), 3) for q in items[u].GetPosition()], lost=lost[u],
+                               on=after[u][0], pads=r, group=group.get(u, "?")))
         if left:
             shared.append(dict(net=items[left[0]].GetNetname(), lost=hung, pads=kept, n=len(left),
                                items=len(mem), at=[round(mm(v), 3) for v in items[left[0]].GetPosition()]))
@@ -183,6 +261,12 @@ def main():
             out.append(dict(e, group=group.get(u, "?"), hung=hung, whole=not kept, unlinked=bool(bare), cluster=min(mem), uuid=u,
                             why=f"{why}; laid by group {group.get(u, '?')}, uuid {u}"))
 
+    ripped = {e["uuid"] for e in out}
+    for e in [e for e in out if "at" in e]:              # a known stitching via: a decision, never a rip
+        sw = stitching(e["uuid"], ripped)
+        if sw:
+            out.remove(e)
+            stitch.append(dict(e, why=sw))
     print(f"{len(moves)} parts in {Path(a.place).name}, {len(moving)} move")
     for e in out:
         where = f"via {tuple(e['at'])}" + (" in_zone" if e["in_zone"] else "") if "at" in e else \
@@ -196,12 +280,20 @@ def main():
         print(f"  beside -- decide by hand: {R.short(s['net'])} via {tuple(s['at'])} ({s['items']} items) touched no pad, stood beside "
               f"{', '.join(s['pads'])}, has no pad of its net within {a.reach:g} mm after the move and stands in a zone of its net: "
               f"a plane via, not written as a rip")
+    for s in stitch:
+        print(f"  stitch -- decide by hand: {R.short(s['net'])} via {tuple(s['at'])} group {s['group']} "
+              f"({'unlinked, beside' if s['unlinked'] else 'would go with'} {','.join(s['hung'])}) is a stitching via: {s['why']}; "
+              f"not written as a rip")
+    for s in kept_v:
+        print(f"  kept: {R.short(s['net'])} via {tuple(s['at'])} group {s['group']} loses {','.join(s['lost']) or 'nothing'} and "
+              f"still reaches {','.join(s['pads'][:4])}{' ...' if len(s['pads']) > 4 else ''} "
+              f"{'on its land' if s['on'] else 'through its track'}: a fan-out via of a pad that stays, not a rip")
     rips = [{k: e[k] for k in ("net", "layer", "pts", "width", "why")} for e in out if "pts" in e]
     ripvias = [{k: e[k] for k in ("net", "at", "why")} for e in out if "at" in e]
     print(f"ORPHANS: {len(rips)} segments, {len(ripvias)} vias ({sum(e.get('in_zone', False) for e in out)} in a zone of their net, "
           f"{sum(e['unlinked'] and 'at' in e for e in out)} unlinked beside a moved pad) "
           f"in {len({e['cluster'] for e in out})} clusters; "
-          f"{len(shared)} shared, {len(byhand)} beside, left to you")
+          f"{len(shared)} shared, {len(byhand)} beside, {len(stitch)} stitching, left to you; {len(kept_v)} fan-out vias kept")
     if a.out:
         Path(a.out).write_text(json.dumps({"rips": rips, "ripvias": ripvias}, indent=1) + "\n")
         print(f"wrote {a.out}")
@@ -214,7 +306,7 @@ def main():
             plan[name] = plan.get(name, []) + [r for r in new if key(r) not in have]
         Path(a.merge[1]).write_text(json.dumps(plan, indent=1) + "\n")
         print(f"wrote {a.merge[1]}: {a.merge[0]} + {len(rips) + len(ripvias) - dup} rips ({dup} it already had, not added twice)")
-    return 1 if out or shared or byhand else 0
+    return 1 if out or shared or byhand or stitch else 0
 
 
 if __name__ == "__main__":
