@@ -1031,6 +1031,10 @@ its docstring. What the spec has to be told:
   route check's DRC saw it. Keep a baseline in a folder of its own under the project's name,
   or resolve the classes from the `.kicad_pro`'s `netclass_patterns` yourself. Prove it by
   counting the classes the load reports: all `Default` on a board that has classes is the trap.
+  **The same trap fills zones wrong**: a probe that loads a lone `.kicad_pcb` (no `.kicad_pro` /
+  `.kicad_dru` beside it) and calls `ZONE_FILLER` fills at default clearances (board1 R6a_c22:
+  14 In4 islands instead of 7, VDD_GPU 9.67 mOhm instead of 7.26). Copy the project files in
+  with the board before any in-memory fill or IR probe.
 - **A scratch copy is a folder of its own, with ONE `.kicad_pcb`, and a new folder every run.**
   `--board <folder>` stops on a second board file ("expected one .kicad_pcb, found 2"), so a
   baseline is copied IN as the board (`cp base/pre_apply.kicad_pcb "$S"/<project>.kicad_pcb`),
