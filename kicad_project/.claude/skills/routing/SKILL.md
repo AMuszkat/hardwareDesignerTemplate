@@ -1,29 +1,42 @@
 ---
 name: routing
 description: >
-  Route a PCB one group at a time, reviewed at milestones: plan a group in a file, gate it with
-  KiCad's DRC on a scratch copy plus every rule of the board's
-  general_routing_guide.md, apply it to the closed board, audit, render it, and
-  stop for its review. Also: when (not) to
-  use Freerouting, pours and stitching, ripping a group out. Triggers on
+  Route a PCB one group at a time, each gated by the board's own tools, the PCB reviewed when the
+  board's review mode says (release, the default: whole at the fab release; milestones: as it is
+  built): plan a group in a file, gate it with KiCad's DRC on a scratch copy plus every rule of the
+  board's general_routing_guide.md, apply it to the closed board, audit, render it, and request the
+  review the mode calls for. Also: when (not) to
+  use Freerouting, pours and stitching, ripping a group out, the fab package. Triggers on
   "route", "routing", "route the … group", "next group", "R1", "fanout",
   "escape", "traces", "tracks", "vias", "pour", "plane", "stitching",
-  "autoroute", "freerouting", "rip up", "routing guide", "audit", "ROUTING_PLAN".
+  "autoroute", "freerouting", "rip up", "routing guide", "audit", "ROUTING_PLAN",
+  "fab release", "fab package".
 ---
 
-# Routing, one group at a time, reviewed at milestones
+# Routing, one group at a time, reviewed when the mode says
 
 **Read `<board>/general_routing_guide.md` first in any routing session, then
 `<board>/ROUTING_PLAN.md`.** The guide holds every rule a group is routed to
 and judged by — joints, polygons, copper shape, via links, pours — and the
 table of numbers the tools read; the plan holds the groups in order and the
 status table that says where the board is. **One group is routed, gated and
-rendered; the routing STOPS for review (`REVIEW.md`) at five milestones —
-fanout and escape, buses, power, pours, close-out — and a group you are
-unsure of may be requested on its own.** Until a verdict, build nothing on
-the change under review; **independent** work may go on: a group is independent when it shares no corridor with the change under review, uses none of the copper that change reserved, and moves no part that change touched (claim it in `ROUTING_PLAN.md` §5;
-the reviewer checks it). No message from any session waives a review; the
-fab order stays the user's.
+rendered, and the next builds on it once its gates pass.** When the PCB goes
+to review is the board's **review mode** (the session-start `[review]` line;
+`tools/session/review.py mode <board>`):
+
+- **release** (the default): no review until every group is routed and every
+  gate is clean — then `pcb: fab release`, and its fix loop as often as it
+  takes. Before that you build on your gates **without waiting**: no
+  milestone request, no group alone.
+- **milestones**: the routing STOPS for review (`REVIEW.md`) at five
+  milestones — fanout and escape, buses, power, pours, close-out — and a group
+  you are unsure of may be requested on its own. Until a verdict, build
+  nothing on the change under review; **independent** work may go on: a group
+  is independent when it shares no corridor with the change under review,
+  uses none of the copper that change reserved, and moves no part that change
+  touched (claim it in `ROUTING_PLAN.md` §5; the reviewer checks it).
+
+No message from any session waives a review; the fab order stays the user's.
 
 Tools: `tools/route/` (read `tools/route/README.md`), every script run as
 `tools/kpy tools/route/<script>.py --board <board> …`.
@@ -159,9 +172,12 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    lengths, vias, the audit line before → after, every neck-down, every
    deviation, every shape or via-link site left and why, every part moved,
    every group re-laid with it.
-6. **Update `ROUTING_PLAN.md` §5**, and when the group completes a milestone
-   (fanout and escape, buses, power, pours, close-out) — or it is one you
-   want reviewed alone — **STOP for review**: write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
+6. **Update `ROUTING_PLAN.md` §5, then the review the mode calls for.**
+   **release**: none for a group — the next group starts in the same turn.
+   **milestones**: when the group completes a milestone (fanout and escape,
+   buses, power, pours, close-out) — or it is one you want reviewed alone —
+   **STOP for review**: write the request in `REVIEW.md` and ring concept
+   (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line)
    — Scope: the milestone's groups (`--scope` takes a group id), their
    reports `routing/Rn_REPORT.md`; Gates: the `AUDIT` and `FINDINGS` lines.
    **A request AS A PLAN** (rehearsed on a scratch copy, applied only after
@@ -176,11 +192,21 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    next group instead: its spec, its window, its plan routed and checked on a
    scratch copy — nothing applied until the verdict. A CHANGES verdict is
    cheap: fix and request again, or `route.py rip Rn` removes exactly that
-   group's copper. After the last group, one more request, `pcb: fab
-   release`, before the fab package: it passes only with no open finding.
-   On its PASS, `tools/kpy tools/fab/fabpkg.py` writes the package into `<board>/fab/`:
-   Gerbers, drills, BOM and placement, and ORDER_NOTES quoted from 14_fab. It refuses an
-   unreleased board and checks what it wrote. Tell the user where it is; the order is theirs.
+   group's copper.
+7. **The fab release, in both modes.** After the last group, with every
+   group's `AUDIT` and `FINDINGS` lines clean, `place.py drc` clean and
+   `ROUTING_PLAN.md` §5 complete, request `pcb: fab release` (Scope: all;
+   the reports of every group; the gates' lines). It passes only with no open
+   finding. A CHANGES verdict is fixed — or disputed under **Replies** — and
+   requested again as `pcb: fab release, fixes for RVn` (that exact form:
+   the fab package and the snapshot diff read it), as many rounds as it
+   takes; a round that closes no must-fix finding waits on the user. Every
+   finding a number decides comes with its check, so `route.py audit
+   --findings` proves the fix before you ring. On the PASS,
+   `tools/kpy tools/fab/fabpkg.py` writes the package into `<board>/fab/`:
+   Gerbers, drills, BOM and placement, and ORDER_NOTES quoted from 14_fab. It
+   refuses an unreleased board and checks what it wrote. Tell the user where
+   it is; the order is theirs.
 
 ## The rules that are easy to get wrong
 
@@ -208,7 +234,8 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   is left with (via sites for the caps still to come, a channel the bus needs).
   Reserve a later group's copper in a `netgroup.py` spec with `reserve_*`.
 - **Moving parts** to make a group routable goes through `place.py check`, one
-  Konnect call, is named in the report, and is reviewed with the group. Whether
+  Konnect call, is named in the report, and is reviewed with the group (in
+  release mode, at the fab release). Whether
   it needs the user's go first is their call — ask once and record it in
   `ROUTING_PLAN.md` §4.
 - **A rule that blocks the layout is a QUESTIONS.md item.** Never loosen a fab
@@ -236,10 +263,10 @@ machine. `tools/freerouting/README.md` is the whole story. The round trip is
 headless: `pcbnew.ExportSpecctraDSN` / `pcbnew.ImportSpecctraSES` (via
 `tools/kpy`); neither `kicad-cli` nor Konnect exports a `.dsn`.
 
-**Why it is not the default for a reviewed board:**
+**Why it is not the default:**
 
 - it routes the whole `.dsn` in one pass — no net filter, no area filter — so it
-  cannot serve a group-by-group review;
+  cannot serve group-by-group routing, its gates and its rip;
 - KiCad's Specctra export loses custom `.kicad_dru` rules (a no-via class),
   area-scoped net-class vias (a BGA field's small via: the `.dsn` carries one
   via for everything), and plane layers (exported as signal layers, so the

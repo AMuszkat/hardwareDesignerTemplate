@@ -59,11 +59,21 @@ count and its own decision, over five days.
 
 **A question about a route** (pair order, which side a bus leaves, a
 crossing, an escape) is never answered from pin order alone. Before an
-option goes into the handoff, have the `pcb-reviewer` measure it on the
-board's snapshot: an escape / flood-fill test for every net the route
-encloses, and the track capacity of each exit against the nets that must use
-it. Two pair routes once argued from pin order each failed their next review
-(a pocket, then an exit four tracks short); the measurement settled the
+option goes into the handoff, measure it yourself on a snapshot of the board
+(`tools/review/snapshot.py --board boardN --kind pcb --id Qn --out
+out/questions/boardN/Qn-pcb`: no agent; never under `out/reviews/`, where
+the next review's `changed.md` would diff against it): an escape test
+for every net the route encloses, and the track capacity of each exit
+against the nets that must use it — `tools/review/geom.py <snapshot>`
+`lanes`, `box`, `coupled`, `conn`, `probe`, or the board's route tool on a
+scratch copy (`route.py check`, its `reach()` flood;
+`kicad_project/tools/route/README.md`). **Never hand it to the
+`pcb-reviewer`**: the reviewers review, they are not a measuring service
+(`review-board`, step 3) — a what-if handed to one ran 13–55 minutes each
+time. A measurement neither tool makes is a script in the snapshot's
+`tmpWork/` and a retro row (the `geom.py` query it should have been). Two
+pair routes once argued from pin order each failed their next review (a
+pocket, then an exit four tracks short); the measurement settled the
 third.
 
 **A custom DRC rule** that an answer adds to or changes in a board's `FAB`

@@ -6,15 +6,25 @@ frozen copy of your board, and publishes the verdict and the findings in
 whether the relay is on or off (`../RELAY_PROTOCOL.md`, "Reviews").
 
 **When:** after every schematic change (a set of sheets, a redraw, the fixes
-for a review); for the PCB, the placement as a whole and each routing
-milestone (fanout and escape, buses, power, pours, close-out), a single group
-you want reviewed alone, the fixes for a review — once its own gates pass
-(the `schematic`, `placement` or `routing` skill) — and a last `pcb: fab
-release` before the fab package. Then ring concept with the request's line
-(relay on) or tell the user (relay off), and build nothing on the change
-until the verdict; independent work may go on (a group that shares no
-corridor with it, uses none of its copper and moves no part it touched —
-claimed in `ROUTING_PLAN.md` §5).
+for a review), once its own gates pass (the `schematic` skill). For the PCB,
+the board's **review mode** decides (the session-start `[review]` line,
+`../RELAY_PROTOCOL.md` section 10):
+
+- **release** (the default): one `pcb: fab release` once every group is
+  routed and your gates are clean, then `pcb: fab release, fixes for RV<n>`
+  (that exact form) until it passes. No placement, milestone or group request
+  before it; a PCB request rung early is answered `NOT REVIEWED (review mode
+  release)` — go on.
+- **milestones**: the placement as a whole and each routing milestone (fanout
+  and escape, buses, power, pours, close-out), a single group you want
+  reviewed alone, the fixes for a review — once its own gates pass (the
+  `placement` or `routing` skill) — and a last `pcb: fab release` before the
+  fab package.
+
+Then ring concept with the request's line (relay on) or tell the user (relay
+off), and build nothing on the change until the verdict; independent work may
+go on (a group that shares no corridor with it, uses none of its copper and
+moves no part it touched — claimed in `ROUTING_PLAN.md` §5, milestones mode).
 
 **Format** — keep it exactly, the concept session scans for it:
 
@@ -32,7 +42,8 @@ claimed in `ROUTING_PLAN.md` §5).
   review snapshot runs the same line, and a reviewer's hour is not the way to
   hear it.
 - **Meanwhile is not optional.** Ring, then start it: a review takes its
-  time whether you wait or not. Independent means it shares no corridor with
+  time whether you wait or not. (At a fab release the board is finished:
+  `nothing independent — fab release` is the usual line.) Independent means it shares no corridor with
   the change, uses none of its copper and moves no part it touched
   (`ROUTING_PLAN.md` §5). When nothing is, say why — and plan instead: specs,
   `prelayout.py`, plans routed and checked on a scratch copy, nothing applied.
@@ -43,7 +54,8 @@ claimed in `ROUTING_PLAN.md` §5).
   until a later review sees them fixed.
 - **CHANGES:** set `CHANGES (rev R)`, fix every `must` finding (or dispute
   it under **Replies**, with the reason and its evidence), then request
-  again. A finding disputed and upheld twice goes to the user.
+  again. A finding disputed and upheld twice goes to the user, and so does a
+  fab-release fix round that closes no `must` finding.
 - A review the user or concept starts without a request is numbered `M<n>`
   in `15_reviews.md`; reply to it under a `## M<n> — replies` heading here.
 

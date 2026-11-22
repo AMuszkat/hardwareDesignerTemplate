@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# The review-mode switch (release by default):  bin/review status | release | milestones [boardN]
+# release: the PCB is reviewed whole at the fab release; milestones: as it is built.
+# Schematic changes are reviewed in both.  See kicad_project/tools/session/review.py.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "$root/kicad_project/tools/session/review.py" "${@:-status}"

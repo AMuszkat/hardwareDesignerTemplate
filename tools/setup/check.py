@@ -42,7 +42,7 @@ PROJECT_SKILLS_CONCEPT = ["decision", "answer-question", "datasheet", "study"]
 HOOK_SCRIPTS = ["kicad_project/tools/session/relay.py", "kicad_project/tools/session/guard.py",
                 "kicad_project/tools/session/wall.py", "kicad_project/tools/session/bashguard.py",
                 "kicad_project/tools/boardsel.py"]
-LAUNCHERS = ["bin/concept", "bin/board", "bin/relay", "setup.sh", "verify.sh",
+LAUNCHERS = ["bin/concept", "bin/board", "bin/relay", "bin/review", "setup.sh", "verify.sh",
              "kicad_project/tools/kpy", "kicad_project/tools/setup.sh",
              "kicad_project/tools/freerouting/freerouting-mcp.sh", "kicad_project/tools/render/setup.sh"]
 PCBNEW_PYTHONS = ["/usr/bin/python3",
@@ -232,6 +232,12 @@ def project():
         "./setup.sh init <ProjectName>")
     relay = load_json(KP / "relay.json") or {}
     add("ok", "relay switch", "ON" if relay.get("enabled") else "OFF (default; bin/relay on)")
+    review = load_json(KP / "review.json") or {}
+    per = {b: m for b, m in (review.get("boards") or {}).items() if m in ("release", "milestones")}
+    add("ok", "review mode (PCB)",
+        (review.get("default") if review.get("default") in ("release", "milestones") else "release")
+        + ("" if review.get("default") else " (default; bin/review milestones [boardN])")
+        + "".join(f", {b} {m}" for b, m in sorted(per.items())))
     rc, out = run([sys.executable, str(ROOT / "tools/setup/render_settings.py"), "--check"])
     add("ok" if rc == 0 else "FAIL", "per-machine settings (deny rules, CLAUDE.md exclude)",
         "rendered for this path" if rc == 0 else "; ".join(out.splitlines()),

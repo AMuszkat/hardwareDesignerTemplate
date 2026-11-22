@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Routing for a board, one reviewed group at a time (see <board>/ROUTING_PLAN.md).
+"""Routing for a board, one gated group at a time (see <board>/ROUTING_PLAN.md).
 
     tools/kpy tools/route/route.py status --board board1 [--nets]
     tools/kpy tools/route/route.py check  --board board1 routing/R1_power.json

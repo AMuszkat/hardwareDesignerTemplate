@@ -111,5 +111,6 @@ footprint's own model — name the generated blocks by reference.
   height or a clearance is right; the gates for those are `fp.py check` and
   `place.py drc`.
 - "Finished" is the user's word. This skill renders whatever the board file
-  holds and does not judge whether the board is done. A routing group still
-  stops for its review (`REVIEW.md`), and a render does not replace it.
+  holds and does not judge whether the board is done. A review the board's
+  review mode calls for (`REVIEW.md`) still happens, and a render does not
+  replace it.

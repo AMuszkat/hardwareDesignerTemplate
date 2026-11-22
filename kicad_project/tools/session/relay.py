@@ -18,6 +18,9 @@ Files in kicad_project/, the one directory BOTH sessions may read:
   relay.json    WHETHER: {"enabled": bool, "changed": ..., "by": ...}.  Per
                 machine (gitignored; missing = off).  Written only by this
                 script, and only at the user's request.
+  review.json   WHEN the PCB is reviewed: release (the default) or milestones,
+                per board.  Committed.  Written only by tools/session/review.py
+                (bin/review), at the user's request; `brief` prints its line.
   local.json    this machine's pcbnew interpreter (tools/kpy).  Gitignored.
   local.sessions.json  which board each session id owns (tools/boardsel.py
                 `claim`).  Gitignored.  `brief board` writes it whenever
@@ -238,6 +241,12 @@ def brief(side):
                      "with bin/board boardN --resume: tell the user that line before anything else.")
     lines.append(f"[relay] The relay is {'ON' if on else 'OFF'} (kicad_project/relay.json; "
                  f"the user flips it with bin/relay on|off).")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import review
+        lines += review.brief_lines(side, board or None)
+    except Exception:
+        pass
     if side == "board":
         lines.append("[kicad] Headless by default: every PCB step runs through the pcbnew scripts on the "
                      "CLOSED board; KiCad is opened only for a Konnect step (kicad_project/CLAUDE.md, "

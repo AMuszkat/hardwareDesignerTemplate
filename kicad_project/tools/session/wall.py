@@ -30,8 +30,9 @@ a concept wall written there would wall the board sessions out of their own
 folders.  The root's settings.json hooks are not loaded there, so this is.
 
   * a board folder, kicad_project/tools/, kicad_project/.claude/ -> block (theirs)
-  * project.json, relay.json, local.json,
-    local.sessions.json                                    -> block (setup.sh / bin/relay / the brief)
+  * project.json, relay.json, review.json, local.json,
+    local.sessions.json                                    -> block (setup.sh / bin/relay /
+                                                              bin/review / the brief)
   * RELAY_PROTOCOL.md, kicad_project/CLAUDE.md, .mcp.json  -> ask (the user's)
   * a GENERATED file: design/diagrams/*.svg, any handoff/,
     reference/vendor/datasheets.json, studies/baselines/*,
@@ -129,9 +130,9 @@ def concept_side(path, _event=None):
               "tools/handoff/answers/boardN.md and publish; never write in their files.")
     if first in ("tools", ".claude"):
         block(f"{rel} belongs to the board sessions (kicad_project/{first}/). Ask the user.")
-    if sub in ("project.json", "relay.json", "local.json", "local.sessions.json"):
-        block(f"{rel} is written by ./setup.sh init, bin/relay and the session-start hook, "
-              "never by hand.")
+    if sub in ("project.json", "relay.json", "review.json", "local.json", "local.sessions.json"):
+        block(f"{rel} is written by ./setup.sh init, bin/relay, bin/review and the session-start "
+              "hook, never by hand.")
     if sub == "RELAY_PROTOCOL.md":
         ask("RELAY_PROTOCOL.md is the user's protocol: both sessions follow it and neither "
             "edits it. Confirm the user asked for this change.")
