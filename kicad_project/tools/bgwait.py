@@ -74,7 +74,17 @@ project it took the board session, the concept session and the editor with it
 the floor is available -- 15 % of the machine, 3 GB at least, HW_MEM_FLOOR_GB
 to set it -- and names the running jobs and what each holds; every job runs
 at oom_score_adj 900, so when memory does run out the kernel takes a JOB, not
-the session that started it; `status` and `wait` print each running job's
+the session that started it; and (Linux with a systemd user manager) every job
+runs in its own scope inside ONE slice, `hwjobs.slice`, capped at
+HW_JOBS_MEM_GB together (default: the machine less 25 %, 6 GB kept at least;
+HW_JOBS_SWAP_GB of swap, default 2) with OOMPolicy=continue.  oom_score_adj
+alone was not enough: the editor's scope has OOMPolicy=stop, so ONE job killed
+by the kernel made systemd stop the whole editor scope -- both sessions and
+every other job with it (first project: six router variants of 5.5 GB each
+on a 30 GB machine, twice in one afternoon).  In the slice, jobs that
+together pass the cap lose a job process to the cgroup's own OOM kill, and
+nothing outside the slice is touched; `run` and `status` print the slice's
+line.  HW_BGWAIT_NOSCOPE=1 runs a job the old way; `status` and `wait` print each running job's
 resident memory and the machine's line; an ended job records `peak_gb`, the
 most the whole job held (sampled every 3 s), and `cores` shows it per script
 with how many such runs the machine holds at once.  `cores` reads the
@@ -103,6 +113,7 @@ import collections
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -242,11 +253,13 @@ def _cputime(txt):
     return sec + 86400 * int(days or 0)
 
 
-def cpu_seconds(pid):
+def cpu_seconds(pid, wrapper=False):
     """CPU seconds used so far by the process, everything it started and
     everything in its session -- a job is a tree, and its time is the tree's.
     On Linux a live process also carries its reaped children's time, so a
-    worker pool that came and went is still counted."""
+    worker pool that came and went is still counted.  `wrapper`: `pid` is
+    `run`'s wrapper, whose own time (its sampler, scanning /proc every 3 s)
+    is not the job's -- counted, it read a job asleep as "working"."""
     table = {}
     if LINUX:
         for name in os.listdir("/proc"):
@@ -272,7 +285,16 @@ def cpu_seconds(pid):
         take.add(p)
         todo += kids.get(p, [])
     take |= {p for p, (_pp, sess, _c) in table.items() if sess == pid}
-    return sum(table[p][2] for p in take)
+    own = 0.0
+    if wrapper and LINUX and pid in table:
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                raw = f.read().decode("ascii", "replace")
+            f_ = raw[raw.rindex(")") + 2:].split()
+            own = (int(f_[11]) + int(f_[12])) / TICK      # utime + stime: the wrapper's own, not its reaped children's
+        except (OSError, ValueError, IndexError):
+            pass
+    return max(0.0, sum(table[p][2] for p in take) - own)
 
 
 def session_pids(pid):
@@ -402,7 +424,9 @@ def steps_file(jobfile):
 
 def steps_lines(rows, wall, shown=5):
     """The report's lines for a job's steps: the commands that held 3 % of its wall-clock or more."""
-    rows = [r for r in rows or [] if wall > 0 and r[2] >= max(STEP_EVERY, 0.03 * wall)][:shown]
+    # the floor is 1 s, not STEP_EVERY: at the default 3 s sampling a seen step holds 3 s anyway, and at a
+    # faster HW_BGWAIT_STEP_EVERY a 2.9 s step was dropped from the table (the test's flake)
+    rows = [r for r in rows or [] if wall > 0 and r[2] >= max(1.0, 0.03 * wall)][:shown]
     if not rows:
         return []
     ncpu = os.cpu_count() or 1
@@ -470,7 +494,7 @@ class Target:
 
     def sample(self):
         now = time.monotonic()
-        self.samples.append((now, cpu_seconds(self.pid)))
+        self.samples.append((now, cpu_seconds(self.pid, wrapper=self.job is not None)))
         while len(self.samples) > 2 and self.samples[1][0] <= now - WINDOW:
             self.samples.popleft()
 
@@ -669,6 +693,60 @@ def mem_line():
     return f"memory: {avail:.1f} GB available of {total:.1f} (floor {floor:.1f}){note}"
 
 
+JOBS_SLICE = os.environ.get("HW_JOBS_SLICE", "hwjobs.slice")
+
+
+def jobs_cap_gb(total):
+    """What every job together may hold: HW_JOBS_MEM_GB, else the machine less 25 % (6 GB kept at least)."""
+    try:
+        return float(os.environ["HW_JOBS_MEM_GB"])
+    except (KeyError, ValueError):
+        return max(2.0, total - max(6.0, 0.25 * total))
+
+
+def _slice_dir():
+    return Path(f"/sys/fs/cgroup/user.slice/user-{os.getuid()}.slice/user@{os.getuid()}.service/{JOBS_SLICE}")
+
+
+def slice_line():
+    """`jobs slice ...: 12.3 GB held of 22.5 GB cap` -- None where jobs do not run in the slice."""
+    d = _slice_dir()
+    try:
+        cur = int((d / "memory.current").read_text()) / 1073741824
+        mx = (d / "memory.max").read_text().strip()
+    except (OSError, ValueError):
+        return None
+    cap = f"{int(mx) / 1073741824:.1f} GB cap" if mx.isdigit() else "no cap"
+    return f"jobs slice {JOBS_SLICE}: {cur:.1f} GB held of {cap} (a job past it is killed there, nothing else)"
+
+
+def scope_prefix(name, total):
+    """The argv that puts a job's wrapper in its own scope inside the capped
+    jobs slice -- [] where that cannot be done (not Linux, no systemd user
+    manager, HW_BGWAIT_NOSCOPE).  `systemd-run --scope` execs the command in
+    place, so the pid `run` started is the wrapper's."""
+    if not LINUX or os.environ.get("HW_BGWAIT_NOSCOPE") or total is None:
+        return []
+    sr, sc = shutil.which("systemd-run"), shutil.which("systemctl")
+    if not sr or not sc:
+        return []
+    try:
+        swap = float(os.environ.get("HW_JOBS_SWAP_GB", "2"))
+    except ValueError:
+        swap = 2.0
+    try:
+        r = subprocess.run([sc, "--user", "set-property", "--runtime", JOBS_SLICE,
+                            f"MemoryMax={int(jobs_cap_gb(total) * 1024)}M", f"MemorySwapMax={int(swap * 1024)}M"],
+                           stdin=subprocess.DEVNULL, capture_output=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode:
+        return []
+    unit = f"bgwait-{name}-{os.getpid()}-{int(time.time())}.scope"
+    return [sr, "--user", "--scope", "--quiet", "--collect", f"--slice={JOBS_SLICE}",
+            "-p", "OOMPolicy=continue", f"--unit={unit}", "--"]
+
+
 # ---------------------------------------------------------------------------
 # commands
 # ---------------------------------------------------------------------------
@@ -698,8 +776,13 @@ def cmd_run(a):
     log.parent.mkdir(parents=True, exist_ok=True)
     save(jf, {"name": a.name, "cmd": a.cmd, "cwd": os.getcwd(), "log": str(log),
               "created": time.time(), "pid": None})
+    scope = scope_prefix(a.name, total)
+    if scope:
+        job0 = load(jf)
+        job0["scope"] = scope[-2].split("=", 1)[1]
+        save(jf, job0)
     with open(log, "wb") as lf:                              # a run's log is its own: truncated
-        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "_exec", str(jf)],
+        subprocess.Popen(scope + [sys.executable, str(Path(__file__).resolve()), "_exec", str(jf)],
                          stdin=subprocess.DEVNULL, stdout=lf, stderr=subprocess.STDOUT,
                          start_new_session=True, close_fds=True)
     job, t0 = None, time.monotonic()
@@ -717,6 +800,9 @@ def cmd_run(a):
     ml = mem_line()
     if ml and "--" in ml:
         print(ml)
+    sl = slice_line() if scope else None
+    if sl:
+        print(sl)
     return 0
 
 
@@ -867,6 +953,8 @@ def cmd_status(a):
     results = [report(t, a.tail) for t in targets]
     if mem_line():
         print(mem_line())
+    if slice_line():
+        print(slice_line())
     print(summary(results)[0])
     return 0
 

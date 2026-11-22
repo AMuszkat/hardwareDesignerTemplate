@@ -144,6 +144,14 @@ def main():
         rc, out, _ = bg(env, "wait", "mem", "--timeout", "20", timeout=30)
         job = json.loads((tmp / "jobs" / "mem.json").read_text())
         expect("| 900" in out, "memory: a job runs at oom_score_adj 900 -- the kernel takes it before the session", out)
+        if job.get("scope"):                          # Linux with a systemd user manager: the capped jobs slice
+            # a job past a (test) cap is killed inside the slice, its exit recorded, and nothing outside it touched
+            hog = dict(env, HW_JOBS_SLICE="hwjobs-test.slice", HW_JOBS_MEM_GB="0.2", HW_JOBS_SWAP_GB="0")
+            rc, out, _ = bg(hog, "run", "--name", "hog", "--", sys.executable, "-c",
+                            "a = bytearray(800 * 2 ** 20); a[::4096] = b'x' * len(a[::4096])")
+            rc, out, _ = bg(env, "wait", "hog", "--timeout", "20", timeout=30)
+            expect("hog: ended, exit 137, signal 9" in out,
+                   "memory: a job past the jobs slice's cap is killed there (signal 9, recorded), and this test lives on", out)
         expect(0.25 <= job.get("peak_gb", 0) <= 0.6 and "peak 0." in out,
                f"memory: a job that held 300 MB records its peak ({job.get('peak_gb')} GB) and the report shows it", out)
         rows, _ = bgwait.cores_table([job])
