@@ -95,6 +95,17 @@ typed, else inside the board folder (`routing/R1.json`).
   `placement/RV59caps_place.json` lists exactly `routing/RV59caps.json`'s 20 ripvias, 5 kept, 1 stitching; the D116
   controls (`tmpWork/RV59_orphans/s3_*`) are unchanged line for line; with that plan's `why` made neutral the stitching
   via is ripped again (`tmpWork/orphans_ballvia/proofs.sh`).
+  **The trap: the route plan's OWN rips orphan copper too.** A via the plan rips (to move it) may be another pad's as
+  well: board1 RV60.5 ripped U300 A6's GND via (14.95, 16.1), which C305.2's B.Cu link also ran to, and the link
+  showed only as `track_dangling` in `route.py check`. So `--plan ROUTE.json` (default: `--merge`'s PLAN) takes the
+  plan's rips, ripvias and polyrips and the rips listed off, lays its tracks, vias and polygons (in memory, no
+  refill), and prints every OTHER track whose end was held before and by nothing now, and every via held before and
+  by nothing now outside a zone of its net, as `dangles -- relink or rip: ... on C305.2: its end (14.95, 16.1) was
+  held by via GND (14.95, 16.1)`, then a `DANGLES:` total; never a rip (it may be a pad's link to re-lay), exit 1.
+  Run it on every plan that rips, before `check`. Prove it: the pre-RV60fix copy with `RV60_fix/place.json` and
+  that plan WITHOUT C305.2's relink names the link; with `RV60_fix/route.json` 0; only the via ripped names the A6
+  stub's segment and the link, the via laid again in place 0, the two tracks ripped names the via and the stub's
+  next segment; with no plan every RV59 / D116 control is unchanged (`tmpWork/orphans_shared/proofs.sh`).
 - **`padvias.py` -- vias IN a pad** (a regulator's output or input capacitor, an exposed pad): `--pads REF.PAD[:N],...`
   keeps N centres (or as many as fit) inside each pad, legal on every copper layer (the other nets' copper by the larger
   class clearance, holes by 14_fab's hole gaps, the via-to-pad gap from every OTHER pad), `--pitch` apart, spread from a

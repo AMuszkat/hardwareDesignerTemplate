@@ -41,6 +41,13 @@ What it does NOT decide (printed as `shared -- decide by hand`, exit 1, never wr
 stands on a pad and is left a dead end (the last track to a staying pin: it will dangle), an item on the way
 that another joins along its body instead of at an end (short fat links in one blob), and anything behind them.
 It never looks through a zone: a pour that loses its only pad is `pour.py`'s to find.
+With a ROUTE PLAN (--plan, or --merge's PLAN), what that plan's own rips leave behind as well: after the move, the
+plan's rips, ripvias and polyrips and the rips listed here are taken off and its tracks, vias and polygons laid, in
+memory (no refill), and every OTHER track whose end was held (by a pad, a track, a via) before and is held by nothing
+now, or a via that something held before and nothing holds now outside a zone of its net, is printed `dangles --
+relink or rip`, with what held it -- never written as a rip: the link may be another pad's, to relink (board1 RV60.5:
+a plan ripped U300 A6's GND via (14.95, 16.1), and C305.2's B.Cu link to it showed only as track_dangling in
+`route.py check`).
 
 One line an item and a total; --out writes {"rips": [...], "ripvias": [...]} in route.py's form, each with its
 `why`; --merge writes PLAN.json with them appended as OUT.json (an item PLAN already rips is not added twice).
@@ -64,6 +71,10 @@ def main():
     ap.add_argument("place", help='the placement plan: {"REF": [x, y, rot] or [x, y, rot, "B"]}')
     ap.add_argument("--out", default=None, help="write the rips and ripvias here")
     ap.add_argument("--merge", nargs=2, metavar=("PLAN.json", "OUT.json"), help="PLAN with the rips appended, written as OUT")
+    ap.add_argument("--plan", default=None, metavar="ROUTE.json",
+                    help="the route plan that goes with the move (default: --merge's PLAN): its rips and ripvias, with the ones "
+                         "listed here, are taken off and its new copper laid, in memory, and every OTHER track or via left hanging "
+                         "by them is named -- 'dangles -- relink or rip'")
     ap.add_argument("--reach", type=float, default=1.27, metavar="MM",
                     help="a via that touches no pad and no pad's track stands BESIDE the pads of its net whose centre is within "
                          "MM of its own (the handoff's distance for a capacitor's own via; default 1.27, 0 = do not look)")
@@ -72,6 +83,8 @@ def main():
     try:
         moves = R.P.load_moves(R.P.boardsel.in_board(a.board, a.place))
         plan = json.loads(Path(a.merge[0]).read_text()) if a.merge else None
+        rp = a.plan or (a.merge[0] if a.merge else None)
+        rplan = json.loads(Path(rp).read_text()) if rp else None
     except (OSError, ValueError) as e:
         R.P.die(f"cannot read {e}")
     B = R.RBoard(a.board)
@@ -267,6 +280,7 @@ def main():
         if sw:
             out.remove(e)
             stitch.append(dict(e, why=sw))
+    dangles = plan_dangles(B, rplan, items, is_via, after, {e["uuid"] for e in out}, in_zone, group) if rplan is not None else []
     print(f"{len(moves)} parts in {Path(a.place).name}, {len(moving)} move")
     for e in out:
         where = f"via {tuple(e['at'])}" + (" in_zone" if e["in_zone"] else "") if "at" in e else \
@@ -294,6 +308,11 @@ def main():
           f"{sum(e['unlinked'] and 'at' in e for e in out)} unlinked beside a moved pad) "
           f"in {len({e['cluster'] for e in out})} clusters; "
           f"{len(shared)} shared, {len(byhand)} beside, {len(stitch)} stitching, left to you; {len(kept_v)} fan-out vias kept")
+    if rplan is not None:
+        for d in dangles:
+            print(f"  dangles -- relink or rip: {d['line']}")
+        print(f"DANGLES: {sum('pts' in d for d in dangles)} tracks, {sum('at' in d for d in dangles)} vias left hanging by "
+              f"{Path(rp).name}'s rips and the {len(out)} listed above, with its new copper laid; never written as a rip")
     if a.out:
         Path(a.out).write_text(json.dumps({"rips": rips, "ripvias": ripvias}, indent=1) + "\n")
         print(f"wrote {a.out}")
@@ -306,7 +325,77 @@ def main():
             plan[name] = plan.get(name, []) + [r for r in new if key(r) not in have]
         Path(a.merge[1]).write_text(json.dumps(plan, indent=1) + "\n")
         print(f"wrote {a.merge[1]}: {a.merge[0]} + {len(rips) + len(ripvias) - dup} rips ({dup} it already had, not added twice)")
-    return 1 if out or shared or byhand or stitch else 0
+    return 1 if out or shared or byhand or stitch or dangles else 0
+
+
+def plan_dangles(B, rplan, items, is_via, after, listed, in_zone, group):
+    """What the route plan's rips (with the rips listed here) leave hanging, the plan's new copper laid: every other
+    track with an end that was held after the move and is held by nothing now, and every via that something held and
+    nothing holds now, outside a zone of its net.  Changes the in-memory board: call it after every other judgement."""
+    pn, b, mm = B.pn, B.b, B.pn.ToMM
+    xy = lambda p: (round(mm(p.x), 3), round(mm(p.y), 3))  # noqa: E731
+
+    def desc(u):
+        t = items[u]
+        return f"via {R.short(t.GetNetname())} {xy(t.GetPosition())}" if is_via[u] else \
+            f"track {R.short(t.GetNetname())} {t.GetLayerName()} {xy(t.GetStart())}-{xy(t.GetEnd())}"
+
+    def holders(t, others):
+        """{end index: [the others whose copper holds that end of track t]} -- the end in o's copper, or o's end in t's cap"""
+        d = {}
+        for i, p in enumerate((t.GetStart(), t.GetEnd())):
+            for k, o in others:
+                if o.HitTest(p, 0) or any(math.hypot(q.x - p.x, q.y - p.y) <= t.GetWidth() / 2
+                                          for q in ((o.GetStart(), o.GetEnd()) if hasattr(o, "GetStart") else ())):
+                    d.setdefault(i, []).append(k)
+        return d
+
+    # before the plan (after the move): what holds each item, by name, while every item is still on the board
+    names = {}
+    held0 = {}
+    for u, t in items.items():
+        if u in listed:
+            continue
+        others = [(o, items[o]) for o in after[u][1]] + [(f"pad {n}", p) for n, p in after[u][0].items()]
+        held0[u] = len(others) if is_via[u] else holders(t, others)
+        names.update({o: desc(o) for o in after[u][1] if o not in names})
+    B.rip_plan(rplan)                                     # a rip that matches nothing stops here, as in route.py check
+    present = {t.m_Uuid.AsString() for t in b.GetTracks()}
+    for u in listed & present:
+        b.RemoveNative(items[u])
+    gone = (set(items) - present) | listed
+    B.retype_plan(rplan)
+    import poly as POLY
+    new = [("the plan's polygon", POLY.add(b, pn, q)) for q in rplan.get("polys", [])]
+    for t in rplan.get("tracks", []):
+        for p, q in zip(t["pts"], t["pts"][1:]):
+            B.add_track(t["net"], t.get("layer", "F.Cu"), t["width"], p, q)
+    for v in rplan.get("vias", []):
+        B.add_via(v["net"], v["at"], v.get("pad", 0.6), v.get("drill", 0.3), v.get("top", "F.Cu"), v.get("bottom", "B.Cu"),
+                  nfp=bool(v.get("nfp")))
+    b.BuildConnectivity()
+    c = b.GetConnectivity()
+    out = []
+    for u in sorted({o for g in gone if g in after for o in after[g][1]} - gone):
+        t = items[u]
+        pads = {f"{p.GetParentFootprint().GetReference()}.{p.GetNumber()}": p for p in c.GetConnectedPads(t)}
+        others = [("track", o) for o in c.GetConnectedTracks(t)] + [(f"pad {n}", p) for n, p in pads.items()] + \
+            [(k, s) for k, s in new if s.GetNetCode() == t.GetNetCode() and any(s.IsOnLayer(l) for l in t.GetLayerSet().CuStack())]
+        was = [names.get(o, o) for o in after[u][1] if o in gone]
+        on = f"on {','.join(sorted(pads))}" if pads else "on no pad"
+        if is_via[u]:
+            if held0[u] and not others and not in_zone(t):
+                out.append(dict(at=list(xy(t.GetPosition())), line=f"{desc(u)} group {group.get(u, '?')}: held by "
+                                f"{'; '.join(was)} before, by nothing now (not in a zone of its net)"))
+            continue
+        now = holders(t, others)
+        for i in sorted(set(held0[u]) - set(now)):
+            end = xy((t.GetStart(), t.GetEnd())[i])
+            hung = [names.get(o, o) for o in held0[u][i]]
+            out.append(dict(pts=[list(xy(t.GetStart())), list(xy(t.GetEnd()))], line=f"{desc(u)} w {mm(t.GetWidth()):g} group "
+                            f"{group.get(u, '?')} {on}: its end {end} was held by {'; '.join(hung)}, the plan takes it off "
+                            f"and nothing holds that end now"))
+    return out
 
 
 if __name__ == "__main__":
