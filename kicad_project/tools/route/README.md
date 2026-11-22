@@ -1650,7 +1650,11 @@ where the hours went. What would have saved them:
 - **A solve is tied to the board it was solved on.** A model computed from the board (exits, slots,
   orders, a fanout) names the board file's hash in its input, and the script that reads it back
   refuses a model whose hash is not the board's -- one fanout was applied and reviewed, then found
-  solved from an older snapshot's exits.
+  solved from an older snapshot's exits. A frozen data dump the model reads (a region's vias, tracks,
+  free heights) carries the hash of the board it was dumped from, and the input refuses it on any
+  other board -- one count read a region dumped before two rounds of fixes. And after a board change,
+  dump again and `cmp` the model's input files before re-solving: identical inputs are the same model,
+  and the old solutions stand (board1 R1: six 10-minute solves not run, every row held).
 - **Prove the chain whole before part of it goes to copper.** The fanout at one end, the escape at the
   other and the channel between are one problem: closing one end's fanout on copper (and through a
   review) before the channel was shown to close at the counts it needs cost a re-solve of the whole.
