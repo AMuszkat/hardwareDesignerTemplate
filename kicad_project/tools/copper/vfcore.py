@@ -42,7 +42,7 @@ def init(board, board_dir, G_, gap=None):
     GAP = gap if gap is not None else (G.get("via_link") or {}).get("gap", 0.15)
     EDGE_MARGIN = (G.get("edge") or {}).get("min", mm(b.GetDesignSettings().m_CopperEdgeClearance))
     HOLE2HOLE = FM(C.HOLE2HOLE)
-    FIELDS = guide.field_boxes(b, G, pcbnew); FIELD_REFS = [f["ref"] for f in G.get("field_vias", [])]
+    FIELDS = guide.field_parts(b, G, pcbnew); FIELD_REFS = [f["ref"] for f in G.get("field_vias", [])]
     ed = [d for d in b.GetDrawings() if d.GetLayer() == pcbnew.Edge_Cuts]
     if not ed:
         C.die("no board outline on Edge.Cuts")

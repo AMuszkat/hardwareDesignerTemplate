@@ -17,14 +17,19 @@ Sites (each with the via, the pad, the segments, a point):
   via-angle    the link has a segment at an angle other than 0/45/90, or bends
   via-45       one straight 45-degree link: listed so each one is a choice ("never": a site)
   via-offset   axial, but not leaving the pad's centre line or not ending at the via's centre
-Not judged: vias inside the guide's `via field` parts (a BGA's dog-bones), a via
-whose centre lies in a pad of its own net (via-in-pad: no link to judge),
-links to those parts' pads, and vias with no link to a pad unless they touch
-one.  A link is the chain of segments from a via to a pad through plain
+Inside a field part's courtyard (the guide's `via field` and `bga field` rows:
+a BGA's dog-bones and site vias) only the BGA's OWN balls are lifted: a via
+there is not judged against that part's pads (gap or link), and every other
+part's link to it -- a capacitor's, a resistor's under the BGA -- is judged
+exactly as anywhere (board1 RV61: 14 such links under U300 passed while the
+whole courtyard was skipped); such a site carries "field": REF.  Not judged
+either: a via whose centre lies in a pad of its own net (via-in-pad: no link
+to judge), links to a `via field` part's pads, and vias with no link to a pad
+unless they touch one.  A link is the chain of segments from a via to a pad through plain
 joints, at most 4 segments and 3 mm.  A site declared in
 <board>/routing/vialink_exceptions.json ([{"via": [x, y], "why": ...}]) is
 listed as declared and does not fail.  Importable: audit(b, gap, exc, fields,
-field_refs) -> (sites, stats); live(sites, diag)."""
+field_refs) -> (sites, stats) (fields: [(ref, box nm)], guide.field_parts); live(sites, diag)."""
 import argparse
 import collections
 import json
@@ -47,9 +52,14 @@ def pad_frame(p, lid):
 
 
 def in_field(v, fields):
-    """A via inside a via-field part's courtyard (the fab rules' business, not this audit's)."""
-    p = v.GetPosition()
-    return any(x0 <= p.x <= x1 and y0 <= p.y <= y1 for x0, y0, x1, y1 in fields)
+    """The refs of the field parts whose courtyard holds via v.  fields: [(ref, (x0, y0, x1, y1) nm)]
+    (guide.field_parts).  Only those parts' own pads are lifted for the via: another part's link
+    to it is judged as anywhere (board1 RV61).  A bare box (the old form) lifts the whole via."""
+    p = v.GetPosition(); out = set()
+    for f in fields:
+        ref, (x0, y0, x1, y1) = f if len(f) == 2 else (None, f)
+        if x0 <= p.x <= x1 and y0 <= p.y <= y1: out.add(ref)
+    return out
 
 
 def tables(b):
@@ -194,33 +204,44 @@ def judge_link(name, p, lid, chain, via_end, vp):
 
 
 def audit(b, GAP=0.15, EXC=(), fields=(), field_refs=()):
-    """(sites, stats).  fields: courtyard boxes (nm) whose vias are not judged;
-    field_refs: parts whose pads' links are not judged."""
+    """(sites, stats).  fields: [(ref, courtyard box nm)] -- a via inside one is not judged against
+    that part's own pads; field_refs: parts whose pads' links are never judged."""
     segs, pads = tables(b); sites, skipped = [], collections.Counter(); nvia = nlink = 0
     def exc_of(vp):
         return next((e for e in EXC if abs(e['via'][0] - mm(vp[0])) < 0.01 and abs(e['via'][1] - mm(vp[1])) < 0.01), None)
     def site(kind, v, pname, lid, at, **kw):
         vp = P(v.GetPosition()); e = exc_of(vp)
+        if own: kw['field'] = ','.join(sorted(own))
         d = dict(kind=kind, net=sh(v.GetNetname()), layer=b.GetLayerName(lid), via=[round(mm(vp[0]), 4), round(mm(vp[1]), 4)],
                  via_uuid=v.m_Uuid.AsString(), pad=pname, at=[round(mm(at[0]), 3), round(mm(at[1]), 3)], **kw)
         if e: d['declared'] = e.get('why', ''); skipped['declared exception'] += 1
         sites.append(d)
     for v in b.GetTracks():
         if v.Type() != pcbnew.PCB_VIA_T: continue
-        if in_field(v, fields): skipped['via inside a via-field part'] += 1; continue
-        # a via IN a pad of its own net (a fine-pitch BGA's via-in-pad, filled and capped) needs
-        # no link, and its gap to the neighbouring lands is the field's rule, DRC's to judge
-        if any(p.GetNetCode() == v.GetNetCode() and p.HitTest(v.GetPosition())
-               for lid in (pcbnew.F_Cu, pcbnew.B_Cu) for _n, p in pads[lid]):
-            skipped['via in a pad of its own net (via-in-pad: no link)'] += 1; continue
-        nvia += 1; vp = P(v.GetPosition()); r = v.GetWidth(pcbnew.F_Cu) / 2
+        own = in_field(v, fields)
+        if None in own: skipped['via inside a via-field part'] += 1; continue
+        mine = lambda name: any(name.startswith(r + '.') for r in own)   # the field's own balls: lifted
+        vp = P(v.GetPosition()); r = v.GetWidth(pcbnew.F_Cu) / 2
+        # a via IN a pad of its own net (a capacitor's, a fine-pitch BGA's via-in-pad, filled and capped)
+        # needs no link to THAT pad, and its gap to the neighbouring lands is DRC's to judge; another
+        # pad's link to it is still a link (board1 RV61.2: C301.1's, to a via in C302.1's pad)
+        host = {n for lid in (pcbnew.F_Cu, pcbnew.B_Cu) for n, p in pads[lid]
+                if p.GetNetCode() == v.GetNetCode() and p.HitTest(v.GetPosition())}
+        links = {lid: links_of(b, v, lid, segs, pads) for lid in (pcbnew.F_Cu, pcbnew.B_Cu)}
+        # the gap is lifted for the field's own balls' escape and site vias (#48 (2)): a via of a ball
+        ball = any(mine(n) for n in host) or any(mine(L[0]) for ls in links.values() for L in ls)
+        if host: skipped['via in a pad of its own net (via-in-pad: no link)'] += 1
+        else: nvia += 1
+        if ball and not host: skipped["via of its field's own ball (gap lifted)"] += 1
         for lid in (pcbnew.F_Cu, pcbnew.B_Cu):
-            for name, p in pads[lid]:
-                if p.GetNetCode() != v.GetNetCode(): continue
+            for name, p in ([] if host or ball else pads[lid]):
+                if p.GetNetCode() != v.GetNetCode() or mine(name): continue
                 g = touch_gap(p, lid, vp, r, GAP)
                 if g is not None: site('via-touch', v, name, lid, vp, gap=round(g, 3))
-            for name, p, chain, via_end in links_of(b, v, lid, segs, pads):
+            for name, p, chain, via_end in links[lid]:
+                if name in host: continue                        # the pad the via sits in
                 if any(name.startswith(r + '.') for r in field_refs): skipped['link to a via-field part'] += 1; continue
+                if mine(name): skipped["link to its field's own ball"] += 1; continue
                 nlink += 1; j = judge_link(name, p, lid, chain, via_end, vp)
                 if j is None: continue
                 if j[0] == 'skip': skipped['pad not axis-aligned'] += 1; continue
@@ -243,7 +264,7 @@ def run(b, G, board_dir, gap=None):
     gap = gap if gap is not None else vl.get("gap")
     if gap is None:
         return None, None, None
-    sites, st = audit(b, gap, C.exceptions(board_dir), guide.field_boxes(b, G, pcbnew),
+    sites, st = audit(b, gap, C.exceptions(board_dir), guide.field_parts(b, G, pcbnew),
                       [f["ref"] for f in G.get("field_vias", [])])
     return sites, live(sites, vl.get("diag", "last resort")), st
 

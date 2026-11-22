@@ -343,17 +343,24 @@ def describe(G):
     return L or ["  (no rules: the guide's table is empty)"]
 
 
-def field_boxes(b, G, pcbnew):
-    """The courtyard boxes (nm) of the via-field parts, which the copper rules do
-    not judge inside (a BGA's dog-bones are the fab rules' business)."""
+def field_parts(b, G, pcbnew):
+    """[(ref, courtyard box nm)] of the via-field and bga-field parts.  The via-link audit
+    lifts only the part's OWN pads for a via in its box (board1 RV61); shape and fastside
+    skip the whole box (field_boxes)."""
     out = []
     for f in G.get("field_vias", []) + G.get("bga_fields", []):
         fp = b.FindFootprintByReference(f["ref"])
         if fp is None:
             continue
         cy = fp.GetCourtyard(pcbnew.F_CrtYd).BBox()
-        out.append((cy.GetX(), cy.GetY(), cy.GetRight(), cy.GetBottom()))
+        out.append((f["ref"], (cy.GetX(), cy.GetY(), cy.GetRight(), cy.GetBottom())))
     return out
+
+
+def field_boxes(b, G, pcbnew):
+    """The courtyard boxes (nm) of the via-field parts, which the shape rules do
+    not judge inside (a BGA's dog-bones are the fab rules' business)."""
+    return [box for _ref, box in field_parts(b, G, pcbnew)]
 
 
 if __name__ == "__main__":

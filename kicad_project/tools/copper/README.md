@@ -59,7 +59,7 @@ than judging them once the scans were cached (measured: 58 s → 65 s forked).
 | `via to pad gap`, `45-degree via link` | `vialink`, `viafix`, `vianeed`, `entryfix` (a moved via keeps the gap) |
 | `copper to edge` | the fixers' edge margin |
 | `copper shape` | `route.py check` and `audit` run `shape` |
-| `via field` (a BGA) | its courtyard is skipped by `shape`, `vialink`, `fastside`; nothing inside it is pushed |
+| `via field`, `bga field` (a BGA) | its courtyard is skipped by `shape`, `fastside`; nothing inside it is pushed. `vialink` lifts there only the BGA's OWN balls: their links, and the gap of a via linked to one (or in one); every other part's link to a via inside it is judged as anywhere |
 | `ground beside` | `fastside`, and `audit` |
 | `frozen` | copper `viafix --push` never moves |
 | `thermals`, `thermal pad` | `thermals.py` |
@@ -116,6 +116,21 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   with no exception, the same link bent or stopped short inside the via still fails `via-offset`,
   and the audit of the board's backups is unchanged before -> after (board1 RV59.8: 143 boards,
   2675 sites, identical; `board1_module/tmpWork/RV59_vialink/`).
+- **A BGA's courtyard lifts its own balls, never another part's link.** `vialink` used to skip
+  every via inside a `via field` / `bga field` courtyard, so the capacitors and resistors placed
+  under a BGA (bottom side, linked to vias among the balls) were never judged: 14 off-axis links
+  and a bend under U300 passed every audit (board1 RV61.1 / RV61.2). Now `guide.field_parts`
+  gives each field's ref with its box, and for a via inside it `vialink` skips only that part's
+  pads -- its balls' links, and the via-to-pad gap of a via linked to a ball or sitting in one (the
+  balls' escape and site vias, which the field's own rule governs). Any other pad's link is judged
+  as anywhere, and so is the gap of a via no ball uses (a capacitor's own via among the balls).
+  A site there carries `"field": REF`. A via in a pad of its own net still needs no link to THAT
+  pad, but another pad's link to it is judged (RV61.2's C301.1 runs to a via in C302.1's pad).
+  Prove it: the board as RV61 saw it names exactly the review's 14 links (13 `via-angle`, and
+  C305.2's bend as `via-offset`: its axis piece lies inside the pad); a plan that tilts a clean
+  capacitor link under U1 fails `route.py check` with `RULE vialink`; across the board's 150
+  backups the audit only ADDS sites, each inside a field or to a via in another pad
+  (`board1_module/tmpWork/vialink_field/`).
 - `shape.py` exempts a BGA field's courtyard by where a piece's CENTRE falls.
   A short escape that only just leaves the field (a via on a site outside the
   ball array, 0.3 mm from the edge, its track 0.3 mm past it) is one thin
