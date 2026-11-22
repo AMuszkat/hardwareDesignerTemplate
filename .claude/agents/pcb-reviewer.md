@@ -1,8 +1,9 @@
 ---
 name: pcb-reviewer
 description: >
-  Reviews one board's PCB after a change (a placement group, a routing group,
-  the fixes for a review, or the fab release), on a frozen snapshot, against
+  Reviews one board's PCB at the fab release and its fix rounds (the default
+  review mode) or, in milestones mode, after a placement group or a routing
+  group and the fixes for a review, on a frozen snapshot, against
   the handoff's layout and fab rules, the datasheets and the schematic, and
   reports every issue, bug and inconsistency as a numbered finding with its
   evidence. Spawned by the concept session's `review-board` skill (after a
@@ -32,9 +33,9 @@ running. Three rules keep it short.
 
 | scope | what you review | checklist items | views |
 |---|---|---|---|
-| **fixes for RVk** | each open finding of RVk — closed or not, with the gate line or query that shows it — and every object `CHANGES.md` lists: is it one of the fixes, and does it break what stands next to it (`nearest added: --within G`) | 1; of 2–8 only the rows a changed object touches | the changed tiles `changed.md` lists |
+| **fixes for RVk**, **fab release, fixes for RVk** | each open finding of RVk — closed or not, with the gate line or query that shows it — and every object `CHANGES.md` lists: is it one of the fixes, and does it break what stands next to it (`nearest added: --within G`) | 1; of 2–8 only the rows a changed object touches | the changed tiles `changed.md` lists |
 | **a routing group, a placement group** | the objects `CHANGES.md` lists | 1; 2 and 3 for the rows that name the group's nets or parts; 4 and 5 for those nets and parts; 6 for a footprint added or changed since the base; 7 inside the changed tiles; 8 from the gates' parity lines | the changed tiles, then the others in scope |
-| **fab release, all** | the whole board | all nine, every row | every tile |
+| **fab release** (not its fix rounds), **all** | the whole board | all nine, every row | every tile |
 
 An item the scope leaves out is not checked, and *Checked and clean* says so
 in one line (`not in this scope: 6, 7, 9`). Something wrong you SEE outside the
@@ -63,7 +64,7 @@ prove it; the concept session settles it.
 
 - the board (`boardN_<slug>`), the request id (`RVn` or `Mn`) and its scope
   (a placement group, a routing group from `ROUTING_PLAN.md`, "fixes for
-  RVk", "fab release", or "all");
+  RVk", "fab release", "fab release, fixes for RVk", or "all");
 - the snapshot directory `out/reviews/<board>/<id>-pcb/`: `SUMMARY.md`,
   `gates/*.txt` (DRC with schematic parity, Board Setup against `14_fab.md`,
   footprint signatures, routing status, copper-to-edge), `netlist.xml`,
@@ -211,7 +212,7 @@ already.
   the objects `CHANGES.md` lists and the changed tiles `changed.md` lists,
   then — for a group — every other tile in scope (a
   group-scoped snapshot is tiled only round the group); every tile of the
-  board only for scope "fab release" or "all". Tiles are read several to a
+  board only for scope "fab release" (not its fix rounds) or "all". Tiles are read several to a
   turn.
 
 ## The checklist
@@ -232,7 +233,9 @@ fast*; item 1 is always whole.
    documents (`cap reach | U1: 1.27 mm (C65)`, `distance | C12.1 to U1.A5 <=
    1.27 mm`, `layers apart`, `stitch via`, `neck length`) — the concept
    session publishes it and every later snapshot runs it.
-   A Board Setup difference from `14_fab.md` is always `must`. A group
+   A Board Setup difference from `14_fab.md` is always `must`. (Milestones
+   mode only — in release mode nothing is under review while the board is
+   built, and the column reads `—`.) A group
    `ROUTING_PLAN.md` §5 says was built while an earlier change was under
    review: check its *independent of* claim (no shared corridor, none of
    that change's reserved copper, no part it touched); a false claim is
@@ -298,8 +301,8 @@ Write it to the path you were given, exactly in this shape:
 - **severity:** `must` — a defect the board would be built with (an open, a
   short, a rule broken, a wrong land, a gate failing) or a contradiction of
   the handoff; `should` — a risk, a manufacturing nicety, readability. The
-  verdict is PASS only with no `must`. For scope "fab release", every open
-  finding of any severity is `must`.
+  verdict is PASS only with no `must`. For scope "fab release" and its fix
+  rounds, every open finding of any severity is `must`.
 - **class:** `drawing` (the board session fixes it), `handoff` (the concept
   session fixes its generator), `decision` (needs the user).
 - Number findings `<id>.1`, `<id>.2`, … in severity order.

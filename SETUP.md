@@ -148,6 +148,7 @@ would rather see such an error at once.
 | MCP servers `konnect` (both), `freerouting` (board) | `.mcp.json`, `kicad_project/.mcp.json` | yes | template; approve them on first start |
 | deny rules and the CLAUDE.md exclusion (absolute paths) | `.claude/settings.local.json`, `kicad_project/.claude/settings.local.json` | no | `./setup.sh render-settings` (run by `init`/`install`) |
 | relay switch, pcbnew interpreter | `kicad_project/relay.json`, `kicad_project/local.json` | no | `init`, `bin/relay` |
+| review mode: when the PCB is reviewed (`release`, the default when the file is missing, or `milestones`; per board) | `kicad_project/review.json` | yes | `bin/review` |
 | which board each session owns (survives a resume outside `bin/board`) | `kicad_project/local.sessions.json` | no | the session-start hook |
 | venvs | `.venv/`, `kicad_project/tools/.venv/` | no | `./setup.sh install` |
 | freerouting jar and its data | `~/.local/share/freerouting/` | — | `./setup.sh install` |

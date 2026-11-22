@@ -91,8 +91,10 @@ REVIEWS = """# Reviews — {title} ({bid})
 Concept writes here and nowhere else (the `review-board` skill); publish.py
 renders it as `handoff/15_reviews.md`. One `## RVn` heading per review, numbered
 as in the board session's REVIEW.md: the verdict, then each finding the
-board session must fix or may dispute. The board session replies in its own
-REVIEW.md, never here.
+board session must fix or may dispute. A PCB request rung before the board's
+review mode reviews it (`bin/review mode boardN`) gets
+`## RVn — pcb: <title> — NOT REVIEWED (review mode release)` and nothing
+else. The board session replies in its own REVIEW.md, never here.
 
 No review yet.
 """

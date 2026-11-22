@@ -1,8 +1,11 @@
 # Routing plan — {{BOARD}}
 
-Yours. Group by group. **One group is routed, gated and rendered; then it
-STOPS for review (`REVIEW.md`). The next group does not start until the
-verdict in `handoff/15_reviews.md` is PASS.**
+Yours. Group by group. **One group is routed, gated and rendered; then the
+review mode decides** (the session-start `[review]` line). **release** (the
+default): the next group starts once its gates are clean, and the whole
+board is reviewed at `pcb: fab release`. **milestones**: at a milestone it
+STOPS for review (`REVIEW.md`), and the next group does not start until the
+verdict in `handoff/15_reviews.md` is PASS.
 This file is the state: the table at the bottom says where the board is,
 across sessions. Read it first in any routing session.
 
@@ -85,11 +88,15 @@ its fanout), then bulk, then pours and stitching, then close-out.
 
 ## 5. Status
 
-Milestones reviewed: fanout and escape, buses, power, pours, close-out. A
+Every group records its gates here (`AUDIT`, `FINDINGS`, `place.py drc`) in
+both review modes. **release** (the default): no milestone reviews; the board
+is reviewed whole at `pcb: fab release`, and *milestone*, *independent of* and
+*reviewed* stay `—` until that review's id fills *reviewed*. **milestones**:
+milestones reviewed are fanout and escape, buses, power, pours, close-out; a
 group started while another change is under review says in *independent of*
 why it is: no shared corridor, none of that change's reserved copper, no part
 it touched. The reviewer checks the claim at the next milestone.
 
-| group | milestone | state | open before → after | independent of (why) | reviewed |
-|---|---|---|---|---|---|
-| R0 | — | not started | | | |
+| group | milestone | state | open before → after | gates | independent of (why) | reviewed |
+|---|---|---|---|---|---|---|
+| R0 | — | not started | | | | |

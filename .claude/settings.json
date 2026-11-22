@@ -9,7 +9,9 @@
       "WebSearch",
       "Bash(.venv/bin/python tools/*)",
       "Bash(.venv/bin/python studies/*)",
-      "Bash(bin/relay status)"
+      "Bash(bin/relay status)",
+      "Bash(bin/review status*)",
+      "Bash(bin/review mode *)"
     ]
   },
   "enabledMcpjsonServers": [

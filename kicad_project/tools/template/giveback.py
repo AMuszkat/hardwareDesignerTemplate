@@ -49,7 +49,8 @@ DATA = ("design/", "history/", "reference/", "studies/baselines/", "studies/repo
         "studies/designpoint.py", "studies/components_", "studies/s0", "studies/s1", "studies/s2",
         "tools/diagrams/", "tools/handoff/boards/", "tools/handoff/answers/", "tools/handoff/reviews/",
         "tools/handoff/fabs/", "tools/handoff/rulechecks/",
-        "kicad_project/project.json", "kicad_project/relay.json", ".gitignore", "LICENSE")
+        "kicad_project/project.json", "kicad_project/relay.json", "kicad_project/review.json",
+        ".gitignore", "LICENSE")
 DATA_KEEP = ("tools/diagrams/sheet.py", "tools/diagrams/check_diagrams.py",
              "tools/diagrams/test_diagrams.py", "tools/handoff/fabs/_blank.py")
 FILLED = ("CLAUDE.md", "README.md", "studies/README.md", "design/DIAGRAMS.md")

@@ -868,7 +868,8 @@ def stage_script(name, script, timeout=1800):
     except subprocess.TimeoutExpired:
         return stage(name, "FAIL", time.time() - t0, f"tests/{script}: no result in {timeout} s")
     lines = [ln for ln in out.strip().splitlines() if ln.strip()]
-    last = lines[-1] if lines else ""
+    # the last verdict line, not the last line: a stderr note (par's worker count) can land after it
+    last = next((ln for ln in reversed(lines) if re.match(r"(PASS|FAIL|SKIP):", ln)), "")
     m = re.match(r"(PASS|FAIL|SKIP):\s*(.*)", last)
     if not m or (rc != 0 and m.group(1) != "FAIL") or (rc == 0 and m.group(1) == "FAIL"):
         return stage(name, "FAIL", time.time() - t0, f"tests/{script} exit {rc}: {tail(out)}")
@@ -878,6 +879,7 @@ def stage_script(name, script, timeout=1800):
 # (stage, script, skipped under --quick)
 SCRIPT_STAGES = [
     ("wall", "test_wall.py", False),
+    ("rev-mode", "test_review_mode.py", False),
     ("bashguard", "test_bashguard.py", False),
     ("bgwait", "test_bgwait.py", False),
     ("stall", "test_router_stall.py", False),

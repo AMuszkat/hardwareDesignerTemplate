@@ -1,11 +1,15 @@
 # `tools/review` — a board change, frozen and gated for its reviewer
 
-**Concept's.** Every schematic change and every PCB change a board session
-finishes is reviewed by the concept session's reviewer agents
+**Concept's.** Every schematic change a board session finishes is reviewed
+by the concept session's reviewer agents
 (`.claude/agents/schematic-reviewer.md`, `pcb-reviewer.md`) before the board
-builds on it. The `review-board` skill is the procedure; the board's side is
-its `REVIEW.md` and `handoff/15_reviews.md`
-(`kicad_project/RELAY_PROTOCOL.md`, "Reviews").
+builds on it; the PCB when the board's review mode says (`bin/review`;
+`release`, the default: whole at `pcb: fab release`, then its fix rounds;
+`milestones`: as it is built). The `review-board` skill is the procedure; the
+board's side is its `REVIEW.md` and `handoff/15_reviews.md`
+(`kicad_project/RELAY_PROTOCOL.md`, section 10). The snapshot and `geom.py`
+need no agent: a route question is measured with them directly
+(`answer-question`).
 
     python3 tools/review/snapshot.py --board board1 --kind schematic --id RV3
     python3 tools/review/snapshot.py --board board1 --kind pcb       --id RV4 [--scope R3]

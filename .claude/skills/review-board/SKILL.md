@@ -4,19 +4,32 @@ description: >
   Review a board's schematic or PCB after a change: freeze it, run its gates,
   spawn the schematic-reviewer or pcb-reviewer agent, verify and triage the
   findings, publish the verdict in the handoff (15_reviews.md), and ring the
-  board (relay on) or tell the user (relay off). Triggers on "boardN RVn
-  ready", "review the schematic", "review the PCB", "review board", "REVIEW.md",
-  a board session's review ring, "is the board right".
+  board (relay on) or tell the user (relay off). The PCB only when the
+  board's review mode says (release, the default: at the fab release).
+  Triggers on "boardN RVn ready", "review the schematic", "review the PCB",
+  "review board", "REVIEW.md", "fab release", a board session's review ring,
+  "is the board right".
 ---
 
 # A board change, reviewed
 
-Every schematic change and every PCB change (a placement group, a routing
-group, the fixes for a review) is reviewed before the board session builds on
-it — by the concept session's reviewer agents, not by waiting for the user.
-The board asks in its `REVIEW.md`; the answer is a verdict in its handoff.
-The user can still review anything at any time, and still owns decisions and
-the fab order (`kicad_project/RELAY_PROTOCOL.md`, "Reviews").
+Every schematic change is reviewed before the board session builds on it;
+the PCB when the board's **review mode** says — by the concept session's
+reviewer agents, not by waiting for the user. The board asks in its
+`REVIEW.md`; the answer is a verdict in its handoff. The user can still review
+anything at any time, and still owns decisions and the fab order
+(`kicad_project/RELAY_PROTOCOL.md`, section 10).
+
+| mode (`bin/review mode boardN`) | the PCB is reviewed |
+|---|---|
+| **release** (the default) | whole, at `pcb: fab release`; then each `pcb: fab release, fixes for RVk` round, as often as it takes |
+| **milestones** | the placement as a whole, each routing milestone, a group on request, their fixes, and the fab release |
+
+Why release is the default: a pcb-reviewer run is ~19 min (median of 42, board1
+to RV64), and the milestone reviews were most of them — every one judged copper
+that moved again before the fab release. The board's own gates
+(`place.py check`/`drc`, `prelayout.py`, `route.py audit --findings`) are the
+gate while it is built.
 
 ## 1. What is asked
 
@@ -26,6 +39,15 @@ the fab order (`kicad_project/RELAY_PROTOCOL.md`, "Reviews").
 - **The user asks for a review with no request** ("review board2's PCB"):
   the id is `Mn`, the next number in `tools/handoff/reviews/boardN.md`; the
   scope is what the user said, else "all".
+- **A `pcb` ring: the mode first** — `bin/review mode boardN`. In
+  **release** mode a pcb request whose title is not `fab release` (or `fab
+  release, fixes for RVk`) is not reviewed: no snapshot, no agent. Append
+  `## RVn — pcb: <title> — NOT REVIEWED (review mode release)` to
+  `tools/handoff/reviews/boardN.md` (nothing under it), set `RELEASE_NOTE`,
+  publish, and ring `boardN handoff rev R — review RVn: NOT REVIEWED (review
+  mode release); go on` (relay off: tell the user). Only the user's own
+  request (an `Mn`) reviews the PCB early. Schematic requests are reviewed
+  in both modes.
 - `.venv/bin/python tools/handoff/publish.py --check --board boardN`: a
   stale handoff is published first — the board drew against the old one, and
   that is the first thing the reviewer must know.
@@ -34,9 +56,11 @@ the fab order (`kicad_project/RELAY_PROTOCOL.md`, "Reviews").
 
     python3 tools/review/snapshot.py --board boardN --kind schematic|pcb --id RVn [--scope S]
 
-PCB reviews come at milestones (the placement as a whole; routing's fanout
-and escape, buses, power, pours, close-out), plus a single group on request.
-A request about one group passes `--scope`: the routing group's id (`R3`,
+PCB reviews come when the mode says (step 1): in release mode the fab
+release and its fix rounds, with no `--scope`; in milestones mode the
+placement as a whole, routing's fanout and escape, buses, power, pours,
+close-out, and a single group on request. A request about one group passes
+`--scope`: the routing group's id (`R3`,
 its applied manifest's copper), a `placement.json` group's name, or
 `refs:A,B`; the PCB views are then tiled only round it and the sheet tiles
 skipped. A fab release, fixes across the board, or a request with no
@@ -83,6 +107,14 @@ asks the user). A request whose scope
 covers both (a redraw after placement) gets both, in parallel. Wait for
 it; do not review the same thing yourself meanwhile.
 
+**The model is the depth.** A whole review — a `fab release`, a milestone,
+`all` — runs on the agent's own model. A **fix re-review** (`fixes for RVk`,
+`fab release, fixes for RVk`) that step 2 could not judge without an agent
+passes `model: "sonnet"` to the Agent call: it checks named findings and
+the objects `CHANGES.md` lists, not the board. A Sonnet re-review that finds
+something new outside the fixes is not the verdict on it — re-run that part
+on the default model before it reaches the board.
+
 **The reviewer agents review; they are not a measuring service.** A question
 from a board (`answer-question`) that needs a number from a snapshot is
 answered with `tools/review/geom.py` yourself — `lengths`, `conn`, `stitch`,
@@ -106,7 +138,9 @@ handed to `pcb-reviewer` ran 13–55 minutes each time it was tried.
 - **A finding the board disputed** (its reply in `REVIEW.md`) is re-judged
   on the reply. Upheld twice → the user decides.
 - **Loop breaker:** the third CHANGES verdict on the same scope stops for the
-  user, whatever the findings.
+  user, whatever the findings — except the fab-release loop, which goes on as
+  long as each round closes at least one must-fix finding; a round that
+  closes none stops for the user (protocol §10, step 5).
 
 ## 5. Publish the verdict
 

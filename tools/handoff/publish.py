@@ -397,14 +397,18 @@ class Board:
             "the first -- quoting the revision and page hashes in "
             "`MANIFEST.json` you work from -- never a value you choose "
             "yourself.",
-            "A schematic or PCB change is finished when it PASSES REVIEW, "
-            "not when its own gates pass: request the review in "
-            "`../REVIEW.md` (format at its top) and ring concept, or tell "
-            "the user with the relay off. The verdict and the findings come "
-            "back in `15_reviews.md`: PASS -- go on; CHANGES -- fix every "
-            "must-fix finding, or dispute it in `../REVIEW.md` with your "
-            "reason and its evidence, then request again. Do not start the "
-            "next change before the verdict.",
+            "A schematic change is finished when it PASSES REVIEW, not when "
+            "its own gates pass: request the review in `../REVIEW.md` "
+            "(format at its top) and ring concept, or tell the user with the "
+            "relay off. The PCB is reviewed when your review mode says (the "
+            "session-start `[review]` line; `release`, the default: whole, "
+            "at `pcb: fab release`, then its fix rounds) -- until then your "
+            "own gates are its gate. The verdict and the findings come back "
+            "in `15_reviews.md`: PASS -- go on; CHANGES -- fix every must-fix "
+            "finding, or dispute it in `../REVIEW.md` with your reason and "
+            "its evidence, then request again; NOT REVIEWED -- rung before "
+            "the mode reviews it: go on. Do not build on a change under "
+            "review before its verdict.",
             "Do NOT 'fix' the deliberate items listed in `04_deliberate.md`.",
             "Connectors that leave this board belong on ONE dedicated "
             "connectors sheet, not scattered across functional sheets. "
@@ -623,8 +627,10 @@ class Board:
         p = os.path.join(ROOT, self.reviews_rel)
         if os.path.exists(p) and open(p).read().strip():
             return open(p).read()
-        return ("# Reviews\n\nNo review yet. When a schematic or PCB change is "
-                "done and its own gates pass, request one in `../REVIEW.md` "
+        return ("# Reviews\n\nNo review yet. When a schematic change is done, "
+                "or the PCB reaches the review its mode calls for (release, the "
+                "default: the fab release), and its own gates pass, request one "
+                "in `../REVIEW.md` "
                 "(format at its top); the verdict and the findings appear "
                 "here.\n")
 

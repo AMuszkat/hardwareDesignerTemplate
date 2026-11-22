@@ -115,5 +115,7 @@ with tempfile.TemporaryDirectory() as tmp:
     same = json.dumps({"what": "old, published before the gate"})
     check("unchanged published drawing needs no proof", refused(json.loads(same), publish_copy=same) is None)
 
-print("PASS" if not fails else "FAIL")
+print("PASS: the publish gates -- a new drawing publishes only with a PASS proof on the newest PCB snapshot, "
+      "an unchanged one needs none" if not fails else f"FAIL: {len(fails)} case(s): {'; '.join(fails)}")
+sys.exit(1 if fails else 0)
 sys.exit(1 if fails else 0)

@@ -156,10 +156,18 @@ first exchange. In short:
 
 ## Reviewing the boards' work
 
-**Every schematic change and every PCB change a board session finishes is
-reviewed here, before the board builds on it** — by two subagents this
-session owns, `schematic-reviewer` and `pcb-reviewer` (`.claude/agents/`),
-not by waiting for the user. A board session asks in its `REVIEW.md` and
+**Every schematic change a board session finishes is reviewed here, before
+the board builds on it; the PCB when the board's review mode says** — by two
+subagents this session owns, `schematic-reviewer` and `pcb-reviewer`
+(`.claude/agents/`), not by waiting for the user. **The review mode**
+(`bin/review status|release|milestones [boardN]`, `kicad_project/review.json`,
+the user's switch): **release**, the default — the PCB is reviewed whole at
+`pcb: fab release`, then as often as its fix rounds need; before that the
+board's own gates are the gate, and a PCB ring is answered `NOT REVIEWED` with
+no snapshot and no agent (a pcb-reviewer run is ~19 min, and milestone
+reviews were most of them); **milestones** — placement and each routing
+milestone, as before. Fix re-reviews run the agent on Sonnet, or no agent when
+every finding carries a check. A board session asks in its `REVIEW.md` and
 rings `boardN RVn ready — schematic|pcb: <title>` (relay off: the user
 carries that line); the user can also ask for a review of anything, at any
 time. The `review-board` skill is the procedure:

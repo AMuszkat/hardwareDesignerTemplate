@@ -10,7 +10,9 @@
       "Bash(tools/kpy tools/*)",
       "Bash(tools/.venv/bin/python tools/*)",
       "Bash(python3 tools/fp/fp.py *)",
-      "Bash(tools/session/relay.py status)"
+      "Bash(tools/session/relay.py status)",
+      "Bash(tools/session/review.py status*)",
+      "Bash(tools/session/review.py mode *)"
     ]
   },
   "enabledMcpjsonServers": [

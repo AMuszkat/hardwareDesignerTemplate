@@ -11,10 +11,14 @@ description: >
 
 # Placement, one group at a time
 
-A board is placed **group by group, and reviewed as a whole** once every
-group passes `place.py check` and `prelayout.py` (a group you are unsure of
-may be requested alone): the request in `REVIEW.md`, the verdict in
-`handoff/15_reviews.md`. Tools: Konnect for moves and refreshes,
+A board is placed **group by group, each gated** by `place.py check`,
+`place.py drc` and `prelayout.py`. Whether the placement is reviewed before
+routing is the board's **review mode** (the session-start `[review]` line):
+**release** (the default) — no placement review: routing starts once every
+group's gates are clean, and the placement is reviewed with the copper at the
+fab release; **milestones** — reviewed as a whole once every group passes
+(a group you are unsure of may be requested alone): the request in
+`REVIEW.md`, the verdict in `handoff/15_reviews.md`. Tools: Konnect for moves and refreshes,
 `tools/place/place.py` for checks (read `tools/place/README.md`), and
 `<board>/placement.json` for keep-outs and group lists. Every `tools/place`
 script runs as `tools/kpy tools/place/<script>.py` (it imports `pcbnew`).
@@ -134,7 +138,7 @@ board1 RV61_c28). Search with the lanes on; `--no-lanes` only to compare.
 
 ## 1d. Can it be routed? The pre-routing gate
 
-Before the placement is requested for review, and again after any move near a
+Before routing starts (and before a milestones-mode placement review), and again after any move near a
 BGA, a fine-pitch row or a bundle's ends:
 
 ```
@@ -151,7 +155,8 @@ order inversions against what its corridor's free layers can take. These
 are the tests board1 and board2 learned to run after copper was laid (seven
 fanout rounds, 48 inversions under a pour, a contact with no via site); a
 FAIL here is a placement change or a question, decided before the first
-group. **Every `PRELAYOUT` line goes into the placement review request.**
+group. **Every `PRELAYOUT` line goes into the placement review request** (milestones), and into
+`ROUTING_PLAN.md` before the first group (release).
 
 ## 2. Spacing
 
@@ -236,12 +241,17 @@ refresh tools run on the closed board.
    meet is a QUESTIONS.md item.
 4. **Deliberate positions stay** (`04_deliberate.md`) even when a compaction
    would like them elsewhere.
-5. **The placement stops for review as a whole**: with every group's
-   `place.py check`, `place.py drc` and `prelayout.py` clean, write the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb: <title>`; relay off: tell the user that line).
-   Until the verdict, build nothing on it; independent work (a group that
-   touches none of its parts or corridors) may go on — **name it on the
-   request's `Meanwhile:` line and start it in the turn you ring.** With the
-   whole placement under review nothing placed is independent, so prepare the
-   routing: `ROUTING_PLAN.md`, the guide's rows, the first groups' specs and
-   plans routed and checked on a scratch copy, nothing applied. Routing starts
-   after the placement passes (the `routing` skill).
+5. **With every group's `place.py check`, `place.py drc` and `prelayout.py`
+   clean, the mode decides.** **release**: no review — record the gates'
+   lines in `ROUTING_PLAN.md` and start routing in the same turn (the
+   `routing` skill); the placement is reviewed with the copper at the fab
+   release. **milestones**: the placement stops for review as a whole — write
+   the request in `REVIEW.md` and ring concept (`boardN RVn ready — pcb:
+   <title>`; relay off: tell the user that line). Until the verdict, build
+   nothing on it; independent work (a group that touches none of its parts or
+   corridors) may go on — **name it on the request's `Meanwhile:` line and
+   start it in the turn you ring.** With the whole placement under review
+   nothing placed is independent, so prepare the routing: `ROUTING_PLAN.md`,
+   the guide's rows, the first groups' specs and plans routed and checked on
+   a scratch copy, nothing applied. Routing starts after the placement passes
+   (the `routing` skill).

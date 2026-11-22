@@ -1,9 +1,12 @@
-# `tools/route` — routing, one reviewed group at a time
+# `tools/route` — routing, one gated group at a time
 
 **Yours**, like `tools/place` and `tools/fp`. A board is routed in the groups
-`<board>/ROUTING_PLAN.md` lists, **reviewed at milestones** — fanout and
-escape, buses, power, pours, close-out — and a group alone on request (the
-board's `REVIEW.md`; the verdict in `handoff/15_reviews.md`). These tools make a group cheap to propose, judge and undo.
+`<board>/ROUTING_PLAN.md` lists, each gated by these tools (`check`, `audit`,
+`audit --findings`). When the PCB is reviewed is the board's **review mode**
+(`../session/review.py`): **release** (the default) — whole, at `pcb: fab
+release`, then its fix rounds; **milestones** — at fanout and escape, buses,
+power, pours, close-out, and a group alone on request (the board's
+`REVIEW.md`; the verdict in `handoff/15_reviews.md`). These tools make a group cheap to propose, judge and undo.
 The workflow is the `routing` skill.
 
     tools/kpy tools/route/route.py status --board board1 [--nets]
@@ -215,7 +218,7 @@ listing the names the tools know.
 | `distance` | `C12.1 to U1.A5 <= 1.27 mm` | `audit`: two named objects, `REF.PAD` or `REF` (its nearest pad), centre to centre; `<=` or `>=` |
 
 A plan declares its exceptions, each with a reason printed every run and
-reviewed with the group:
+reviewed with the copper (at the group's milestone, or the fab release):
 
 - `"necks": [{"net", "width", "why"}]` — a width the class does not give;
 - `"edge_ok": [{"net", "layer"?, "min", "why"}]` — a closer edge distance;
@@ -1002,7 +1005,7 @@ its docstring. What the spec has to be told:
 - **Plans gated one at a time against the fanout are not gated against each other.** `route.py check`
   lays only what its plan holds on the scratch copy, so two plans that each pass can still collide: board1's
   In2 escape proof ran two tracks through a through via of the pairs' plan, and only `apply` (which checks
-  on the board as it stands) saw the short. Before a milestone, lay every passed plan on one scratch copy
+  on the board as it stands) saw the short. Before a milestone or the fab release, lay every passed plan on one scratch copy
   -- a merged plan through `check` -- or put the earlier plans' vias and tracks in the later spec's `reserve_*`.
 - **Bound a run with `--timeout S`, not a `timeout` prefix.** It stops
   between iterations when the next one (sized by the slowest so far) would not
