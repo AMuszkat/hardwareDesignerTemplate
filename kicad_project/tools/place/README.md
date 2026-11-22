@@ -340,6 +340,13 @@ back in job order; `HW_JOBS=1` forces serial; macOS is serial unless
 
 ## `schupdate.py`, `addfp.py` and `refresh.py` — the closed-board paths
 
+- ⚠ **A pad re-netted by `schupdate.py` takes its copper with it, silently.** KiCad's save gives
+  every track and via touching the pad the pad's new net (same UUIDs), so `place.py drc` then
+  shows 0 shorts and parity 0 -- on copper that may now stand at a site laid for the old net
+  (board1 rev 155: 44 U500 balls swapped, 35 dog-bones and 35 vias renamed). Before the update,
+  dump the copper by UUID with its net; after it, diff the two and treat every renamed item as
+  copper to re-judge or rip, never as a pass.
+
 Konnect's `update_pcb_from_schematic` and `update_footprints_from_library` are
 the documented paths, and both need the board open in live KiCad with its IPC
 API answering. When that path is closed:
