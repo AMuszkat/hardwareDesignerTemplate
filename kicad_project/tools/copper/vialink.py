@@ -64,24 +64,101 @@ def tables(b):
     return segs, pads
 
 
+CENTRE = 5000          # nm: a link end this near a via's centre ends AT the centre (judge_link's test)
+COLLINEAR = 1e-3       # the sine of the angle two segments may make and still be one straight line
+
+
+class Piece:
+    """One straight run of copper: consecutive collinear segments of one net, layer and width,
+    joined end to end with no third item at a joint.  A track broken at a rule area's edge
+    (10_layout #30) is still ONE link: the break may fall inside the via's own copper, and the
+    piece from the pad to the break read as a link ending off the via's centre (board1 RV59.8).
+    a is the via side once the piece is in a chain; members run a -> b."""
+    def __init__(self, members, a, b, w): self.members, self.a, self.b, self.w = members, a, b, w
+    def GetStart(self): return V(*self.a)
+    def GetEnd(self): return V(*self.b)
+    def GetWidth(self): return self.w
+    def GetLength(self): return dist(self.a, self.b)
+    def flip(self): return Piece(self.members[::-1], self.b, self.a, self.w)
+
+
+class Chain(list):
+    """A link's real segments, via to pad (what a fixer rips: callers iterate it as a list);
+    .pieces is the same copper as straight runs (what judge_link judges)."""
+    pieces = None
+
+
+def _seg_dist(q, s, e):
+    """distance (nm) from point q to the segment s-e"""
+    dx, dy = e[0] - s[0], e[1] - s[1]; L2 = dx * dx + dy * dy
+    t = 0.0 if not L2 else max(0.0, min(1.0, ((q[0] - s[0]) * dx + (q[1] - s[1]) * dy) / L2))
+    return dist(q, (s[0] + t * dx, s[1] + t * dy))
+
+
+def _straight_on(far, J, nxt):
+    """far -> J -> nxt is one straight line through J (not a turn, not a fold back)"""
+    u = (far[0] - J[0], far[1] - J[1]); w = (nxt[0] - J[0], nxt[1] - J[1])
+    lu, lw = math.hypot(*u), math.hypot(*w)
+    if not lu or not lw: return False
+    return abs(u[0] * w[1] - u[1] * w[0]) <= COLLINEAR * lu * lw and u[0] * w[0] + u[1] * w[1] < 0
+
+
+def _piece(g, geo, skip, vias_net, net_pads, lid):
+    """segment g = (track, uuid, start, end, width) extended through every plain joint at both ends.
+    A joint is plain when exactly one other segment of the net and layer touches it (an end or a
+    middle: a tee is a third item), that segment has the same width and continues the straight line,
+    no via of the net is centred on it, it is not inside a pad of the net, and, when it lies in a via's
+    copper, the segment beyond it ends in that via too (a break that fell inside the via the link
+    runs into; a track that runs on THROUGH the via's copper meets it at the joint).  skip: uuids
+    that never join (the chain's pieces already laid)."""
+    t, u, a, b, w = g; mem = [t]; used = {u} | skip
+    for side in (0, 1):
+        while True:
+            J = b if side else a; far = a if side else b
+            touch = [h for h in geo if h[1] not in used and _seg_dist(J, h[2], h[3]) < SNAP]
+            if len(touch) != 1: break
+            h = touch[0]
+            if dist(h[2], J) < SNAP: nxt = h[3]
+            elif dist(h[3], J) < SNAP: nxt = h[2]
+            else: break                                          # J on the other's middle: a tee
+            if h[4] != w or not _straight_on(far, J, nxt): break
+            if any(dist(c, J) < CENTRE or (dist(c, J) <= rr and dist(c, nxt) > rr) for c, rr in vias_net): break   # a via at the joint
+            if any(pp.GetEffectivePolygon(lid).Contains(V(*J)) for _n, pp in net_pads): break
+            used.add(h[1])
+            if side: mem.append(h[0]); b = nxt
+            else: mem.insert(0, h[0]); a = nxt
+    return Piece(mem, a, b, w)
+
+
 def links_of(b, v, lid, segs, pads):
-    """the chains from via v to a pad of its net on layer lid: [(pad name, pad, [segments], via end)]"""
+    """the chains from via v to a pad of its net on layer lid: [(pad name, pad, Chain of segments, via end)].
+    The chain is walked in straight pieces (Piece): collinear segments split at a plain joint are one."""
     vp = P(v.GetPosition()); r = v.GetWidth(pcbnew.F_Cu) / 2; out = []
     ss = segs[(v.GetNetCode(), lid)]
-    vias_net = [o for o in b.GetTracks() if o.Type() == pcbnew.PCB_VIA_T and o.GetNetCode() == v.GetNetCode()]
-    for t0 in ss:
-        ends = [P(t0.GetStart()), P(t0.GetEnd())]
-        if min(dist(e, vp) for e in ends) > r: continue
-        chain = [t0]; cur = max(ends, key=lambda e: dist(e, vp)); via_end = min(ends, key=lambda e: dist(e, vp)); hit = None
+    vias_net = [(P(o.GetPosition()), o.GetWidth(pcbnew.F_Cu) / 2) for o in b.GetTracks()
+                if o.Type() == pcbnew.PCB_VIA_T and o.GetNetCode() == v.GetNetCode()]
+    net_pads = [(n, p) for n, p in pads[lid] if p.GetNetCode() == v.GetNetCode()]
+    geo = [(o, o.m_Uuid.AsString(), P(o.GetStart()), P(o.GetEnd()), o.GetWidth()) for o in ss]
+    seen = set()
+    for g0 in geo:
+        if g0[1] in seen or min(dist(g0[2], vp), dist(g0[3], vp)) > r: continue
+        pc = _piece(g0, geo, set(), vias_net, net_pads, lid); seen |= {m.m_Uuid.AsString() for m in pc.members}
+        if dist(pc.b, vp) < dist(pc.a, vp): pc = pc.flip()
+        if dist(pc.a, vp) > r: continue                          # the via lies on a joint inside the run, not at an end
+        chain = [pc]; cur = pc.b; via_end = pc.a; hit = None
         for _ in range(4):
-            hp = next(((n, p) for n, p in pads[lid] if p.GetNetCode() == v.GetNetCode() and p.GetEffectivePolygon(lid).Contains(V(*cur))), None)
+            hp = next(((n, p) for n, p in net_pads if p.GetEffectivePolygon(lid).Contains(V(*cur))), None)
             if hp: hit = hp; break
-            if any(dist(P(o.GetPosition()), cur) <= o.GetWidth(pcbnew.F_Cu) / 2 for o in vias_net): break
-            used = {c.m_Uuid.AsString() for c in chain}
-            nxt = [o for o in ss if o.m_Uuid.AsString() not in used and (dist(P(o.GetStart()), cur) < SNAP or dist(P(o.GetEnd()), cur) < SNAP)]
+            if any(dist(c, cur) <= rr for c, rr in vias_net): break
+            used = {m.m_Uuid.AsString() for c in chain for m in c.members}
+            nxt = [g for g in geo if g[1] not in used and (dist(g[2], cur) < SNAP or dist(g[3], cur) < SNAP)]
             if len(nxt) != 1 or sum(c.GetLength() for c in chain) > FM(3.0): break
-            o = nxt[0]; chain.append(o); cur = P(o.GetEnd()) if dist(P(o.GetStart()), cur) < SNAP else P(o.GetStart())
-        if hit: out.append((hit[0], hit[1], chain, via_end))
+            pn = _piece(nxt[0], geo, used, vias_net, net_pads, lid)
+            if dist(pn.b, cur) < dist(pn.a, cur): pn = pn.flip()
+            chain.append(pn); cur = pn.b
+        if hit:
+            ch = Chain(m for c in chain for m in c.members); ch.pieces = chain
+            out.append((hit[0], hit[1], ch, via_end))
     return out
 
 
@@ -98,7 +175,8 @@ def touch_gap(p, lid, vp, r, GAP):
 
 
 def judge_link(name, p, lid, chain, via_end, vp):
-    """None if the link is clean, else (kind, extra)"""
+    """None if the link is clean, else (kind, extra).  A Chain is judged by its straight pieces."""
+    chain = getattr(chain, 'pieces', None) or chain
     C, size = pad_frame(p, lid); po = p.GetOrientation().AsDegrees() % 90
     if abs(po) > 0.1 and abs(po - 90) > 0.1: return ('skip', {})
     angs = []

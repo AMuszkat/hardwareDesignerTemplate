@@ -104,6 +104,18 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   over the gap, or KiCad measures 0.1457 where the polygon said 0.15.
 - A `pcbnew` wrapper is a new object on every lookup: compare items by
   `m_Uuid.AsString()`, never with `is`.
+- **A straight link split in two is still one link.** A track broken at a rule area's edge (a
+  handoff that wants every track broken there) can put the break INSIDE the via's own copper; the
+  audit then found the pad-side piece as a link ending off the via's centre (`via-offset`), and a
+  split anywhere else read as a bent link (`via-angle`). `vialink.links_of` now walks a link in
+  straight pieces: consecutive collinear segments of one net, layer and width, joined end to end
+  with no third item at the joint (another segment's end or middle, a via centred there, a pad of
+  the net; in a via's copper only when the next segment also ends in that via), are ONE segment.
+  The chain it returns is still every real segment (what `viafix` rips); `.pieces` is what is
+  judged. Prove it: a plan whose link is pad centre -> break -> via centre passes `route.py check`
+  with no exception, the same link bent or stopped short inside the via still fails `via-offset`,
+  and the audit of the board's backups is unchanged before -> after (board1 RV59.8: 143 boards,
+  2675 sites, identical; `board1_module/tmpWork/RV59_vialink/`).
 - `shape.py` exempts a BGA field's courtyard by where a piece's CENTRE falls.
   A short escape that only just leaves the field (a via on a site outside the
   ball array, 0.3 mm from the edge, its track 0.3 mm past it) is one thin
