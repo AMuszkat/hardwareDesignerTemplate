@@ -18,7 +18,19 @@ delete at any time, and `HW_DRC_CACHE=0` turns the cache off.
 `start(..., cache=False)` is a plain run (a scratch copy no later run sees
 again). Every run says on STDERR whether it ran kicad-cli or read the cache,
 so a caller's stdout stays exactly what it was before the cache existed.
+
+A RUN THE CALLER NEVER WAITS FOR IS ENDED, AND ITS LOCK REMOVED.  kicad-cli takes
+`~<board>.kicad_pro.lck` while it runs.  A caller that dies between `start()` and
+`result()` (route.py apply on a plan whose ripvia is not on the board) left an
+orphan whose stdout pipe had no reader: it was killed writing to it and the lock
+stayed, so the next apply refused "KiCad has the board open" (board1, 2026-11-22).
+Every live run is ended at interpreter exit (atexit; `abort_all()` for a caller's
+own finally): SIGTERM, reaped, and every lock file that appeared in its folder
+since it started is removed -- never one that was there before, and none while a
+KiCad GUI or another kicad-cli on that folder is alive.  `result()` does the same
+for a kicad-cli that crashed.
 """
+import atexit
 import glob
 import hashlib
 import json
@@ -94,6 +106,31 @@ def _note(msg):
     print(f"drc: {msg}", file=sys.stderr, flush=True)
 
 
+_LIVE = set()                 # runs started and not yet waited for
+
+
+def _locks(pcb):
+    pcb = Path(pcb)
+    return {p for p in (pcb.parent / f"~{pcb.name}.lck", pcb.parent / f"~{pcb.stem}.kicad_pro.lck") if p.exists()}
+
+
+def _held_elsewhere(folder):
+    """a KiCad GUI alive (it may have opened the project since), or another kicad-cli naming a file in `folder`"""
+    folder = str(Path(folder).resolve())
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            comm = open(f"/proc/{d}/comm").read().strip()
+            if comm in ("kicad", "pcbnew", "eeschema"):
+                return True
+            if comm == "kicad-cli" and folder in open(f"/proc/{d}/cmdline").read().replace("\0", " "):
+                return True
+        except OSError:
+            pass
+    return False
+
+
 class Run:
     """One DRC, started at construction; `result()` waits for it."""
 
@@ -113,6 +150,8 @@ class Run:
         self.td = tempfile.TemporaryDirectory()
         self.out = Path(self.td.name) / "drc.json"
         self.t0 = time.monotonic()
+        self.locks0 = _locks(self.pcb)
+        _LIVE.add(self)
         self.proc = subprocess.Popen(["kicad-cli", "pcb", "drc", "--schematic-parity", "--format", "json",
                                       "-o", str(self.out), str(self.pcb)],
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -123,6 +162,8 @@ class Run:
             os.utime(self.path)
             return self.cached["report"], self.cached["msg"]
         so, se = self.proc.communicate()
+        _LIVE.discard(self)
+        self.release()
         msg = (se or "") + (so or "")
         try:
             rep = json.loads(self.out.read_text()) if self.out.exists() else None
@@ -138,6 +179,40 @@ class Run:
             for p in olds[KEEP:]:
                 p.unlink(missing_ok=True)
         return rep, msg
+
+
+    def release(self):
+        """the lock files this run's kicad-cli left (absent when it started), once it has ended"""
+        if self.proc.poll() is None:
+            return
+        left = _locks(self.pcb) - self.locks0
+        if left and not _held_elsewhere(self.pcb.parent):
+            for p in left:
+                p.unlink(missing_ok=True)
+            _note(f"{self.pcb.name}: removed {', '.join(sorted(p.name for p in left))} left by its kicad-cli run")
+
+    def abort(self):
+        """end a run nobody will wait for: SIGTERM (then SIGKILL), reap, remove its lock"""
+        _LIVE.discard(self)
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.communicate()
+            _note(f"{self.pcb.name}: kicad-cli run ended unread (the caller stopped first)")
+        self.release()
+        self.td.cleanup()
+
+
+def abort_all():
+    """end every run still live (a caller's finally; also registered atexit)"""
+    for r in list(_LIVE):
+        r.abort()
+
+
+atexit.register(abort_all)
 
 
 def start(pcb, board_dir=None, cache=True):

@@ -128,6 +128,151 @@ def manifest_path(board_dir, group):
     return board_dir / "routing" / f"{group}.applied.json"
 
 
+# ---------------------------------------------------------------------------
+# what a plan REMOVED: recorded whole at apply, laid again by rip
+# ---------------------------------------------------------------------------
+
+def _sexpr(pn, item):
+    io = pn.PCB_IO_KICAD_SEXPR()
+    io.Format(item)
+    return io.GetStringOutput(True)
+
+
+def _norm(sx):
+    return " ".join(str(sx).replace("(", " ( ").replace(")", " ) ").split())
+
+
+def item_record(pn, it):
+    """A removed track, arc, via or net-tied polygon, recorded whole for the manifest: the fields a
+    reader (and the already-gone match) wants -- uuid, net, layer(s), xy, width / size and drill, the
+    via's type and flags (remove unconnected layers, tenting) -- and KiCad's own s-expression of the
+    item, from which `rip` lays it again exactly (every padstack flag KiCad 10 has: tenting,
+    covering, plugging, capping, filling, backdrill; a field-by-field rebuild would drop some)."""
+    mm = pn.ToMM
+    xy = lambda v: [round(mm(v.x), 6), round(mm(v.y), 6)]          # noqa: E731
+    r = {"uuid": it.m_Uuid.AsString(), "net": it.GetNetname()}
+    t = it.Type()
+    if t == pn.PCB_VIA_T:
+        top, bot = it.TopLayer(), it.BottomLayer()
+        try:
+            size = it.GetWidth(top)
+        except TypeError:
+            size = it.GetWidth()
+        r.update(kind="via", at=xy(it.GetPosition()), size=round(mm(size), 6), drill=round(mm(it.GetDrillValue()), 6),
+                 layers=[it.GetBoard().GetLayerName(top) if it.GetBoard() else str(top),
+                         it.GetBoard().GetLayerName(bot) if it.GetBoard() else str(bot)],
+                 via_type=int(it.GetViaType()), remove_unconnected=bool(it.GetRemoveUnconnected()),
+                 tenting={"front": int(it.GetFrontTentingMode()), "back": int(it.GetBackTentingMode())})
+    elif t == pn.PCB_ARC_T:
+        r.update(kind="arc", layer=it.GetLayerName(), pts=[xy(it.GetStart()), xy(it.GetEnd())],
+                 mid=xy(it.GetMid()), width=round(mm(it.GetWidth()), 6))
+    elif t == pn.PCB_TRACE_T:
+        r.update(kind="track", layer=it.GetLayerName(), pts=[xy(it.GetStart()), xy(it.GetEnd())],
+                 width=round(mm(it.GetWidth()), 6))
+    else:
+        poly = it.GetPolyShape()
+        r.update(kind="poly", layer=it.GetLayerName(),
+                 pts=[xy(poly.CVertex(i)) for i in range(poly.VertexCount())])
+    r["sexpr"] = _sexpr(pn, it)
+    return r
+
+
+def rec_matches(rec, kind, r):
+    """does a removal record (item_record, or an older plan's own entry) name the item a plan's rip
+    entry names: the same net, layer and place (0.01 mm), as rip_plan matches the board"""
+    net = rec.get("net", "")
+    if not (net == r["net"] or short(net) == r["net"] or net == short(r["net"])):
+        return False
+    near = lambda p, q: abs(p[0] - q[0]) < 0.01 and abs(p[1] - q[1]) < 0.01      # noqa: E731
+    if kind == "via":
+        return rec.get("kind") == "via" and near(rec["at"], r["at"])
+    if rec.get("layer") != r["layer"]:
+        return False
+    if kind == "track":
+        if rec.get("kind") not in ("track", "arc"):
+            return False
+        a, b = sorted(map(tuple, rec["pts"])), sorted(map(tuple, r["pts"]))
+        return near(a[0], b[0]) and near(a[1], b[1])
+    return rec.get("kind") == "poly" and near(rec["at"] if "at" in rec else rec["pts"][0], r["at"])
+
+
+def prior_removed(board_dir, group):
+    """[(record, source)] of what earlier applies of `group` removed and no rip restored: the live
+    manifest (an `apply --force`, or a check of a group already applied), then the last ripped one.
+    A manifest written before removals were recorded gives its plan's own rip entries instead
+    (kind, net, place; no s-expression, so nothing to rebuild them from)."""
+    rd = Path(board_dir) / "routing"
+    out = []
+    for man in (rd / f"{group}.applied.json", rd / f"{group}.applied.json.ripped"):
+        if not group or not man.exists():
+            continue
+        try:
+            j = json.loads(man.read_text())
+        except ValueError:
+            continue
+        if "removed_items" in j:
+            back = set(j.get("restored") or [])
+            out += [(rec, man.name) for rec in j["removed_items"] if rec.get("uuid") not in back]
+            continue
+        if not any((j.get("removed") or {}).values()) or not j.get("plan"):
+            continue
+        pf = Path(j["plan"])
+        cands = [c for base in (pf, ROOT / pf, Path(board_dir) / pf, rd / pf.name) for c in
+                 (base.with_name(base.stem + ".ripped.json"), base)]
+        pf = next((c for c in cands if c.exists()), None)
+        if pf is None:
+            continue
+        try:
+            old = json.loads(pf.read_text())
+        except ValueError:
+            continue
+        src = f"{man.name}, an older manifest: its plan {pf.name}"
+        out += [(dict(kind="track", net=e["net"], layer=e["layer"], pts=e["pts"], unrecorded=True), src)
+                for e in old.get("rips", [])]
+        out += [(dict(kind="via", net=e["net"], at=e["at"], unrecorded=True), src) for e in old.get("ripvias", [])]
+        out += [(dict(kind="poly", net=e["net"], layer=e["layer"], at=e["at"], unrecorded=True), src)
+                for e in old.get("polyrips", [])]
+    return out
+
+
+def restore_items(B, recs):
+    """Lay each removal record again on the in-memory board B from its s-expression (KiCad's own
+    parser, the clipboard's path: the same UUID, geometry and flags), its net set on B by name.
+    Returns (restored uuids, notes, keep): `keep` holds the parsed boards alive until B is saved."""
+    pn = B.pn
+    io = pn.PCB_IO_KICAD_SEXPR()
+    have = {str(i.m_Uuid.AsString()) for i in list(B.b.GetTracks()) + list(B.b.GetDrawings())}
+    done, notes, keep = [], [], []
+    for r in recs:
+        what = f"{r.get('kind', '?')} {short(r.get('net', ''))} at {r.get('at') or (r.get('pts') or ['?'])[0]}"
+        if not r.get("sexpr"):
+            notes.append(f"{what}: no record to rebuild it from (gone before an apply that recorded it)")
+            continue
+        if r.get("uuid") in have:
+            notes.append(f"{what}: already on the board (uuid {r['uuid'][:8]}), left as it is")
+            continue
+        net = B.b.FindNet(r["net"]) if r.get("net") else None
+        if r.get("net") and net is None:
+            notes.append(f"{what}: its net {r['net']!r} is not on the board any more; not restored")
+            continue
+        pb = pn.Cast_to_BOARD(io.Parse(f"(kicad_pcb (version {pn.SEXPR_BOARD_FILE_VERSION}) (generator route) "
+                                       f"{r['sexpr']})"))
+        keep.append(pb)
+        items = list(pb.GetTracks()) + list(pb.GetDrawings())
+        if len(items) != 1:
+            notes.append(f"{what}: its record parsed to {len(items)} items; not restored")
+            continue
+        it = items[0]
+        pb.Remove(it)
+        B.b.Add(it)
+        if net is not None:
+            it.SetNet(net)
+        if _norm(_sexpr(pn, it)) != _norm(r["sexpr"]):
+            notes.append(f"{what}: laid again, but KiCad writes it differently from its record -- compare by hand")
+        done.append(str(it.m_Uuid.AsString()))
+    return done, notes, keep
+
+
 def stale_gate(a, B, verb):
     """Is the plan still what its origin record says, on the spec and the board it was planned
     for (origin.judge)?  Before any gate: a DRC verdict on a plan routed from another spec is a
@@ -356,11 +501,44 @@ class RBoard(Board):
 
     def rip_plan(self, plan):
         """The plan's rips, ripvias and polyrips, removed from the in-memory board.
-        Returns {"rips": n, "ripvias": n, "polyrips": n}; a listed item that is
-        not on the board stops the plan (it was written against another board)."""
+        Returns {"rips": n, "ripvias": n, "polyrips": n}.  Each removed item is recorded whole
+        in self.removed_items (item_record: its fields and KiCad's own s-expression), for the
+        manifest, so `rip` can lay it again.  A listed item that is not on the board is DONE
+        when an earlier apply of this group recorded removing it and no rip restored it
+        (prior_removed; its record is carried on, with a note) -- else it stops the plan,
+        naming it (it was written against another board)."""
         import poly as POLY
         mm = self.pn.ToMM
         n = {"rips": 0, "ripvias": 0, "polyrips": 0}
+        self.removed_items, self.rip_notes = [], []
+        prior = None
+
+        def gone(kind, r, what):
+            nonlocal prior
+            if prior is None:
+                prior = prior_removed(self.dir, plan.get("group", ""))
+            hit = next(((rec, src) for rec, src in prior if rec_matches(rec, kind, r)), None)
+            if hit is None:
+                return False
+            rec, src = hit
+            self.removed_items.append(rec)
+            note = (f"note: plan rips {what} that is already gone -- an earlier apply of {plan.get('group')} "
+                    f"removed it ({src}) and no rip restored it: taken as done"
+                    + ("" if rec.get("sexpr") else "; that record cannot rebuild it (an older manifest), so a rip "
+                       "of this group will not restore it either"))
+            self.rip_notes.append(note)
+            print(note)
+            return True
+
+        def nearest(kind, net):
+            pts = []
+            for t in self.b.GetTracks():
+                if (t.Type() == self.pn.PCB_VIA_T) != (kind == "via"):
+                    continue
+                if t.GetNetname() == net or short(t.GetNetname()) == net:
+                    pts.append((mm(t.GetPosition().x), mm(t.GetPosition().y)) if kind == "via"
+                               else (mm(t.GetStart().x), mm(t.GetStart().y)))
+            return pts
         for r in plan.get("rips", []):
             (x1, y1), (x2, y2) = r["pts"]
             want = sorted([(x1, y1), (x2, y2)])
@@ -378,7 +556,12 @@ class RBoard(Board):
                     hit = t
                     break
             if hit is None:
-                die(f"plan rips a {r['net']} segment on {r['layer']} at {r['pts']} that is not on the board")
+                what = f"a {r['net']} segment on {r['layer']} at {r['pts']}"
+                if gone("track", r, what):
+                    continue
+                die(f"plan rips {what} that is not on the board, and no earlier apply of "
+                    f"{plan.get('group')} records removing it")
+            self.removed_items.append(item_record(self.pn, hit))
             self.b.RemoveNative(hit)
             n["rips"] += 1
         for r in plan.get("ripvias", []):
@@ -386,13 +569,27 @@ class RBoard(Board):
                         and (t.GetNetname() == r["net"] or short(t.GetNetname()) == r["net"])
                         and abs(mm(t.GetPosition().x) - r["at"][0]) < 0.01 and abs(mm(t.GetPosition().y) - r["at"][1]) < 0.01), None)
             if hit is None:
-                die(f"plan rips a {r['net']} via at {r['at']} that is not on the board")
+                what = f"a {r['net']} via at {r['at']}"
+                if gone("via", r, what):
+                    continue
+                near = sorted(nearest("via", r["net"]), key=lambda q: math.hypot(q[0] - r["at"][0], q[1] - r["at"][1]))
+                die(f"plan rips {what} that is not on the board, and no earlier apply of {plan.get('group')} "
+                    f"records removing it"
+                    + (f" (the nearest {short(r['net'])} via is at ({near[0][0]:.3f}, {near[0][1]:.3f}), "
+                       f"{math.hypot(near[0][0] - r['at'][0], near[0][1] - r['at'][1]):.3f} mm off)" if near
+                       else f" ({short(r['net'])} has no via on the board)"))
+            self.removed_items.append(item_record(self.pn, hit))
             self.b.RemoveNative(hit)
             n["ripvias"] += 1
         for r in plan.get("polyrips", []):
             hit = POLY.match(self.b, self.pn, r)
             if hit is None:
-                die(f"plan rips a {r['net']} polygon on {r['layer']} at {r['at']} that is not on the board")
+                what = f"a {r['net']} polygon on {r['layer']} at {r['at']}"
+                if gone("poly", r, what):
+                    continue
+                die(f"plan rips {what} that is not on the board, and no earlier apply of "
+                    f"{plan.get('group')} records removing it")
+            self.removed_items.append(item_record(self.pn, hit))
             self.b.RemoveNative(hit)
             n["polyrips"] += 1
         return n
@@ -1372,7 +1569,9 @@ def cmd_apply(a):
            "applied": time.strftime("%Y-%m-%d %H:%M"),
            "plan": str(Path(a.plan).resolve().relative_to(ROOT)
                        if str(Path(a.plan).resolve()).startswith(str(ROOT)) else Path(a.plan).name),
-           "open_before": before, "open_after": None, "removed": removed, **uuids}
+           "open_before": before, "open_after": None, "removed": removed, **uuids,
+           # each removed item whole (item_record): `rip` lays them again from these
+           "removed_items": B.removed_items}
     if retyped:
         # NOT this group's copper: `rip` leaves these vias (and their flag) where they are
         rec["retyped"] = {"nfpvias": retyped}
@@ -1409,10 +1608,12 @@ def cmd_rip(a):
     j = json.loads(man.read_text())
     want = set(j["tracks"] + j["vias"] + j.get("zones", []) + j.get("polys", []))
     rm = j.get("removed") or {}
-    if any(rm.values()):
+    recs = j.get("removed_items")
+    if any(rm.values()) and recs is None:
         print(f"note: {a.plan} also REMOVED {rm.get('rips', 0)} segments, {rm.get('ripvias', 0)} vias and "
-              f"{rm.get('polyrips', 0)} polygons when it was applied; rip takes back only what it added -- "
-              f"the removed copper is in the backup {B.pcb.name}.{a.plan}-bak")
+              f"{rm.get('polyrips', 0)} polygons when it was applied, and its manifest has no record of them "
+              f"(written before apply recorded removed items): nothing restored -- the removed copper is in the "
+              f"backup {B.pcb.name}.{a.plan}-bak")
     rt = (j.get("retyped") or {}).get("nfpvias") or []
     if rt:
         print(f"note: {a.plan} also typed {len(rt)} vias of other groups \"remove unconnected layers\" in place; rip "
@@ -1424,15 +1625,30 @@ def cmd_rip(a):
         if str(item.m_Uuid.AsString()) in want:
             B.b.RemoveNative(item)
             n += 1
+    # ... and what it REMOVED, laid again from the manifest's records (KiCad's own s-expression)
+    restored, rnotes, _keep = restore_items(B, recs or [])
     if any(not z.GetIsRuleArea() for z in B.b.Zones()):
         B.fill_zones()                             # the pours close over what was removed
     moved = B.save()
     if moved:
-        print("note: copper changed net when saved (it was already wrong before this rip):\n  "
-              + "\n  ".join(moved))
+        print("note: copper changed net when saved (it was already wrong before this rip, or a restored item "
+              "now touches another net's copper -- run route.py audit):\n  " + "\n  ".join(moved))
+    if restored:
+        C = RBoard(a.board)
+        have = {str(i.m_Uuid.AsString()) for i in list(C.b.GetTracks()) + list(C.b.GetDrawings())}
+        lost = [u for u in restored if u not in have]
+        if lost:
+            rnotes.append(f"read-back: {len(lost)} restored item(s) are not on the saved board")
+            restored = [u for u in restored if u in have]
     origin.step(a.board, "rip", a.plan, sha_before, origin.sha_file(B.pcb))
+    if recs is not None:
+        j["restored"] = restored
+        man.write_text(json.dumps(j, indent=1) + "\n")
     man.rename(man.with_suffix(".json.ripped"))
     print(f"ripped {n} of {len(want)} items from {a.plan}; manifest renamed to .ripped")
+    if recs is not None:
+        print(f"restored {len(restored)} of {len(recs)} removed items (read back)"
+              + "".join(f"\n   not restored: {t}" for t in rnotes))
     # the plan file the group was applied from is kept beside it: the next netgroup run writes over
     # its path, and a rip that is taken back (the board restored from the -rip-bak) needs that file
     pf = j.get("plan")
@@ -1750,9 +1966,16 @@ def main():
             die(f"no such plan: {a.plan}")
     if a.command == "rip" and not a.plan:
         die("rip needs a group name")
-    sys.exit({"status": cmd_status, "check": cmd_check, "apply": cmd_apply,
+    try:
+        rc = {"status": cmd_status, "check": cmd_check, "apply": cmd_apply,
               "rip": cmd_rip, "render": cmd_render, "angles": cmd_angles,
-              "edge": cmd_edge, "audit": cmd_audit, "rules": cmd_rules}[a.command](a))
+              "edge": cmd_edge, "audit": cmd_audit, "rules": cmd_rules}[a.command](a)
+    finally:
+        # every exit path, die() included: a kicad-cli DRC started in the background and not waited
+        # for is ended and its ~<board>.kicad_pro.lck removed (drccache.abort_all); an orphan was
+        # killed on its closed stdout and left the lock, and the next apply refused (board1, 2026-11-22)
+        drccache.abort_all()
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

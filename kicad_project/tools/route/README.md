@@ -319,8 +319,33 @@ saved file and confirms every item is there** before recording the group in
 `<board>/routing/<group>.applied.json`. That manifest holds each item's UUID,
 which is what makes `rip <group>` exact: it deletes that group's copper and
 nothing else, then renames the manifest to `.ripped`. What the group REMOVED
-(`rips`, `ripvias`, `polyrips`) is not brought back by `rip` — it is in the
-backup `apply` made, and `rip` says so.
+(`rips`, `ripvias`, `polyrips`) is recorded whole in the manifest's
+`removed_items` (uuid, net, layer(s), xy, width / size and drill, the via's
+flags, and KiCad's own s-expression of the item), and `rip` lays each one
+again from it — same UUID, same padstack flags — then reads them back
+(`restored N of N removed items`). An older manifest with no
+`removed_items` says so and restores nothing (the copper is in the backup).
+
+- **A rip did not use to give back what the plan removed, and a dead apply
+  left a lock.** TRAP (board1, 2026-11-22): `rip` took back only what a
+  group ADDED, so rip + re-apply stopped at `plan rips a ... via that is not
+  on the board` (exit 2); and that exit -- like every `die()` between
+  `check`'s background DRC start and its result -- orphaned a kicad-cli whose
+  stdout had no reader: it took `~<board>.kicad_pro.lck`, was killed writing
+  to the closed pipe, and the next apply refused "KiCad has the board open".
+  WAY AROUND: `removed_items` above, restored by `rip`; a rip entry already
+  gone that this group's own earlier record names (the live manifest under
+  `--force`, or the last `.ripped` one not restored -- for an older one, its
+  plan's own entries) is taken as done with a note, its record carried on;
+  any other missing item still exits 2 and names it (a via: the nearest of
+  its net). `tools/place/drccache.py` ends every run nobody waited for at
+  exit (atexit, and `route.py`'s `finally`) and removes the lock files that
+  appeared since it started -- never one that was there before, nor while a
+  KiCad GUI or another kicad-cli on that folder is alive. PROOF:
+  `tools/kpy tools/route/test_ripapply.py` (a 4-layer synthetic board outside
+  `kicad_project/`: apply, rip, apply, rip equal to the board before item by
+  item; an old-format rip then re-apply; a missing ripvia exits 2 with no
+  lock left and the next apply passes).
 
 `route.py angles` audits the copper already on the board with the same code
 `check` runs on the scratch copy (the short-diagonal test no longer depends on
