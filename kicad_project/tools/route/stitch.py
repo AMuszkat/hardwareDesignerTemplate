@@ -74,6 +74,7 @@ def main():
                     help="mm inside the copper-to-edge band for the ring (default: half the via pad + 0.25)")
     ap.add_argument("--reach", type=float, default=1.5, help="mm searched round each wanted spot")
     ap.add_argument("--via", default="0.6/0.3", help="pad/drill mm")
+    ap.add_argument("--carve", default="", help="regex: other nets' FILLS matching it are not obstacles (the via carves them; the pour is judged refilled by route.py check / pour.py)")
     ap.add_argument("--sep", type=float, default=0.8, help="mm, via centre to any via centre")
     ap.add_argument("--clearance", type=float, default=0.2, help="mm to other nets' copper (the class's)")
     ap.add_argument("--gap", type=float, default=None, help="mm via copper to any pad (default: the guide's)")
@@ -161,6 +162,8 @@ def main():
     for z in b.Zones():
         if z.GetIsRuleArea() or z.GetNetname() == full:
             continue
+        if a.carve and re.search(a.carve, z.GetNetname()):
+            continue                                         # --carve: the via cuts this pour, refilled
         for l in z.GetLayerSet().CuStack():
             k = B.canon(pn.BOARD.GetStandardLayerName(l))
             if k in forbid:
