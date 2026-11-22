@@ -235,7 +235,8 @@ def main():
     ap.add_argument("--repair", action="store_true",
                     help="when negotiation stalls, re-route the overlapping nets one at a time, the rest hard")
     ap.add_argument("--limit", type=int, default=900000,
-                    help="A* expansions per route; a big window hits the default and reads as 'walled in'")
+                    help="A* expansions per route; a big window OR a fine pitch (0.025 in 11.5 x 9.5 mm) hits the default "
+                         "and reads as 'walled in' / 'the 45-degree rule'")
     ap.add_argument("--full", action="store_true",
                     help="re-route every net every iteration (classic PathFinder, the pre-R2 result); default: "
                          "only the nets that overlap, all of them when the overlap stalls")
@@ -1223,7 +1224,9 @@ def main():
                 else:
                     print(f"   {G.walled}: not shut in -- its goal is reachable cell by cell, so it is the "
                           "45-degree rule at one of its ends (\"dir\", \"goal_dirs\", a start hemmed to one "
-                          "heading) or --limit (a big window: raise it)")
+                          f"heading) or --limit {a.limit} (A* expansions a route: cells x layers x headings, so a FINE "
+                          "PITCH hits it in a small window too -- board1 R3ab: 11.5 x 9.5 mm at 0.025 routed only at "
+                          "--limit 5000000; raise it before reading this as the 45-degree rule)")
                     print("NO SOLUTION at this leg")
             else:
                 print("NO SOLUTION at this leg")

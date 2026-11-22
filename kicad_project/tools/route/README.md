@@ -704,6 +704,13 @@ its docstring. What the spec has to be told:
   in a 24 mm window at 0.045 mm and read as "walled in" for a net with a clear
   way; `--limit 8000000` routed it. "not shut in -- ... or --limit" in the
   diagnosis is this.
+  A small window at a fine pitch does it too (board1 R3ab: 11.5 x 9.5 mm at
+  0.025 mm, every 10-net run "not shut in -- 45-degree rule" at 900000, routed
+  at 5000000): raise `--limit` before reading that line as the 45-degree rule.
+- **A `goal_layer` the goal pad does not have is not refused** (netgroup,
+  2026-11): a leg with `goal_layer` F.Cu "closed" on J2's B.Cu-only pad by ending
+  an F.Cu track over it. Give a SMD pad's own layer; `route.py check` sees the
+  open end, netgroup's ROUTED does not.
 - **`route.py rip` keeps the group's plan as `<plan>.ripped.json`.** netgroup
   writes over the plan's path on the next run; a rip taken back (the board
   restored from `.<group>-rip-bak`, the manifest renamed back) needs it.
