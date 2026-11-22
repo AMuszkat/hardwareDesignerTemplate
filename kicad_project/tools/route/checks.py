@@ -17,7 +17,10 @@ carries (`handoff/findings.json`, `route.py audit --findings`):
                                                      a square crossing is free |
   | stitch via    | Pairs: GND within 1.27 mm     | every via of a net in the class has a via of the
                                                      named net within the distance; ", except NET (x, y)
-                                                     1.6 mm" gives one via a decision excepted its own |
+                                                     1.6 mm" gives one via a decision excepted its own,
+                                                     ", except in (x1, y1)-(x2, y2) 1.4 mm" every via
+                                                     inside a box (a decision's region, before its
+                                                     vias exist) |
   | neck length   | 4 mm   or   Fast: 4 mm        | a run of track narrower than the net's width (its
                                                      class's, or the narrowest its custom rules give
                                                      on that layer) is no longer than this |
@@ -75,9 +78,16 @@ def parse(rule, val, s, G):
             raise RuleError("'stitch via' takes 'Pairs: GND within 1.27 mm' (, except NET (x, y) 1.6 mm ...)")
         exc = []
         for e in excs:                                   # one via a decision excepts: its net, where it stands, its own distance
+            mb = re.fullmatch(r"in\s*\(\s*" + mmnum0 + r"\s*,\s*" + mmnum0 + r"\s*\)\s*-\s*\(\s*" + mmnum0 + r"\s*,\s*"
+                              + mmnum0 + r"\s*\)\s*" + mmnum, e)
+            if mb:                                       # or every via in a region a decision relaxed
+                x1, y1, x2, y2, w = (float(g) for g in mb.groups())
+                exc.append({"box": (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)), "within": w})
+                continue
             me = re.fullmatch(r"([A-Za-z0-9_/]+)\s*(?:\(\s*" + mmnum0 + r"\s*,\s*" + mmnum0 + r"\s*\))?\s*" + mmnum, e)
             if not me:
-                raise RuleError(f"'stitch via' exception {e!r}: takes 'NET (x, y) 1.6 mm' or 'NET 1.6 mm'")
+                raise RuleError(f"'stitch via' exception {e!r}: takes 'NET (x, y) 1.6 mm', 'NET 1.6 mm' "
+                                "or 'in (x1, y1)-(x2, y2) 1.6 mm'")
             exc.append({"net": me.group(1), "at": (float(me.group(2)), float(me.group(3))) if me.group(2) else None,
                         "within": float(me.group(4))})
         G.setdefault("stitch", []).append(dict(s, **{"class": m.group(1)}, net=m.group(2), within=float(m.group(3)), exc=exc))
@@ -249,6 +259,11 @@ def stitch(geo, rule, classes_of):
         d = min((math.hypot(x - gx, y - gy) for gx, gy in gnd), default=None)
         lim = rule["within"]
         for e in rule.get("exc", ()):                    # a via a decision excepted keeps its own distance, no other
+            if "box" in e:
+                bx = e["box"]
+                if bx[0] - EPS <= x <= bx[2] + EPS and bx[1] - EPS <= y <= bx[3] + EPS:
+                    lim = max(lim, e["within"])
+                continue
             if leaf(net) == leaf(e["net"]) and (e["at"] is None or math.hypot(x - e["at"][0], y - e["at"][1]) < 0.01):
                 lim = e["within"]
         if d is None or d > lim + EPS:

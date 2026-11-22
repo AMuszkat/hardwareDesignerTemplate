@@ -111,6 +111,10 @@ def rules():
     expect(len(s) == 1 and "D_P via at (0.000, 0.000)" in s[0] and "1.000 mm" in s[0], "stitch via: fails at 0.5 mm; only the class's vias are judged", s)
     s = one("stitch via", "Pairs: GND within 2 mm", dict(vg, vias=[("D_P", 0.0, 0.0)]), cls)
     expect(len(s) == 1 and "no GND via" in s[0], "stitch via: no via of the net at all is a site", s)
+    s = one("stitch via", "Pairs: GND within 0.5 mm, except in (-1, -1)-(1, 1) 1.2 mm", vg, cls)
+    expect(s == [], "stitch via: a via inside an excepted box keeps the box's distance", s)
+    s = one("stitch via", "Pairs: GND within 0.5 mm, except in (2, 2)-(4, 4) 1.2 mm", vg, cls)
+    expect(len(s) == 1 and "over 0.5 mm" in s[0], "stitch via: a via outside the box keeps the rule's", s)
 
     ng = tr(("A", "F.Cu", (0.0, 0.0), (2.0, 0.0), 0.1), ("A", "F.Cu", (2.0, 0.0), (4.0, 1.0), 0.1),
             ("A", "F.Cu", (4.0, 1.0), (9.0, 1.0), 0.2), ("B", "F.Cu", (0.0, 5.0), (2.0, 5.0), 0.1),
