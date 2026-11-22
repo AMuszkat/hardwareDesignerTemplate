@@ -30,8 +30,12 @@ too; board1 R3ab_c); that via's GAP outside the courtyard is judged as
 anywhere, against every pad.  Not judged
 either: a via whose centre lies in a pad of its own net (via-in-pad: no link
 to judge), links to a `via field` part's pads, and vias with no link to a pad
-unless they touch one.  A link is the chain of segments from a via to a pad through plain
-joints, at most 4 segments and 3 mm.  A site declared in
+unless they touch one.  WHICH RUNS ARE LINKS (10_layout #48 (3), board1 Q87): the copper from a
+pad to a via of its net with no other pad, via or tee between them -- walked by topology, however
+many pieces and however long -- whose pad and via centres are at most LINK_MAX (3.0 mm) apart IN A
+STRAIGHT LINE, never measured along the copper: a link made longer (a meander, a tune) is still a
+link and is judged.  A longer run is a route, judged by the joints and shape rules, not here
+(counted under skipped).  A site declared in
 <board>/routing/vialink_exceptions.json ([{"via": [x, y], "why": ...}]) is
 listed as declared and does not fail.  Importable: audit(b, gap, exc, fields,
 field_refs) -> (sites, stats) (fields: [(ref, box nm)], guide.field_parts); live(sites, diag)."""
@@ -48,6 +52,7 @@ mm = pcbnew.ToMM; FM = pcbnew.FromMM; V = pcbnew.VECTOR2I
 sh = C.short; P = lambda v: (v.x, v.y)
 dist = lambda p, q: math.hypot(p[0] - q[0], p[1] - q[1])
 SNAP = 2000
+LINK_MAX = 3.0   # mm, pad centre to via centre in a straight line: longer is a route (10_layout #48 (3), Q87)
 
 
 def pad_frame(p, lid):
@@ -145,9 +150,11 @@ def _piece(g, geo, skip, vias_net, net_pads, lid):
     return Piece(mem, a, b, w)
 
 
-def links_of(b, v, lid, segs, pads):
+def links_of(b, v, lid, segs, pads, routes=None):
     """the chains from via v to a pad of its net on layer lid: [(pad name, pad, Chain of segments, via end)].
-    The chain is walked in straight pieces (Piece): collinear segments split at a plain joint are one."""
+    The chain is walked in straight pieces (Piece): collinear segments split at a plain joint are one.
+    A run whose pad and via centres lie more than LINK_MAX apart in a straight line is a route, not a
+    link: it is left out (appended to `routes` as (pad name, straight mm) when a list is given)."""
     vp = P(v.GetPosition()); r = v.GetWidth(pcbnew.F_Cu) / 2; out = []
     ss = segs[(v.GetNetCode(), lid)]
     vias_net = [(P(o.GetPosition()), o.GetWidth(pcbnew.F_Cu) / 2) for o in b.GetTracks()
@@ -161,17 +168,24 @@ def links_of(b, v, lid, segs, pads):
         if dist(pc.b, vp) < dist(pc.a, vp): pc = pc.flip()
         if dist(pc.a, vp) > r: continue                          # the via lies on a joint inside the run, not at an end
         chain = [pc]; cur = pc.b; via_end = pc.a; hit = None
-        for _ in range(4):
+        # walked by topology only (#48 (3)): the pad ends it; a via, a tee or a dead end stops it.
+        # Every step takes a segment not yet used, so it ends within len(geo) steps.  No copper cap:
+        # the old bound (4 pieces / 3 mm of copper) read a tuned link as no link at all (b1d DSI_CLK).
+        while True:
             hp = next(((n, p) for n, p in net_pads if p.GetEffectivePolygon(lid).Contains(V(*cur))), None)
             if hp: hit = hp; break
             if any(dist(c, cur) <= rr for c, rr in vias_net): break
             used = {m.m_Uuid.AsString() for c in chain for m in c.members}
             nxt = [g for g in geo if g[1] not in used and (dist(g[2], cur) < SNAP or dist(g[3], cur) < SNAP)]
-            if len(nxt) != 1 or sum(c.GetLength() for c in chain) > FM(3.0): break
+            if len(nxt) != 1: break
             pn = _piece(nxt[0], geo, used, vias_net, net_pads, lid)
             if dist(pn.b, cur) < dist(pn.a, cur): pn = pn.flip()
             chain.append(pn); cur = pn.b
         if hit:
+            pcen, _ = pad_frame(hit[1], lid); straight = dist(pcen, vp)
+            if straight > FM(LINK_MAX):                          # a route, not a link (#48 (3))
+                if routes is not None: routes.append((hit[0], round(mm(straight), 3)))
+                continue
             ch = Chain(m for c in chain for m in c.members); ch.pieces = chain
             out.append((hit[0], hit[1], ch, via_end))
     return out
@@ -234,7 +248,8 @@ def audit(b, GAP=0.15, EXC=(), fields=(), field_refs=()):
         # pad's link to it is still a link (board1 RV61.2: C301.1's, to a via in C302.1's pad)
         host = {n for lid in (pcbnew.F_Cu, pcbnew.B_Cu) for n, p in pads[lid]
                 if p.GetNetCode() == v.GetNetCode() and p.HitTest(v.GetPosition())}
-        links = {lid: links_of(b, v, lid, segs, pads) for lid in (pcbnew.F_Cu, pcbnew.B_Cu)}
+        rts = []; links = {lid: links_of(b, v, lid, segs, pads, rts) for lid in (pcbnew.F_Cu, pcbnew.B_Cu)}
+        if rts: skipped[f'run over {LINK_MAX} mm straight: a route (#48 (3))'] += len(rts)
         # the gap is lifted for the field's own balls' escape and site vias (#48 (2)): a via of a ball
         ball = any(mine(n) for n in host) or any(mine(L[0]) for ls in links.values() for L in ls)
         if host: skipped['via in a pad of its own net (via-in-pad: no link)'] += 1

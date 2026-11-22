@@ -116,6 +116,20 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   with no exception, the same link bent or stopped short inside the via still fails `via-offset`,
   and the audit of the board's backups is unchanged before -> after (board1 RV59.8: 143 boards,
   2675 sites, identical; `board1_module/tmpWork/RV59_vialink/`).
+- **Which runs are links: topology, then 3.0 mm in a straight line (10_layout #48 (3), board1
+  Q87).** A via link is the copper from a pad to a via of its net with no other pad, via or tee
+  between them, whose pad and via centres are at most `vialink.LINK_MAX` = 3.0 mm apart IN A
+  STRAIGHT LINE -- never measured along the copper. `links_of` walks the copper by topology alone
+  (a pad ends the walk; a via, a tee or a dead end stops it), however many pieces and however long,
+  then classes the run by that straight distance: a longer run is a route, judged by the joints and
+  shape rules, not here (`skipped: run over 3.0 mm straight: a route`; `links_of(..., routes=[])`
+  lists them). The trap in the old bound (at most 4 pieces and 3 mm of COPPER): a tuned link --
+  1.15 mm straight, 2 mm of meander -- read as no link at all and passed (board1 b1d DSI_CLK_P/N),
+  while a bent run 3.4 mm straight under 3 mm of copper at its last joint was judged as one. Prove
+  it: `board1_module/tmpWork/vialink_scope/handcase.py` (a tuned 2.5 mm link fails `via-angle`, a
+  3.4 mm bent and a 3.5 mm straight run are routes; HEAD's bound fails it), board1 at b949b628
+  keeps 0 live sites with its 11 ETH_MDI / AUD_FS runs routes at 4.04..8.66 mm, and b1d's two
+  CLK runs read `via-angle` at 1.00 / 1.15 mm.
 - **A BGA's courtyard lifts its own balls, never another part's link.** `vialink` used to skip
   every via inside a `via field` / `bga field` courtyard, so the capacitors and resistors placed
   under a BGA (bottom side, linked to vias among the balls) were never judged: 14 off-axis links
