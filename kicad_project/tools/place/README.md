@@ -253,6 +253,10 @@ on a 300-part board; now 0.1 s, the same strokes and gaps). What is left of `drc
 - `hide`: references that never go on silk.
 - `own_nearest`: fnmatch patterns whose label is never nearer another part's pad than its
   own; `["*"]` for a fab release (board2 RV23.2: C4 / D5 / R2 read as their neighbours').
+  A part added to it that has no legal site is HIDDEN, and the site it left is free for a
+  neighbour that is not in the list -- which may then sit nearer a foreign pad (board1 RV64.3:
+  C53 hidden, C34's label surfaced by U102). Pin every label the change pulls (`hide` or
+  `own_nearest`) and diff the labels (labgate) on a copy before the rehearsal.
 - `edge_min`: a label's distance from Edge.Cuts, the outline and every cut-out. Set it to
   the outline tolerance + the silk clearance, or a routed cut-out can nick it (board2
   RV23.2: 0.149 mm against +-0.2).
