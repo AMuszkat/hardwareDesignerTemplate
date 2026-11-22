@@ -119,6 +119,18 @@ def by_hand():
     md = changes.markdown(c, "")
     if "Vias whose pads moved to other layers (1)" not in md or "Copper shapes added (1)" not in md:
         bad.append("by hand: CHANGES.md lacks the reflashed via or the added shape")
+    # a part turned 90 degrees: its value text turns with it (offset (1, 0) -> (0, -1), board y down) and is
+    # counted as followed; its reference moved apart from the turn (offset (0, -1) -> (-3, 0)) is listed
+    part = lambda at, rot: dict(ref="C1", value="1u", footprint="", at=at, rot=rot, side="B", courtyard=None,
+                                box=None, dnp=False, uuid="p")
+    txt = lambda u, kind, at: dict(uuid=u, text="C1", part="C1", kind=kind, layer="B.Silkscreen", at=at, rot=0,
+                                   visible=True, height=1, thickness=0.15)
+    t0 = dict(base, parts=[part([10, 10], 0)], texts=[txt("v", "value", [11, 10]), txt("r", "reference", [10, 9])])
+    t1 = dict(base, parts=[part([12, 10], 90)], texts=[txt("v", "value", [12, 9]), txt("r", "reference", [9, 10])])
+    T = changes.diff(t0, t1)["texts"]
+    if (T["followed"], [t["uuid"] for t in T["moved"]]) != (1, ["r"]):
+        bad.append(f"by hand: a turned part's texts: followed {T['followed']}, moved {[t['uuid'] for t in T['moved']]}"
+                   ", expected 1 and ['r']")
     again = changes.diff(new, dict(new, shapes=[shape("s2")]))
     if changes.one_line(again) != "nothing changed":
         bad.append(f"by hand: the same polygon under another UUID: {changes.one_line(again)}")

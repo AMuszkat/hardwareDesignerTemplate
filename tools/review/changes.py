@@ -598,7 +598,16 @@ def diff(old, new):
                      and _k(a["rot"]) == _k(b["rot"])
                      and math.dist((b["at"][0] - a["at"][0], b["at"][1] - a["at"][1]),
                                    (m["to"][0] - m["from"][0], m["to"][1] - m["from"][1])) < 0.002)
-            if rigid or m["rot"] != m["rot_from"] or m["side"] != m["side_from"]:
+            if not rigid and m["rot"] != m["rot_from"] and m["side"] == m["side_from"] and a["layer"] == b["layer"]:
+                # turned with its part: its offset from the part's anchor turns by the same angle (board y down,
+                # KiCad's positive angle counter-clockwise on screen); a label moved apart from the turn is listed
+                q = math.radians(m["rot"] - m["rot_from"])
+                ox, oy = a["at"][0] - m["from"][0], a["at"][1] - m["from"][1]
+                rigid = math.dist((ox * math.cos(q) + oy * math.sin(q), -ox * math.sin(q) + oy * math.cos(q)),
+                                  (b["at"][0] - m["to"][0], b["at"][1] - m["to"][1])) < 0.002
+            elif m["side"] != m["side_from"]:
+                rigid = True                               # flipped with its part
+            if rigid:
                 followed += 1                              # carried by its part (turned or flipped with it)
                 continue
         row = dict(tbrief(b), dist=round(math.dist(a["at"], b["at"]), 4))
