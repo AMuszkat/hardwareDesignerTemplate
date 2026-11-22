@@ -243,7 +243,12 @@ reviewed with the copper (at the group's milestone, or the fab release):
 - `"accept": [{"type", "why"}]` — a DRC violation type the group produces on
   purpose (a fanout group ends every escape in free board, which DRC reports
   as unconnected ends). Never a way to wave away a real error; a declared type
-  that does not occur is reported so it gets deleted.
+  that does not occur is reported so it gets deleted -- **unless the group is
+  one piece of several**: "declared but none occurred" is judged on the board
+  the check ran on, so a piece rehearsed after the piece that meets its ends
+  (board1 R3ab: C laid before B) reports its track_dangling unused, and
+  deleting it fails the real order (A, D, B, C: ten track_dangling, CHECK
+  FAIL). Judge the entry on the board in the order the pieces will be applied.
 - a via that cannot be linked by the rule: `routing/vialink_exceptions.json`
   (`{"via": [x, y], "why"}`), listed by every audit, never counted.
 
