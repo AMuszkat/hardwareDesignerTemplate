@@ -628,9 +628,26 @@ def mem_floor_gb(total):
 
 
 def rss_gb(pids):
-    """Resident memory of these processes, GB (Linux)."""
+    """Resident memory of these processes, GB (Linux).
+
+    Each process counts its Pss (smaps_rollup: a shared page split between the
+    processes that map it), so forked workers sharing their parent's pages sum
+    to what the machine holds -- VmRSS summed counted those pages once per
+    worker (one CP-SAT job: 403 GB reported on a 30 GB machine). VmRSS is the
+    fallback where smaps_rollup cannot be read."""
     kb = 0
     for pid in pids:
+        got = False
+        try:
+            with open(f"/proc/{pid}/smaps_rollup") as f:
+                for ln in f:
+                    if ln.startswith("Pss:"):
+                        kb += int(ln.split()[1]); got = True
+                        break
+        except (OSError, ValueError, IndexError):
+            pass
+        if got:
+            continue
         try:
             with open(f"/proc/{pid}/status") as f:
                 for ln in f:
