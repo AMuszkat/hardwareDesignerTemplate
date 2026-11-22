@@ -507,6 +507,23 @@ def hand_checks(geom, path, c):
     c.eq("ring: the rail's balls and the edge", (R["balls"], R["edge"]), (["A1"], [(0.5, "A1")]))
     c.eq("ring: under and ring, nearest first", [(k["ref"], k["where"], k["ball"], k["d"], k["out"]) for k in R["caps"]],
          [("K91", "under", "A1", 2.4749, 0.0), ("K92", "ring", "A1", 7.0711, 4.3863)])
+    # neck: two 2 mm squares joined by two strips, 0.4 and 0.2 mm wide, on In4.Cu -> 0.6 mm in two pieces at x 2.025;
+    # a 0.5 mm strip at 45 degrees reads within a cell (0.05) a piece above; squares that do not join read 0
+    def sq(x0, y0, x1, y1):
+        return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+    def pour(*outlines):
+        return geom.Geometry(dict(board=dict(copper_layers=["In4.Cu"]), zones=[dict(
+            net="N", layers=["In4.Cu"], filled={"In4.Cu": {"islands": [dict(outline=o) for o in outlines]}})]))
+    N = pour(sq(0, 0, 2, 2), sq(3, 0, 5, 2), sq(1.9, 0.8, 3.1, 1.2), sq(1.9, 0.1, 3.1, 0.3))
+    R = N.neck("N", "In4.Cu", (0, 0, 0.5, 2), (4.5, 0, 5, 2))
+    c.eq("neck: two strips, axis cut", (round(R["width"], 3), [p_[0] for p_ in R["pieces"]]), (0.601, [2.025, 2.025]))
+    c.eq("neck: the same at res 0.025", round(N.neck("N", "In4.Cu", (0, 0, 0.5, 2), (4.5, 0, 5, 2), 0.025)["width"], 3), 0.601)
+    h = 0.25 / math.sqrt(2)
+    R = pour(sq(0, 0, 2.2, 2.2), sq(3.8, 3.8, 6, 6), [[2 - h, 2 + h], [2 + h, 2 - h], [4 + h, 4 - h], [4 - h, 4 + h]]).neck(
+        "N", "In4.Cu", (0, 0, 0.5, 0.5), (5.5, 5.5, 6, 6))
+    c.eq("neck: a 45-degree strip within a cell", 0.5 <= R["width"] <= 0.55 and len(R["pieces"]) == 1, True)
+    c.eq("neck: apart reads 0", pour(sq(0, 0, 2, 2), sq(3, 0, 5, 2)).neck("N", "In4.Cu", (0, 0, 0.5, 2), (4.5, 0, 5, 2))["width"], 0.0)
     # --plan: a plan's track 0.35 below the via's centre, 0.1 wide: 0.35 - 0.2 - 0.05 from the via, counted alone;
     # the board's nearest to that via is A2's land, 0.35 - 0.2 - 0.1125
     P = geom.load(path)

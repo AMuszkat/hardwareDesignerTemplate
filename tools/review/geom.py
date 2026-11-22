@@ -35,6 +35,9 @@ cannot answer is written as a script in tmpWork/ and NAMED in the report's
     ring     REF NET [--parts P]  a rail's capacitors at a BGA: each under its courtyard or on the ring outside it, its
                                  rail pad's distance to the rail's nearest ball, and how near the courtyard edge the
                                  rail's balls come (the bound on the nearest ring site)
+    neck     NET FROM TO --layer L [--res R]   a pour's neck: the least total copper width across any cut of NET's
+                                 copper on L between the copper in box FROM (feed vias) and box TO (a ball field), and
+                                 where the cut runs -- a width-for-current rule on a plane, which no track rule sees
     lanes    REF [--power P,P] [--rings 1|2] [--track W] [--clear C] [--reach MM]
                                  a BGA's outer signal balls' exit lanes on their own layer (ring 1 straight out, ring 2
                                  between two ring-1 lands) to the courtyard line, and what foreign copper stands in them
@@ -951,6 +954,135 @@ class Geometry:
         caps.sort(key=lambda c: c["d"])
         return dict(courtyard=cy, balls=[b.src["num"] for b in balls], edge=[(round(e, 4), n) for e, n in edge], caps=caps)
 
+    def neck(self, net, layer, src, dst, res=0.05):
+        """A net's copper on one layer, as a current sees it: the least total width of copper across any cut that
+        separates the copper inside box `src` (a regulator's feed vias) from the copper inside box `dst` (a ball
+        field).  {width, raw, pieces: [(x0, y0, x1, y1)], cells, res}; width 0 when the two do not join.
+
+        Every copper object of the net on the layer (fills, shapes, flashed vias, pads, tracks, arcs) is rasterised
+        at `res` (a cell is copper when its centre is); the cut is a max-flow / min-cut on the 8-neighbour grid
+        with Cauchy-Crofton weights (axis pi/8, diagonal pi/(8 sqrt 2) a cell).  Those sum to 0.948 a cell across a
+        straight cut on an axis or at 45 degrees (1.026 at 22.5), and each cut piece loses one diagonal at each
+        copper edge; width (mm) is the flow divided by 0.948 plus those two half-diagonals a piece: exact on an axis
+        cut, within 4 per cent and about a cell a piece at any angle (raw: the flow uncorrected).  pieces: the cut's
+        cells on the source side, grouped -- where the neck is.  Near a limit, halve `res` and see it hold."""
+        its = [i for i in self.items if i.net == net and layer in i.layers
+               and i.kind in ("pour", "shape", "via", "pad", "track", "arc", "plan-track", "plan-via")]
+        if not its:
+            raise SystemExit(f"geom: {net} has no copper on {layer}")
+        x0 = min(i.box[0] for i in its) - res; y0 = min(i.box[1] for i in its) - res
+        x1 = max(i.box[2] for i in its) + res; y1 = max(i.box[3] for i in its) + res
+        nx, ny = int((x1 - x0) / res) + 2, int((y1 - y0) / res) + 2
+        cu = bytearray(nx * ny)
+        cx = lambda i: x0 + (i + 0.5) * res
+        for it in its:
+            if len(it.pts) >= 3:
+                edges = it.edges()
+                j0, j1 = max(0, int((it.box[1] - y0) / res)), min(ny - 1, int((it.box[3] - y0) / res) + 1)
+                for j in range(j0, j1 + 1):
+                    y = y0 + (j + 0.5) * res
+                    xs = sorted(xa + (y - ya) * (xb - xa) / (yb - ya) for (xa, ya), (xb, yb) in edges if (ya > y) != (yb > y))
+                    for a, b in zip(xs[::2], xs[1::2]):
+                        for i in range(max(0, int(math.ceil((a - x0) / res - 0.5))), min(nx - 1, int(math.floor((b - x0) / res - 0.5))) + 1):
+                            cu[j * nx + i] = 1
+            else:
+                a, b = it.pts[0], it.pts[-1]
+                for j in range(max(0, int((it.box[1] - y0) / res)), min(ny - 1, int((it.box[3] - y0) / res) + 1) + 1):
+                    for i in range(max(0, int((it.box[0] - x0) / res)), min(nx - 1, int((it.box[2] - x0) / res) + 1) + 1):
+                        if not cu[j * nx + i] and pt_seg((cx(i), y0 + (j + 0.5) * res), a, b)[0] <= it.r:
+                            cu[j * nx + i] = 1
+
+        def inbox(k, bx):
+            x, y = cx(k % nx), y0 + (k // nx + 0.5) * res
+            return bx[0] <= x <= bx[2] and bx[1] <= y <= bx[3]
+        S = [k for k in range(nx * ny) if cu[k] and inbox(k, src)]
+        T = bytearray(nx * ny)
+        for k in range(nx * ny):
+            if cu[k] and inbox(k, dst):
+                T[k] = 1
+        S = [k for k in S if not T[k]]
+        if not S or not any(T):
+            raise SystemExit(f"geom: no {net} copper on {layer} inside the " + ("source" if not S else "sink") + " box")
+        K = 1000
+        DIRS = [(1, 0), (0, 1), (-1, 0), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)]
+        W = [round(K * math.pi / 8)] * 4 + [round(K * math.pi / (8 * math.sqrt(2)))] * 4
+        OPP = [2, 3, 0, 1, 5, 4, 7, 6]
+        OFF = [dy * nx + dx for dx, dy in DIRS]
+        cap = [0] * (nx * ny * 8)
+        for k in range(nx * ny):
+            if cu[k]:
+                i, j = k % nx, k // nx
+                for d, (dx, dy) in enumerate(DIRS):
+                    if 0 <= i + dx < nx and 0 <= j + dy < ny and cu[k + OFF[d]]:
+                        cap[k * 8 + d] = W[d]
+        flow, isS = 0, None
+        while True:                       # Dinic: BFS levels from every source cell, then blocking flow
+            lev = [-1] * (nx * ny)
+            q = list(S)
+            for k in S:
+                lev[k] = 0
+            h, reached = 0, False
+            while h < len(q):
+                k = q[h]; h += 1
+                if T[k]:
+                    reached = True
+                    continue
+                for d in range(8):
+                    if cap[k * 8 + d] > 0:
+                        m = k + OFF[d]
+                        if lev[m] < 0:
+                            lev[m] = lev[k] + 1
+                            q.append(m)
+            if not reached:
+                isS = lev
+                break
+            ptr = [0] * (nx * ny)
+            for s0 in S:
+                while True:
+                    path, k = [], s0
+                    while k is not None and not T[k]:
+                        while ptr[k] < 8:
+                            d = ptr[k]
+                            if cap[k * 8 + d] > 0 and lev[k + OFF[d]] == lev[k] + 1:
+                                break
+                            ptr[k] += 1
+                        if ptr[k] < 8:
+                            path.append(k)
+                            k += OFF[ptr[k]]
+                        else:                     # a dead end: never again this phase; step back
+                            lev[k] = -2
+                            k = path.pop() if path else None
+                            if k is not None:
+                                ptr[k] += 1
+                    if k is None:
+                        break
+                    f = min(cap[c * 8 + ptr[c]] for c in path)
+                    for c in path:
+                        cap[c * 8 + ptr[c]] -= f
+                        cap[(c + OFF[ptr[c]]) * 8 + OPP[ptr[c]]] += f
+                    flow += f
+        side = [l >= 0 for l in isS]
+        cells = [k for k in range(nx * ny) if side[k] and any(cu[k + OFF[d]] and not side[k + OFF[d]]
+                 for d in range(8) if 0 <= k % nx + DIRS[d][0] < nx and 0 <= k // nx + DIRS[d][1] < ny)]
+        seen, pieces, cs = set(), [], set(cells)
+        for c0 in cells:
+            if c0 in seen:
+                continue
+            grp, st = [], [c0]
+            seen.add(c0)
+            while st:
+                c = st.pop(); grp.append(c)
+                for d in range(8):
+                    m = c + OFF[d]
+                    if m in cs and m not in seen:
+                        seen.add(m); st.append(m)
+            xs = [cx(c % nx) for c in grp]; ys = [y0 + (c // nx + 0.5) * res for c in grp]
+            pieces.append((round(min(xs), 3), round(min(ys), 3), round(max(xs), 3), round(max(ys), 3)))
+        CC = math.pi / 8 * (1 + math.sqrt(2))        # the weights' sum across a straight cut, a cell: 0.948 on axis and 45
+        raw = flow * res / K
+        return dict(width=raw / CC + (2 * (math.pi / (8 * math.sqrt(2))) / CC) * res * len(pieces) if raw else 0.0,
+                    raw=raw, pieces=sorted(pieces), cells=len(cells), res=res)
+
     def unused_pads(self, box):
         """The vias whose centre lies in a rectangle (its edge included), each with what it does
         with its unconnected pads: [{via, drop, flashed, span}].  drop is the via's own property
@@ -1484,7 +1616,7 @@ def main(argv=None):
     ap.add_argument("snapshot", help="a PCB snapshot folder (out/reviews/<board>/<id>-pcb) or a geometry.json")
     ap.add_argument("query", choices=["info", "show", "nearest", "gap", "label", "joints", "via-pad", "holes",
                                       "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box",
-                                      "bare", "unused-pads", "lanes", "links", "ring"])
+                                      "bare", "unused-pads", "lanes", "links", "ring", "neck"])
     ap.add_argument("args", nargs="*", help="the query's SEL / NET / REF / box")
     ap.add_argument("--layer", help="one copper layer")
     ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest; "
@@ -1520,6 +1652,7 @@ def main(argv=None):
     ap.add_argument("--reach", type=float, help="lanes: end each lane this far past the outer lands' centre line when "
                     "that is nearer than the courtyard line")
     ap.add_argument("--parts", default="C*", help="ring: the parts counted, an fnmatch pattern (default C*)")
+    ap.add_argument("--res", type=float, default=0.05, help="neck: the raster pitch (mm, default 0.05)")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     G = load(a.snapshot)
@@ -1535,7 +1668,7 @@ def main(argv=None):
     d = G.d
     q = a.query
     need = {"show": 1, "nearest": 1, "gap": 2, "copper": 1, "box": 1, "conn": 1, "stitch": 1, "coupled": 1,
-            "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1, "ring": 2}
+            "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1, "ring": 2, "neck": 3}
     if q in need and len(a.args) != need[q]:
         ap.error(f"{q} takes {need[q]} argument(s)")
     if q in ("bare", "links") and not a.args:
@@ -1778,6 +1911,24 @@ def main(argv=None):
              + f"{len(rows)} link(s) of {', '.join(a.args)}; {len(bad)} not one axis piece out of the pad's centre"
              + (f", {sum(r['declared'] for r in rows)} more declared in the board's vialink_exceptions.json" if exc else "")
              + ("" if a.all else " (listed; --all lists every link)"))
+    elif q == "neck":
+        if not a.layer:
+            ap.error("neck needs --layer L (one copper layer)")
+        bx = []
+        for t in a.args[1:]:
+            try:
+                v = [float(x) for x in t.split(",")]
+            except ValueError:
+                v = []
+            if len(v) != 4:
+                ap.error(f"neck: {t!r} is not a box X0,Y0,X1,Y1")
+            bx.append((min(v[0], v[2]), min(v[1], v[3]), max(v[0], v[2]), max(v[1], v[3])))
+        R = G.neck(a.args[0], a.layer, bx[0], bx[1], a.res)
+        emit(a, ["cut piece (x0, y0, x1, y1)"], [[", ".join(f"{x:.2f}" for x in p)] for p in cut(R["pieces"])], [R],
+             (more(R["pieces"]) + "\n" if more(R["pieces"]) else "")
+             + f"{a.args[0]} on {a.layer}: the narrowest cut between the copper in {a.args[1]} and the copper in "
+             + f"{a.args[2]} is {R['width']:.3f} mm of copper ({R['width'] / 0.0254:.1f} mil), in "
+             + f"{len(R['pieces'])} piece(s) (raster {R['res']:g} mm)")
     elif q == "ring":
         R = G.ring(a.args[0], a.args[1], a.parts)
         rows = R["caps"]
