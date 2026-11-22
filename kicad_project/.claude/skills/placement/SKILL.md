@@ -127,7 +127,10 @@ capacitor's via or stub on one (board1 RV60.1 / RV60.5: six, escape 162 of
 `tools/kpy tools/route/exitlane.py --board <board> --ref <BGA> --plan
 <its bga_fanout.py plan>`; it names each blocking item and the ball it shuts
 (exit 1). Name the BGA in `routing/prelayout.json` `"exit_lanes"` and
-`route.py check` refuses such a via in any later plan (`tools/route/README.md`).
+`route.py check` refuses such a via in any later plan (`tools/route/README.md`),
+and `sites.py` / `decap.py` drop a via site that would shut a lane instead of
+ranking it first, naming the ball (`[nearer (x, y) dropped: shuts U1 P26]`;
+board1 RV61_c28). Search with the lanes on; `--no-lanes` only to compare.
 
 ## 1d. Can it be routed? The pre-routing gate
 
