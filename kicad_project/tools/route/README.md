@@ -995,7 +995,15 @@ its docstring. What the spec has to be told:
   iteration. On the 16-net router fixture it took 30 iterations (14
   default) yet finished in 11.8 s on 8 cores (21 s default); on the PCB
   fixture 41 iterations (3 default), 61 s against 21 s. Try it on a big
-  group that converges slowly; the same plan with `HW_JOBS=1`.
+  group that converges slowly; the same plan with `HW_JOBS=1`. NOT on a small
+  crowded leg: on board1's 10-line CSI pocket it ran at 1.6-2.3 cores and
+  stayed at 3-4 x the serial overlap at the same iteration (2400 cells
+  against 592) -- there every net fights for the same few lanes, and a
+  Jacobi step moves them all onto the same one. Run serial variants side by
+  side as separate jobs instead (one core each).
+- **A `src` off the window's grid stops at once** ("not a grid point"): an
+  escape end taken from copper (board1: y 28.795 at pitch 0.025) must be
+  snapped, or the window origin chosen so it lands on the grid.
 - **`--corridor MM` bounds each net's search** to the box round its ends and
   its last path, grown by MM (or 30 % of its span), doubled until it routes,
   up to the whole window — so a corridor never walls in a net the window
