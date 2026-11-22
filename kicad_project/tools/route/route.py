@@ -16,8 +16,9 @@
   check   write the plan into a SCRATCH COPY of the board and judge it with
           KiCad's own DRC (schematic parity on).  Any violation not already in
           the baseline fails the plan.  Then every rule of the board's
-          general_routing_guide.md that DRC cannot express, and every pour's
-          island count (a pour the plan splits fails).  Read-only.
+          general_routing_guide.md that DRC cannot express, every pour's
+          island count (a pour the plan splits fails) and every pour island
+          holding a pad or via cut off from its net (pournet).  Read-only.
   apply   check, then write to the real board (KiCad closed, backup first),
           read back, and record every UUID in <board>/routing/<group>.applied.json
           so the group can be ripped out again.
@@ -28,7 +29,7 @@
           minimum (the guide's "copper to edge", else Board Setup's).
   audit   every rule of the guide on the copper already laid: DRC, angles,
           edge, copper shape, via links, ground beside, non-functional pads,
-          pour islands.  One PASS/FAIL line each; exit 1 on a failure.  The
+          pour islands, pournet.  One PASS/FAIL line each; exit 1 on a failure.  The
           group report quotes it.
   rules   print the rules the guide's table switches on, each with its source.
 
@@ -1115,29 +1116,22 @@ def cmd_status(a):
     return 0
 
 
-def pour_islands(Bx, board):
-    """{"NET on LAYER": untied islands} from pour.py's report, in-process (it refills Bx's zones
-    in memory and never saves): the islands beside the largest that hold no via or through-hole
-    pin of the net -- a GND pour that tracks split is fine once every piece is stitched."""
+def pour_report(Bx, board):
+    """pour.py's report as data, in-process (it refills Bx's zones in memory and never saves):
+    {"pours": {"NET on LAYER": {"islands", "untied", "zones"}}, "cutoff": [...], "judged": n, "text": stdout}.
+    A net's zones on one layer are one copper set; "cutoff" lists every island holding a pad or
+    via that KiCad's connectivity does not join to the rest of its net."""
     if not [z for z in Bx.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]:
-        return {}
+        return {"pours": {}, "cutoff": [], "judged": 0, "text": ""}
     import argparse as _ap
     import contextlib
     import io
     import pour as POUR
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        POUR.report(Bx, _ap.Namespace(board=board, tries=[], over=[], field=None, step=0.05))
-    out, key = {}, None
-    for ln in buf.getvalue().splitlines():
-        m = re.match(r"\s*(.+ on \S+): (\d+) island\(s\)", ln)
-        if m:
-            key = m.group(1)
-            out[key] = 0
-        m = re.match(r"\s*untied: (\d+) island", ln)
-        if m and key:
-            out[key] = int(m.group(1))
-    return out
+        r = POUR.report(Bx, _ap.Namespace(board=board, tries=[], over=[], field=None, step=0.05))
+    r["text"] = buf.getvalue()
+    return r
 
 
 def cmd_check(a, quiet=False, gate=True):
@@ -1211,11 +1205,21 @@ def cmd_check(a, quiet=False, gate=True):
                                + " (exitlane.py)")
         # a pour this plan splits: DRC passes a pour in pieces, and the audit found it only
         # after apply (board2 R5: vias' antipads cut J1's +5V pins off on a 6 mm2 island)
-        i0, i1 = pour_islands(B, a.board), pour_islands(S, a.board)
-        for k_, n_ in sorted(i1.items()):
+        p0, p1 = pour_report(B, a.board), pour_report(S, a.board)
+        i0 = {k: v["untied"] for k, v in p0["pours"].items()}
+        for k_, v_ in sorted(p1["pours"].items()):
+            n_ = v_["untied"]
             if n_ > i0.get(k_, 0):
                 bad.append(f"pour: {k_} has {n_} untied island(s) with this plan ({i0.get(k_, 0)} before): "
                            f"a piece beside the largest holding no via or through-hole pin of its net (pour.py)")
+        # an island holding a pad or via that KiCad's connectivity joins to nothing else of its net
+        # (board1 R6a_real: C22.1's via on a 0.3 mm2 NVCC_DRAM island; DRC's unconnected list is capped)
+        c0 = {(c["pour"], tuple(sorted(c["items"]))) for c in p0["cutoff"]}
+        for c in p1["cutoff"]:
+            if (c["pour"], tuple(sorted(c["items"]))) not in c0:
+                bad.append(f"pournet: {c['pour']} island {c['area']:.2f} mm2 at ({c['at'][0]:.1f}, {c['at'][1]:.1f}) "
+                           f"holds {', '.join(c['items'][:6])} and is cut off from the rest of its net"
+                           + (f" (reaches only {', '.join(c['beyond'][:4])})" if c["beyond"] else "") + " (pour.py)")
         rep = drc_report(scratch, cache=False)
         base = drc_done(base_run)
         angle_note = "angles: the guide has no 'joints' row, not checked"
@@ -1681,22 +1685,20 @@ def cmd_audit(a):
     if pours:
         # pour.py's report, in-process on the board already loaded: no second interpreter, pcbnew
         # import or board load.  It refills the zones in memory, which is why it is the LAST gate
-        import argparse as _ap
-        import contextlib
-        import io
-        import pour as POUR
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            POUR.report(B, _ap.Namespace(board=a.board, tries=[], over=[], field=None, step=0.05))
-        r = _ap.Namespace(stdout=buf.getvalue())
-        # one summary line per pour ("VBUS on F.Cu: 1 island(s), ..."); the per-island
-        # detail lines ("island [0]: 1 via(s) ...") are not pours (board2 R3: a one-island
-        # pour read as "2 pours, 1 in more than one island")
-        isl = [ln.strip() for ln in r.stdout.splitlines() if re.match(r"\s*\S.* on \S+: \d+ island\(s\)", ln)]
-        unt = [ln.strip() for ln in r.stdout.splitlines() if re.match(r"\s*untied: [1-9]", ln)]
+        # pour.py's report as data: one entry per NET on LAYER (its zones there are one copper set)
+        pr = pour_report(B, a.board)
+        isl = pr["pours"]
+        unt = [k for k, v in isl.items() if v["untied"]]
         gate("pours", not unt, f"{len(isl)} pour(s)" + (f"; {len(unt)} with untied islands -- every island must "
                                                         f"hold a via or a through-hole pin of its net (pour.py)"
                                                         if unt else ", every island tied"))
+        cut = pr["cutoff"]
+        gate("pournet", not cut, (f"{len(cut)} of {pr['judged']} pour island(s) holding a pad or via cut off from "
+                                  f"their net (KiCad's connectivity): " + "; ".join(
+                                      f"{c['pour']} {c['area']:.2f} mm2 at ({c['at'][0]:.1f}, {c['at'][1]:.1f}) "
+                                      f"{', '.join((c['items'] + c['beyond'])[:4])}" for c in cut[:4])
+                                  + (" ..." if len(cut) > 4 else "")) if cut else
+             f"every one of {pr['judged']} pour island(s) holding a pad or via joins its net (KiCad's connectivity)")
     bad = [n for n, ok, _ in rows if not ok]
     print("AUDIT " + ("PASS" if not bad else f"FAIL ({', '.join(bad)})"))
     return 1 if bad else 0

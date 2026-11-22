@@ -8,7 +8,8 @@
 A zone's outline is a wish; its FILL is the copper.  DRC passes a pour that has
 fallen into islands, a pour whose one via sits in a pocket of its own, and a
 power pour laid over a bus that the layout rules say must see ground.  So for
-every filled zone this prints, from the fill and not from the outline:
+every net on every copper layer -- its zones there are ONE copper set, as KiCad's
+connectivity joins them -- this prints, from the fill and not from the outline:
 
   islands       how many, and their areas; "untied": the ones beside the largest that hold
                 no via or through-hole pin of the net (a GND pour split by tracks is fine
@@ -17,6 +18,9 @@ every filled zone this prints, from the fill and not from the outline:
                 OUTSIDE the fill (a via the pour was drawn for and does not reach)
   SMD pads      same-net surface pads that stand over the fill -- each one is a
                 via drop away from the rail, which is what a plane is for
+  POURNET       last: every island holding a pad or via joined to the rest of its net by
+                KiCad's connectivity, else each one cut off -- its area, what stands on it,
+                what its cluster reaches (route.py audit's `pournet`, check's RULE pournet)
   --over        length of the named nets' tracks on another layer that lie UNDER
                 the fill, split by --field's courtyard when one is named (inside
                 a BGA's own field the overlap is unavoidable; outside it is a
@@ -64,7 +68,8 @@ def main():
     ap.add_argument("--to", dest="sto", default="", help="REF.PIN,...: the loads")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
-    return report(P.Board(a.board), a)
+    report(P.Board(a.board), a)
+    return 0
 
 
 def report(B, a):
@@ -115,14 +120,33 @@ def report(B, a):
     fc = B.courtyard(B.fps[a.field]) if a.field else None
     in_field = lambda x, y: bool(fc) and fc[0] <= x <= fc[2] and fc[1] <= y <= fc[3]
 
-    # one report per zone PER COPPER LAYER it fills; a rule area (keep-out) is not a pour
-    targets = [(z, lid) for z in b.Zones() if not z.GetIsRuleArea()
-               for lid in z.GetLayerSet().CuStack()]
-    if not targets:
+    # one report per NET PER COPPER LAYER: every zone of that net filling that layer is one
+    # copper set.  KiCad knocks a lower-priority zone out of a higher-priority one of the same
+    # net and its connectivity joins the two along the shared edge; judged zone by zone, the
+    # lower one's sliver beside the edge read as an untied island and the higher one's vias as
+    # "not reached" (board1 R6a_real: a VDD_SOC prio-2 piece of 0.21 mm2 against the prio-5
+    # corridor).  A rule area (keep-out) is not a pour.
+    groups = collections.OrderedDict()
+    for z in b.Zones():
+        if z.GetIsRuleArea():
+            continue
+        for lid in z.GetLayerSet().CuStack():
+            groups.setdefault((short(z.GetNetname()), lid), []).append(z)
+    if not groups:
         print("no pours on this board")
-    for z, lid in targets:
-        net, lay = short(z.GetNetname()), pn.BOARD.GetStandardLayerName(lid)
-        fill = z.GetFilledPolysList(lid)
+    result = {"pours": {}, "cutoff": [], "judged": 0}
+    net_islands = collections.defaultdict(list)     # net -> [(area, key, k, items)] for the connectivity pass
+    for (net, lid), zs in groups.items():
+        lay = pn.BOARD.GetStandardLayerName(lid)
+        z = zs[0]
+        fill = pn.SHAPE_POLY_SET()
+        for z_ in zs:
+            fill.Append(z_.GetFilledPolysList(lid))
+        if len(zs) > 1:
+            # join pieces that share an edge: grow 1 um, union, shrink back.  A gap of any real
+            # clearance (>= 0.05 mm) stays a gap
+            fill.Inflate(1000, pn.CORNER_STRATEGY_CHAMFER_ALL_CORNERS, 100, True)
+            fill.Inflate(-1000, pn.CORNER_STRATEGY_CHAMFER_ALL_CORNERS, 100, True)
         n = fill.OutlineCount()
         isl = []
         for i in range(n):
@@ -134,7 +158,8 @@ def report(B, a):
         areas = [s.Area() / 1e12 for s in isl]
         order = sorted(range(n), key=lambda i: -areas[i])
         print(f"\n{net} on {lay}: {n} island(s), {sum(areas):.1f} mm2  "
-              + " ".join(f"[{k}] {areas[i]:.1f}" for k, i in enumerate(order[:6])))
+              + " ".join(f"[{k}] {areas[i]:.1f}" for k, i in enumerate(order[:6]))
+              + (f"  ({len(zs)} zones, one copper set)" if len(zs) > 1 else ""))
 
         def island(x, y):
             v = pn.VECTOR2I(pn.FromMM(x), pn.FromMM(y))
@@ -145,6 +170,7 @@ def report(B, a):
 
         # same-net vias and through-hole pads
         per, outside = {}, []
+        on = {}                     # island -> [(item, text)]: every pad and via standing on it
         for t in b.Tracks():
             if t.Type() == pn.PCB_VIA_T and short(t.GetNetname()) == net:
                 x, y = mm(t.GetPosition().x), mm(t.GetPosition().y)
@@ -153,6 +179,8 @@ def report(B, a):
                 k = next((island(x + dx, y + dy) for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r), (0, 0))
                           if island(x + dx, y + dy) is not None), None)
                 (per.setdefault(k, []) if k is not None else outside).append(("via", x, y))
+                if k is not None:
+                    on.setdefault(k, []).append((t, f"via ({x:.2f}, {y:.2f})"))
         smd_over = []
         for f in b.Footprints():
             for p in f.Pads():
@@ -172,9 +200,25 @@ def report(B, a):
                                 hit.add(k)
                     for k in hit:
                         per.setdefault(k, []).append((f"{f.GetReference()}.{p.GetNumber()} PTH", x, y))
-                elif island(x, y) is not None or any(
-                        island(x + dx, y + dy) is not None for dx, dy in ((0.6, 0), (-0.6, 0), (0, 0.6), (0, -0.6))):
-                    smd_over.append(f"{f.GetReference()}.{p.GetNumber()}")
+                        on.setdefault(k, []).append((p, f"{f.GetReference()}.{p.GetNumber()}"))
+                else:
+                    if island(x, y) is not None or any(
+                            island(x + dx, y + dy) is not None for dx, dy in ((0.6, 0), (-0.6, 0), (0, 0.6), (0, -0.6))):
+                        smd_over.append(f"{f.GetReference()}.{p.GetNumber()}")
+                    if p.IsOnLayer(lid):
+                        # an SMD land on this layer: on the island its copper touches
+                        ps = pn.SHAPE_POLY_SET()
+                        p.TransformShapeToPolygon(ps, lid, pn.FromMM(0.01), pn.FromMM(0.005), pn.ERROR_OUTSIDE)
+                        pb = ps.BBox()
+                        for k, i in enumerate(order):
+                            ib = isl[i].BBox()
+                            if (pb.GetRight() < ib.GetLeft() or pb.GetLeft() > ib.GetRight()
+                                    or pb.GetBottom() < ib.GetTop() or pb.GetTop() > ib.GetBottom()):
+                                continue
+                            x_ = pn.SHAPE_POLY_SET(ps)
+                            x_.BooleanIntersection(isl[i])
+                            if x_.OutlineCount():
+                                on.setdefault(k, []).append((p, f"{f.GetReference()}.{p.GetNumber()}"))
         for k in sorted(per):
             items = per[k]
             pth = [i[0] for i in items if i[0] != "via"]
@@ -194,6 +238,12 @@ def report(B, a):
                   + " ".join(f"({x:.2f},{y:.2f})" for _, x, y in outside[:12]))
         print(f"   {len(smd_over)} {net} SMD pad(s) stand over the fill"
               + (": " + " ".join(sorted(smd_over)) if smd_over and len(smd_over) <= 60 else ""))
+        key = f"{net} on {lay}"
+        result["pours"][key] = {"islands": n, "untied": len(untied), "zones": len(zs)}
+        for k in range(n):
+            bb_ = isl[order[k]].BBox()
+            net_islands[net].append({"area": areas[order[k]], "key": key, "k": k, "items": on.get(k, []),
+                                     "at": (mm(bb_.Centre().x), mm(bb_.Centre().y))})
 
         if getattr(a, "section", 0) and (not getattr(a, "section_net", "") or net == a.section_net):
             section_report(pn, b, z, lid, net, isl, a, short)
@@ -230,6 +280,69 @@ def report(B, a):
                 print(f"   under this fill, {glob} on {olay}: {outsidef:.2f} mm")
             for w in sorted(worst, reverse=True)[:6]:
                 print(f"        {w[0]:.2f} mm  {w[1]}  {w[2]} - {w[3]}")
+
+    if groups:
+        pour_net(B, net_islands, result)
+    return result
+
+
+def pour_net(B, net_islands, result):
+    """Every pour island that holds a pad or a via must join the rest of its net, by KiCad's own
+    connectivity (the fill as it is now, zones' shared edges, tracks, vias, pads on every layer).
+    DRC cannot be trusted for it: its unconnected list is capped (499 on board1), so one more
+    open item on a big board is not seen; and the untied-island test above passes a piece that
+    holds a via -- the via may lead nowhere (board1 R6a_real: C22.1 and its in-pad via (26.0,
+    17.5) on a 0.3 mm2 NVCC_DRAM island of In4, cut off by the fill, every gate PASS).
+    The net's own copper is the cluster of its LARGEST pour island that holds an item (any layer);
+    an island whose items are in another cluster is cut off.  Prints one POURNET line, and one
+    line per island cut off: the island, its area, what stands on it, what its cluster reaches."""
+    pn, b = B.pn, B.b
+    short = lambda n: n.split("/")[-1]
+    b.BuildConnectivity()
+    conn = b.GetConnectivity()
+    uid = lambda it: it.m_Uuid.AsString()
+
+    def cluster(item):
+        got = {uid(x): x for x in conn.GetConnectedItems(item)}
+        got[uid(item)] = item
+        return got
+
+    def name(it):
+        if it.Type() == pn.PCB_VIA_T:
+            return f"via ({pn.ToMM(it.GetPosition().x):.2f}, {pn.ToMM(it.GetPosition().y):.2f})"
+        if it.Type() == pn.PCB_PAD_T:
+            return f"{it.GetParentFootprint().GetReference()}.{it.GetNumber()}"
+        return None
+
+    for net, isls in net_islands.items():
+        held = [i for i in isls if i["items"]]
+        result["judged"] += len(held)
+        if not held:
+            continue
+        main_isl = max(held, key=lambda i: i["area"])
+        main = cluster(main_isl["items"][0][0])
+        for i in held:
+            if i is main_isl:
+                continue
+            item = i["items"][0][0]
+            if uid(item) in main:
+                continue
+            c = cluster(item)
+            on_ids = {uid(it) for it, _ in i["items"]}
+            beyond = [name(x) for k_, x in c.items() if k_ not in on_ids and name(x)]
+            what = ", ".join(t for _, t in i["items"][:8]) + (" ..." if len(i["items"]) > 8 else "")
+            reach = (f"joined to nothing else of {net}" if not beyond else
+                     f"joined only to {len(beyond)} other item(s) ({', '.join(beyond[:4])}"
+                     f"{' ...' if len(beyond) > 4 else ''}), not to {net}'s pour {main_isl['key']} [{main_isl['k']}]")
+            result["cutoff"].append({"pour": i["key"], "island": i["k"], "area": i["area"], "at": i["at"],
+                                     "items": [t for _, t in i["items"]], "beyond": beyond})
+            print(f"   ⚠ cut off: {i['key']} island [{i['k']}] {i['area']:.2f} mm2 at ({i['at'][0]:.1f}, {i['at'][1]:.1f})"
+                  f" holds {what}: {reach}")
+    cut = result["cutoff"]
+    print(f"\nPOURNET {'FAIL' if cut else 'PASS'}: {len(cut)} of {result['judged']} pour island(s) holding a pad or "
+          f"via cut off from the rest of their net (KiCad's connectivity)"
+          + ("".join(f"\n   {c['pour']} [{c['island']}] {c['area']:.2f} mm2 at ({c['at'][0]:.1f}, {c['at'][1]:.1f}): "
+                     f"{', '.join((c['items'] + c['beyond'])[:6])}" for c in cut)))
 
 
 def section_report(pn, b, z, lid, net, isl, a, short):

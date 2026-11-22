@@ -139,6 +139,23 @@ legal when every piece is stitched, so raw island counts failed a sound R6. DRC
 passes a pour in pieces, and before this only `audit` saw it -- after `apply`
 (board2 R5: a CHECK PASS plan cut the +5V strip; ripped and re-routed).
 
+**A net's zones on one layer are ONE copper set** to `pour.py`, `check` and `audit` (one
+report line per NET on LAYER, `(N zones, one copper set)`): KiCad knocks a lower-priority
+zone out of a higher-priority one of the same net and its connectivity joins them along the
+shared edge. Judged zone by zone, the lower one's sliver against that edge read as an untied
+island and the higher one's vias as "not reached" (board1 R6a_real: a 0.21 mm2 VDD_SOC prio-2
+piece against the prio-5 corridor failed `pours`; `audit`'s count went 5 -> 4 pours, PASS).
+
+**`pournet`: an island that holds a pad or a via must join its net**, by KiCad's own
+connectivity on the refilled board (`pour.py`'s `POURNET PASS|FAIL` line, `audit`'s `pournet`
+row; `check` fails a plan that adds one, `RULE pournet: ...`). The net's copper is the cluster
+of its largest pour island that holds an item; any other island whose items are in another
+cluster is named with its area, what stands on it and what its cluster reaches. The untied
+test passes such an island (it holds a via), and DRC cannot be read for it: its unconnected
+list is capped at 499 on board1. board1 R6a_real: C22.1 and its in-pad via (26.0, 17.5) on a
+0.30 mm2 NVCC_DRAM island of In4 passed DRC, prelayout, audit and irfill; `pournet` names it.
+Proof: board2's GND In2 in 14 stitched pieces, 21 islands judged, PASS.
+
 ⚠ **The open count is KiCad's connectivity, not the DRC report.** `kicad-cli
 pcb drc` lists unconnected items only up to a cap (499 on board 1 with 1264
 open), so a count read from it stops moving on a big board: 22 nets routed end
@@ -1400,12 +1417,15 @@ passes `nfp` 0 new; the same plan with the key stripped fails it.
 A zone's outline is a wish; its **fill** is the copper, and DRC does not read
 the difference. It passes a pour that fell into islands, a pour whose one via
 sits in a pocket of its own, and a power pour laid over a bus that must see
-ground. For every filled zone `pour.py` refills in memory and prints, from the
+ground. For every net on every layer (its zones there taken as one copper set)
+`pour.py` refills in memory and prints, from the
 fill: islands and their areas; same-net vias and through-hole pins per island
 and the vias the fill does **not** reach; the same-net SMD pads standing over
 it; with `--over NETGLOB:LAYER`, the length of those tracks lying **under** the
 fill (split by `--field`'s courtyard when named). `--try NET:LAYER=zone.json`
-swaps an outline in memory and measures; nothing is written.
+swaps an outline in memory and measures; nothing is written. Last, `POURNET`: every
+island holding a pad or via joined to the rest of its net by KiCad's connectivity, or each
+one cut off named (`report()` returns the same as data for `route.py`).
 `--section MM [--section-net NET] --from REF[.PIN],... --to REF[.PIN],...` cuts the fill across its
 long axis every 0.05 mm between the sources and the loads and sums the copper on
 each cut (the fill and the net's lands): PASS when the narrowest is >= MM, and
