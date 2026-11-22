@@ -65,6 +65,14 @@ reads the flag back from the saved file, and `audit` fails on every such via
 on the board (the "nfp" line).  DRC never sees it: the inner via-to-via rule
 allows the pads.  Without the key the rule is not run, and `audit` says so.
 
+EXIT LANES.  A BGA's ring-1 / ring-2 balls leave on its own outer layer (straight out, between two
+ring-1 lands) before their tracks exist, so DRC sees no via, pad or stub standing in a lane, and an
+escape count on the vias calls the lane free.  <board>/routing/prelayout.json names the parts:
+"exit_lanes": [{"ref": "U1", "plan": "<its bga_fanout.py plan>", "side"?, "gate"?, "why"}]
+(exitlane.py's docstring).  Then `check` judges every entry whose courtyard (+1 mm) the plan's copper
+or rips come near, on the board before and with the plan, and refuses a ball the plan leaves without
+the lane it had (RULE exitlane:); `audit` prints an `exitlane` line.  Without the key, "not run".
+
 A STALE PLAN IS REFUSED BEFORE ANY GATE (origin.py; exit 5).  A planner writes
 <plan>.origin.json beside its plan: the spec's hash and the board file's.
 `check` and `apply` refuse a plan whose spec has changed, whose board has
@@ -98,6 +106,7 @@ boardsel = P.boardsel
 sys.path.insert(0, str(ROOT / "tools" / "route"))
 sys.path.insert(0, str(ROOT / "tools" / "copper"))
 import guide                                                # noqa: E402
+import exitlane as EL                                       # noqa: E402
 import checks as CK                                         # noqa: E402  (tools/route: the findings' rules, measured)
 import origin                                               # noqa: E402  (tools/route: a plan's origin record)
 import drccache                                             # noqa: E402  (tools/place)
@@ -750,6 +759,18 @@ def nfp_lacking(B, rule):
     return out
 
 
+def exitlane_spec(B):
+    """prelayout.json "exit_lanes" (exitlane.py), each ref on the board, or None."""
+    try:
+        e = EL.load_spec(B.dir)
+    except EL.Usage as ex:
+        die(str(ex))
+    for x in e or []:
+        if B.b.FindFootprintByReference(x["ref"]) is None:
+            die(f"{EL.SPEC}: \"exit_lanes\" names {x['ref']}, which is not on the board")
+    return e
+
+
 def nfp_text(lack, n=4):
     """'259 (U1 225, U300 34): GND (26.500, 19.000), ...' -- the count, per part, the first few."""
     per = defaultdict(int)
@@ -1167,6 +1188,27 @@ def cmd_check(a, quiet=False, gate=True):
                                 f"unconnected inner pads before, {len(n1)} with this plan ({len(new_nfp)} new) ({nfp['source']})")
             bad += [f"nfp: the plan's {short(net)} via at ({x:.3f}, {y:.3f}) is inside {ref}'s courtyard and has no "
                     f"\"nfp\": true -- it would keep a pad on every layer ({nfp['source']})" for ref, net, x, y, _u in new_nfp]
+        lanes = exitlane_spec(B)
+        for e in lanes or []:
+            # a via, pad or stub this plan stands in a BGA ball's unrouted exit lane: DRC cannot see it
+            # (no track yet) and an escape count on the vias calls the lane free (board1 RV60.1 / RV60.5)
+            if not EL.plan_touches(B, e["ref"], plan):
+                continue
+            try:
+                r0, r1 = EL.judge_entry(B, e), EL.judge_entry(S, e)
+            except EL.Usage as ex:
+                die(f"{EL.SPEC}: exit_lanes {e['ref']}: {ex}")
+            g = r1["gate"]
+            new = sorted(set(r1["gate_balls"][g]) - set(r0["gate_balls"][g]))
+            copper_notes.append(f"exitlane {e['ref']}: {len(r0['gate_balls'][g])} ball(s) without an exit lane "
+                                f"(--gate {g}) before, {len(r1['gate_balls'][g])} with this plan ({len(new)} new)"
+                                + (f" ({e['why']})" if e.get("why") else ""))
+            for it in r1["gate_items"][g]:
+                ls = [h for h in it["lanes"] if h["lane"]["ball"] in new]
+                if ls:
+                    bad.append(f"exitlane: {EL.item_text(it['item'])} on {r1['layer']} blocks {e['ref']} "
+                               + "; ".join(EL.lane_text(h) for h in ls[:4]) + (" ..." if len(ls) > 4 else "")
+                               + " (exitlane.py)")
         # a pour this plan splits: DRC passes a pour in pieces, and the audit found it only
         # after apply (board2 R5: vias' antipads cut J1's +5V pins off on a 6 mm2 island)
         i0, i1 = pour_islands(B, a.board), pour_islands(S, a.board)
@@ -1619,6 +1661,22 @@ def cmd_audit(a):
                                f"inner pads") + f" ({nfp['source']})")
     else:
         print(f"  {'nfp':13s} ----  not run: {NFP_SPEC} has no \"nfp_vias\" (the vias that drop their unconnected inner pads)")
+    lanes = exitlane_spec(B)
+    if lanes:
+        for e in lanes:
+            try:
+                r = EL.judge_entry(B, e)
+            except EL.Usage as ex:
+                gate("exitlane", False, f"{e['ref']}: {ex}")
+                continue
+            g, gb = r["gate"], r["gate_balls"][r["gate"]]
+            gate("exitlane", r["ok"], (f"{e['ref']}: {len(r['gate_items'][g])} item(s) block {len(gb)} ball(s) "
+                                       f"({', '.join(gb[:6])}{' ...' if len(gb) > 6 else ''})" if gb else
+                                       f"{e['ref']}: every unrouted ring-1/2 signal ball has its exit lane "
+                                       f"({len(r['ring1'])}+{len(r['ring2'])} judged, {len(r['routed'])} routed)")
+                 + f" (--gate {g}" + (f"; {e['why']})" if e.get("why") else ")"))
+    else:
+        print(f"  {'exitlane':13s} ----  not run: {EL.SPEC} has no \"exit_lanes\" (a BGA's unrouted top-layer escape lanes)")
     pours = [z for z in B.b.Zones() if not z.GetIsRuleArea() and z.GetNetCode()]
     if pours:
         # pour.py's report, in-process on the board already loaded: no second interpreter, pcbnew

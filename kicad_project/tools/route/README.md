@@ -774,6 +774,26 @@ its docstring. What the spec has to be told:
   them standing (`ripped 335 of 594`, exit 0). Prove the gate both ways on a copy: `audit` fails before and passes
   after; a one-via plan inside the courtyard without `"nfp"` is refused, the same via with it and a via outside
   without it are not.
+- **A BGA's unrouted exit lane is invisible to DRC and to the escape bound: `exitlane.py` measures it.** A ring-1
+  ball leaves straight out on the part's own outer layer, a ring-2 ball between two ring-1 lands; until those
+  tracks are drawn, another net's via, pad or stub standing in a lane breaks no DRC rule (there is no track to be
+  near), and `fanout.py layers` / `escape_bound.py` count the lane free. board1 RV60.1 / RV60.5: five capacitor
+  vias on U1's ring-1 lines and A6's GND via and stub on U300's A5 line, with the escape at 162 of 162.
+  `tools/kpy tools/route/exitlane.py --board B --ref U1 [--plan <bga_fanout.py plan>] [--side S] [--gate
+  assign|plan|strict]` draws every ring-1/2 signal ball's lanes from the board (pitch, lattice, rings, courtyard;
+  the exit layer is the part's side), takes the width and clearance from the part's area class (`fab: <CLASS>
+  class inside <REF>`) or the nets' classes, and names each blocking item: net, xy, layer, edge distance against
+  width/2 + clearance, and the ball, ring, side and lane it shuts. `assign` (default) asks a free straight lane
+  for every ring-1 ball and a lane of its OWN for every ring-2 ball (an exact matching); `plan` also the ring-2
+  lanes the fan-out plan assigned; `strict` every candidate lane. A ball whose own track already leaves it is
+  dropped (DRC judges it now). Exit 0 / 1 / 2. Name the parts in `<board>/routing/prelayout.json`,
+  `"exit_lanes": [{"ref", "plan"?, "side"?, "gate"?, "why"}]`, and `route.py check` judges every entry whose
+  courtyard (+1 mm) the plan's copper or rips come near, before and with the plan, and refuses a ball the plan
+  newly leaves without a lane (`RULE exitlane:`); `audit` has an `exitlane` line per part (`---- not run`
+  without the key). Run it after a placement or decoupling plan moves copper near a BGA, not only after routing.
+  Prove it both ways on copies: the board before the fix fails naming the known items (board1: U1 5 vias, 9
+  balls; U300 the via and its two stub segments), the board after passes; a one-via plan back on a lane is
+  refused by `check`, a rip-only plan is not.
 - **An area rule whose area is wider than the fab's is a hole in DRC: measure what it relaxes.** KiCad's
   `intersectsCourtyard` relaxes a gap wherever BOTH items touch the courtyard -- a track laid along the courtyard
   line is relaxed for its whole length -- and a memory's courtyard can be 3 mm wider each way than its ball array,

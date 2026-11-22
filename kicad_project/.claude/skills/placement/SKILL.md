@@ -119,6 +119,16 @@ two rows of capacitors allow the via pad + two via-to-pad gaps (the guide's
 there without moving parts after the copper is laid — a placement decision
 the user makes, never an exception the routing session declares.
 
+**A via beside a BGA must not stand in a ball's exit lane.** A ring-1 ball
+leaves straight out on the part's own layer, a ring-2 ball between two ring-1
+lands; before those tracks exist no DRC rule and no escape count sees a
+capacitor's via or stub on one (board1 RV60.1 / RV60.5: six, escape 162 of
+162). After a decoupling plan or a move near a BGA, run
+`tools/kpy tools/route/exitlane.py --board <board> --ref <BGA> --plan
+<its bga_fanout.py plan>`; it names each blocking item and the ball it shuts
+(exit 1). Name the BGA in `routing/prelayout.json` `"exit_lanes"` and
+`route.py check` refuses such a via in any later plan (`tools/route/README.md`).
+
 ## 1d. Can it be routed? The pre-routing gate
 
 Before the placement is requested for review, and again after any move near a
