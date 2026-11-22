@@ -42,7 +42,7 @@ def configure():
     global FROZEN_CLASSES, FROZEN_NETS, FROZEN_BOXES
     fr = K.G.get("frozen") or {}
     FROZEN_CLASSES = set(fr.get("classes", [])); FROZEN_NETS = tuple(fr.get("nets", []))
-    FROZEN_BOXES = list(K.FIELDS)
+    FROZEN_BOXES = [box for _ref, box in K.FIELDS]          # (ref, box) since 9404ec2
 
 class Undo:
     """every board edit a push makes goes through here, so a frozen vfcore cache (K.freeze) is dropped with it"""
