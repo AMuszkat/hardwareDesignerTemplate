@@ -195,7 +195,9 @@ def hand_board():
                    rules=dict(clearance=0.2), netclasses={}, net_class={}),
         parts=[dict(ref=r, value="", footprint="", at=at, rot=0, side="F", courtyard=None, box=None, dnp=False)
                for r, at in (("R1", [12, 0]), ("R2", [15, 5]), ("R4", [12.3, 2.4]), ("R5", [3, 6]), ("J1", [2, 15]), ("H1", [2, 17]))]
-        + [dict(ref="V1", value="", footprint="", at=[60, 0], rot=0, side="F", courtyard=[58, -2, 62, 2], box=None, dnp=False)],
+        + [dict(ref="V1", value="", footprint="", at=[60, 0], rot=0, side="F", courtyard=[58, -2, 62, 2], box=None, dnp=False),
+           dict(ref="U9", value="", footprint="", at=[80.75, 0.75], rot=0, side="F", courtyard=[79.5, -0.5, 82.0, 2.0], box=None,
+                dnp=False)],
         tracks=[
             tr("A", "F.Cu", (0, 0), (10, 0)), tr("B", "F.Cu", (0, 0.5), (10, 0.5)),
             # net C: a chain with a 45, a 45, a 90 and a 26.57-degree joint, and a tee
@@ -236,7 +238,10 @@ def hand_board():
               dict(uuid="vu", net="VV", at=[62, 2], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
                    flashed=["F.Cu", "B.Cu"]),
               dict(uuid="vo", net="VV", at=[64, 0], d=0.6, drill=0.3, type="through", layers=["F.Cu", "B.Cu"],
-                   flashed=["F.Cu", "B.Cu"], drop_unused=False)],
+                   flashed=["F.Cu", "B.Cu"], drop_unused=False),
+              # 0.35 mm straight out of U9's ball A2 (80.5, 0), on its exit lane
+              dict(uuid="v9", net="SH9", at=[80.5, -0.35], d=0.4, drill=0.2, type="through", layers=["F.Cu", "B.Cu"],
+                   flashed=["F.Cu", "B.Cu"])],
         pads=[
             pad("R1", "1", "B", (12, 1.0), rect(12, 1.0, 1.0, 0.5), 0.0),
             pad("R1", "2", "A", (12, -1.0), [[12, -1.0]], 0.4),
@@ -251,7 +256,8 @@ def hand_board():
             pad("P1", "1", "P", (30, 0), [[30, 0]], 0.3),
             pad("P2", "1", "P", (40, -3), [[40, -3]], 0.3, ("B.Cu",)),
             pad("P3", "1", "P", (45, 5), [[45, 5]], 0.3),
-        ],
+        ] + [pad("U9", f"{'ABCD'[j]}{i + 1}", "GND" if (i, j) == (3, 3) else f"U9S{'ABCD'[j]}{i + 1}",
+                 (80 + 0.5 * i, 0.5 * j), [[80 + 0.5 * i, 0.5 * j]], 0.1125) for j in range(4) for i in range(4)],
         zones=[dict(uuid="z-gnd", net="GND", name="", layers=["F.Cu"], priority=0, box=[0, 10, 10, 14],
                     outline=[dict(outline=rect(5, 12, 10, 4), holes=[])],
                     filled={"F.Cu": dict(area=36.0, islands=[dict(area=36.0, box=[0, 10, 10, 14], outline=rect(5, 12, 10, 4),
@@ -430,6 +436,46 @@ def hand_checks(geom, path, c):
     c.eq("unused-pads: vias in the box", [r["via"]["uuid"] for r in up], ["vd", "vk", "vu"])
     c.eq("unused-pads: drops / keeps / unknown", [r["drop"] for r in up], [True, False, None])
     c.eq("unused-pads: pads on, of layers", [(r["flashed"], r["span"]) for r in up], [(1, 2), (2, 2), (2, 2)])
+    # lanes: U9 is a 4 x 4 lattice, pitch 0.5, lands r 0.1125; a 0.0889 track at 0.0889 (half a track 0.04445).
+    # The SH9 via (r 0.2) stands 0.35 out of A2, on A2's lane: gap 0.  B2 (ring 2) leaves -y at x 80.25 / 80.75,
+    # each 0.25 from the via's centre: 0.25 - 0.2 - 0.04445; or -x at y 0.25 / 0.75, nothing within 0.0889.
+    # A1's -y lane is 0.5 from the via.  D4 is GND: not asked.
+    L = G.lanes("U9", ["GND*"], 0.0889, 0.0889)
+    c.eq("lanes: lattice", (L["pitch"], L["cols"], L["rows"], L["layer"]), (0.5, 4, 4, "F.Cu"))
+    c.eq("lanes: signal balls (GND not asked)", len(L["balls"]), 15)
+    c.eq("lanes: with no free lane", [b["ball"] for b in L["balls"] if not b["exit"]], ["A2"])
+    bl = {b["ball"]: b for b in L["balls"]}
+    c.eq("lanes: A2 ring 1, one lane, through the via",
+         [(bl["A2"]["ring"], ln["side"], ln["gap"], ln["by"].src["uuid"]) for ln in bl["A2"]["lanes"]], [(1, "-y", 0.0, "v9")])
+    c.eq("lanes: B2 ring 2, four lanes", [(ln["side"], ln["a"]) for ln in bl["B2"]["lanes"]],
+         [("-x", (80.5, 0.25)), ("-x", (80.5, 0.75)), ("-y", (80.25, 0.5)), ("-y", (80.75, 0.5))])
+    c.eq("lanes: B2's -x lanes free", [ln["free"] for ln in bl["B2"]["lanes"]], [True, True, False, False])
+    c.eq("lanes: B2 -y x 80.25 gap", bl["B2"]["lanes"][2]["gap"], 0.25 - 0.2 - 0.04445)
+    c.eq("lanes: B2 -y x 80.75 gap", bl["B2"]["lanes"][3]["gap"], 0.25 - 0.2 - 0.04445)
+    c.eq("lanes: A1 a corner, -x and -y", [ln["side"] for ln in bl["A1"]["lanes"]], ["-x", "-y"])
+    c.eq("lanes: B3's -y x 80.75 lane blocked, x 81.25 free, +x free",
+         [(ln["side"], ln["free"]) for ln in bl["B3"]["lanes"]], [("+x", True), ("+x", True), ("-y", False), ("-y", True)])
+    c.eq("lanes: every power net asked", len(G.lanes("U9", (), 0.0889, 0.0889)["balls"]), 16)
+    c.eq("lanes: ring 1 only", len(G.lanes("U9", ["GND*"], 0.0889, 0.0889, rings=1)["balls"]), 11)
+    c.eq("lanes: --reach 0.25 ends A2's lane at y -0.25, inside the via's pad (y -0.15): still blocked",
+         [b["ball"] for b in G.lanes("U9", ["GND*"], 0.0889, 0.0889, reach=0.25)["balls"] if not b["exit"]], ["A2"])
+    c.eq("lanes: --reach 0.05: A2's lane ends at y -0.05, 0.3 from the via's centre: 0.3 - 0.2 - 0.04445",
+         G.lanes("U9", ["GND*"], 0.0889, 0.0889, reach=0.05)["balls"][1]["lanes"][0]["gap"], 0.3 - 0.2 - 0.04445)
+    c.eq("lanes: --reach 0.0: A2's lane is its centre, 0.35 from the via's: free (0.10555)",
+         [b["ball"] for b in G.lanes("U9", ["GND*"], 0.0889, 0.0889, reach=0.0)["balls"] if not b["exit"]], [])
+    # --plan: a plan's track 0.35 below the via's centre, 0.1 wide: 0.35 - 0.2 - 0.05 from the via, counted alone;
+    # the board's nearest to that via is A2's land, 0.35 - 0.2 - 0.1125
+    P = geom.load(path)
+    added = P.add_plan(dict(tracks=[dict(net="PL", layer="F.Cu", width=0.1, pts=[[80, -0.7], [81, -0.7], [81, -1.6]])],
+                            vias=[dict(net="PL", at=[81, -1.6], pad=0.4, drill=0.2)]), "t")
+    c.eq("plan: items added", [i.kind for i in added], ["plan-track", "plan-track", "plan-via"])
+    c.eq("plan: selected by plan:", len(P.select("plan:PL")), 3)
+    r = P.nearest(P.select("via:80.5,-0.35"), kinds=("plan-track", "plan-via"))
+    c.eq("plan: the via against the plan alone", (r[0]["other"].kind, round(r[0]["gap"], 9)), ("plan-track", 0.1))
+    c.eq("plan: only the plan's copper counted", all(x["other"].kind.startswith("plan-") for x in r), True)
+    r = P.nearest(P.select("via:80.5,-0.35"))
+    c.eq("plan: without --plan-only the board's land is nearer", (r[0]["other"].name, round(r[0]["gap"], 9)),
+         ("pad U9.A2 U9SA2", round(0.35 - 0.2 - 0.1125, 9)))
     # lengths
     ln = {r["net"]: r for r in G.lengths()}
     c.eq("lengths P", (round(ln["P"]["total"], 9), ln["P"]["layers"], ln["P"]["segments"], ln["P"]["vias"]),

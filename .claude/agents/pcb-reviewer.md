@@ -147,6 +147,8 @@ query on the base snapshot (the folder `CHANGES.md` names in its first line).
 | the nearest via of a net to each via, centre to centre (the `stitch via` check's measure) | `stitch SEL --to GND [--over D]` |
 | which pads of a part no copper of their net reaches -- a supply or GND ball with no stub, no via and no pour (an unrouted signal is bare too: name the nets) | `bare REF [REF ...] --net 'GND,+1V8,VDD_*'` |
 | the vias in a part's courtyard (or a rectangle): which drop their unconnected inner pads and which keep a pad on every layer -- the fab page's non-functional-pads row; no DRC rule and no board gate tests the property | `unused-pads REF` or `unused-pads X0,Y0,X1,Y1` |
+| a BGA's outer signal balls' top-layer exits (ring 1 straight out of its land, ring 2 between two ring-1 lands) and the via or copper of another net standing in one -- DRC cannot see it while the lines are unrouted; run it on every BGA whenever vias near one moved | `lanes REF --power 'GND,+*,VDD*'` (`--reach MM` when the courtyard is far out of the lands; `--all` adds the balls that lost one lane of two) |
+| a board object measured against copper that is not on the board -- a ripped group's reviewed plan, a rehearsed group's file | `nearest SEL --plan routing/<plan>.json --plan-only` (the plan's items select as `plan:NET`) |
 | a via or track a moved part left behind: a piece of its net with no pad in it (`pieces` rows with 0 pads) | `conn NET` |
 | a capacitor to the ball it is named for, pad centre to ball centre (the `centre` column) | `gap C12.1 U1.A5 --any-layer` |
 | the length a track runs nearer than G to each foreign net on its layer (crosstalk spacing, a class clearance an area rule switches off) | `coupled SEL --within G [--ignore NET] [--no-pours]` |

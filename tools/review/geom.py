@@ -30,6 +30,14 @@ cannot answer is written as a script in tmpWork/ and NAMED in the report's
     bare     REF [REF ...] [--net N,N]   the pads of a part that no copper of their net reaches (a ball with no stub, no via, no pour)
     unused-pads REF | X0,Y0,X1,Y1   the vias in a part's courtyard (or a rectangle): which drop their unconnected inner
                                  pads (KiCad's 'remove unconnected layers') and which keep a pad on every layer
+    lanes    REF [--power P,P] [--rings 1|2] [--track W] [--clear C] [--reach MM]
+                                 a BGA's outer signal balls' exit lanes on their own layer (ring 1 straight out, ring 2
+                                 between two ring-1 lands) to the courtyard line, and what foreign copper stands in them
+
+--plan FILE adds a routing plan's copper (route.py's JSON: tracks, vias) to the
+board as kinds plan-track / plan-via, selected by plan:; --plan-only makes
+nearest measure against the plan's copper alone (a board via against a ripped
+group's reviewed lanes).
 
 SEL -- what a query is about:
 
@@ -38,6 +46,7 @@ SEL -- what a query is about:
     pads:NAME      a net's pads
     added:[NAME]   the tracks, arcs, vias and shapes CHANGES.md lists as added (of that net) -- a snapshot folder only
     via:X,Y        the via whose centre is nearest that point (within 0.5 mm)
+    plan:[NAME]    the copper --plan FILE added (of that net)
     track:X,Y      the track or arc whose copper is nearest that point (within 0.5 mm)
     uuid:PREFIX    the track, arc, via or zone whose uuid starts so
     box:X0,Y0,X1,Y1   the copper touching that rectangle
@@ -80,6 +89,7 @@ THE DEFINITIONS (each function's docstring repeats its own):
     handoff's (14_fab.md, rules.json) and KiCad's DRC is the gate.
 """
 import argparse
+import fnmatch
 import json
 import math
 import re
@@ -351,6 +361,11 @@ class Geometry:
             if sel[6:]:
                 n = set(self.net_list(sel[6:]))
                 out = [i for i in out if i.net in n]
+        elif sel.startswith("plan:"):
+            out = [i for i in its if i.kind in ("plan-track", "plan-via")]
+            if sel[5:]:
+                n = set(self.net_list(sel[5:]))
+                out = [i for i in out if i.net in n]
         elif sel.startswith("via:"):
             x, y = (float(v) for v in sel[4:].split(",")[:2])
             vias = [i for i in its if i.kind in ("via", "via-hole")]
@@ -457,14 +472,15 @@ class Geometry:
     def _layer_key(self, L):
         return self.copper_layers.index(L) if L in self.copper_layers else 99
 
-    def foreign(self, item, layer=None, within=None, ignore=(), pours=True):
+    def foreign(self, item, layer=None, within=None, ignore=(), pours=True, kinds=None):
         """The FOREIGN copper nearest one Item: [{gap, other, at, layers}], nearest first.
 
         Foreign: another net (an object with no net is foreign to all); `ignore` names nets
         left out (a pair's other half).  Compared on shared copper layers only (`layer`: that
         one).  gap: edge to edge, 0.0 = touching or overlapping.  Without `within`, the list is
         the one nearest object (or empty: nothing foreign on its layers); with it, every foreign
-        object nearer than `within` mm.  `pours=False` leaves zone fills out."""
+        object nearer than `within` mm.  `pours=False` leaves zone fills out; `kinds`, when given,
+        is the only kinds of object counted (("plan-track", "plan-via"): a plan's copper alone)."""
         layers = item.layers & {layer} if layer else item.layers
         if not layers:
             return []
@@ -473,6 +489,8 @@ class Geometry:
             if o.id == item.id or o.src is item.src or not (o.layers & layers):
                 return False
             if o.kind == "pour" and not pours:
+                return False
+            if kinds is not None and o.kind not in kinds:
                 return False
             if o.net in ignore:
                 return False
@@ -514,12 +532,12 @@ class Geometry:
                      at=((found[j][1][0] + found[j][2][0]) / 2, (found[j][1][1] + found[j][2][1]) / 2),
                      layers=sorted(self.items[j].layers & layers, key=self._layer_key)) for g, j in hit]
 
-    def nearest(self, items, layer=None, within=None, ignore=(), pours=True):
+    def nearest(self, items, layer=None, within=None, ignore=(), pours=True, kinds=None):
         """`foreign` for every Item of a selection: rows {own, gap, other, at, layers}, smallest
         gap first.  A selection with nothing foreign near it gives no row for that object."""
         rows = []
         for it in items:
-            for h in self.foreign(it, layer, within, ignore, pours):
+            for h in self.foreign(it, layer, within, ignore, pours, kinds):
                 rows.append(dict(own=it, **h))
         rows.sort(key=lambda r: (r["gap"], r["own"].id, r["other"].id))
         return rows
@@ -818,6 +836,114 @@ class Geometry:
         e = 1e-9
         return [dict(via=v, drop=v.get("drop_unused"), flashed=len(v.get("flashed", v["layers"])), span=len(v["layers"]))
                 for v in self.d.get("vias", []) if x0 - e <= v["at"][0] <= x1 + e and y0 - e <= v["at"][1] <= y1 + e]
+
+    def add_plan(self, plan, tag="plan"):
+        """A routing plan's copper added to the board: route.py's JSON, `tracks` as {net, layer,
+        width, pts} (a polyline) and `vias` as {net, at, pad, drill[, layers]} (a via with no
+        `layers` spans every copper layer, its pad on each).  Items of kind plan-track and
+        plan-via, so a query measures the board against a plan that is not on it (a ripped
+        group's reviewed lanes).  Returns the items added."""
+        n0 = len(self.items)
+        for t in plan.get("tracks", []):
+            for a, b in zip(t["pts"], t["pts"][1:]):
+                self._add("plan-track", t["net"], [t["layer"]], [a, b], t["width"] / 2,
+                          f"{tag} track {short(t['net'])} {t['layer']} {fmt_pt(a)}-{fmt_pt(b)} w{t['width']:g}", t)
+        for v in plan.get("vias", []):
+            self._add("plan-via", v["net"], v.get("layers") or self.copper_layers, [v["at"]], v["pad"] / 2,
+                      f"{tag} via {short(v['net'])} {fmt_pt(v['at'])} {v['pad']:g}/{v['drill']:g}", v)
+        self._grid, self._atoms = None, []
+        return self.items[n0:]
+
+    def lanes(self, ref, power=(), track=None, clear=None, rings=2, reach=None):
+        """The exit lanes of a BGA's outer SIGNAL balls on the layer of its lands, and what stands
+        in them: {pitch, cols, rows, layer, end, track, clear, balls: [{ball, net, ring, at, exit,
+        lanes: [{side, offset, a, b, gap, by, free}]}]}.
+
+        The part's pads are a lattice: pitch is the smallest spacing between pad centres along x
+        or y.  A ball's RING is 1 + its distance in sites to the nearest edge row or column of the
+        lattice (empty sites count).  A ring-1 ball leaves straight out of its land, on the line
+        through its centre normal to its edge; a ring-2 ball between two ring-1 lands, on one of
+        the two lines half a pitch either side of its centre.  A ball as near two edges (a
+        corner) has its lanes on both.  Each lane runs from the ball's centre, projected onto it,
+        to the part's courtyard line (its pad box grown by a pitch, without one), or `reach` mm
+        past the outer lands' centre line when that is nearer (a courtyard far out of the lands
+        tests farther than the escape needs); side is the edge it leaves by (-x, +x, -y, +y in
+        board coordinates).  gap: the distance from the lane's centre line to the nearest FOREIGN
+        object on that layer (another net, or none) found within `clear` of the track, less the
+        object's radius and half a track of width `track` (0.0 when they touch or a foreign fill
+        holds the lane; None when nothing stands that near); FREE when gap is None or >= `clear`.  exit: the ball has a free lane.
+        `power`: fnmatch patterns for the nets whose balls leave by vias, matched against the
+        full name and the last path component; a ball with no net, or KiCad's
+        'unconnected-(...)', is not asked.  track / clear default to the board's rules
+        (track_width, clearance)."""
+        part = next((q for q in self.d.get("parts", []) if q["ref"] == ref), None)
+        pads = [i for i in self.items if i.kind == "pad" and i.src["ref"] == ref]
+        if part is None or not pads:
+            raise SystemExit(f"geom: no part {ref!r} with pads in this dump")
+        rules = self.d["board"].get("rules") or {}
+        track = rules.get("track_width") if track is None else track
+        clear = rules.get("clearance") if clear is None else clear
+        if track is None or clear is None:
+            raise SystemExit("geom: lanes needs --track and --clear (the dump's board rules have none)")
+        layer = sorted(pads[0].layers, key=self._layer_key)[0]
+        xs = sorted({round(i.src["at"][0], 4) for i in pads})
+        ys = sorted({round(i.src["at"][1], 4) for i in pads})
+        steps = [b - a for v in (xs, ys) for a, b in zip(v, v[1:]) if b - a > 1e-3]
+        if not steps:
+            raise SystemExit(f"geom: {ref}'s pads are no lattice")
+        pitch = min(steps)
+        ncol, nrow = round((xs[-1] - xs[0]) / pitch) + 1, round((ys[-1] - ys[0]) / pitch) + 1
+        end = part.get("courtyard") or [xs[0] - pitch, ys[0] - pitch, xs[-1] + pitch, ys[-1] + pitch]
+        if reach is not None:
+            end = [max(end[0], xs[0] - reach), max(end[1], ys[0] - reach), min(end[2], xs[-1] + reach), min(end[3], ys[-1] + reach)]
+        hw = track / 2
+
+        def is_power(net):
+            tail = net.rsplit("/", 1)[-1]
+            return any(fnmatch.fnmatchcase(net, pat) or fnmatch.fnmatchcase(tail, pat) for pat in power)
+
+        fills = [o for o in self.items if o.kind in ("pour", "shape") and layer in o.layers]
+
+        def lane_gap(a, b, net):
+            best, by = INF, None
+            for o in fills:
+                if not (o.net and o.net == net) and (o.contains(a) or o.contains(b)):
+                    return 0.0, o
+            box = (min(a[0], b[0]) - hw, min(a[1], b[1]) - hw, max(a[0], b[0]) + hw, max(a[1], b[1]) + hw)
+            for j, edges in self._near(box, clear + 1e-6).items():
+                o = self.items[j]
+                if layer not in o.layers or (o.net and o.net == net):
+                    continue
+                g = min(seg_seg(a, b, c, d)[0] for c, d in edges) - o.r - hw
+                if g < best or (g == best and by is not None and o.id < by.id):
+                    best, by = g, o
+            return (max(0.0, best), by) if by is not None else (None, None)
+
+        balls = []
+        for it in sorted(pads, key=lambda i: (i.src["at"][1], i.src["at"][0])):
+            net = it.net
+            if not net or net.startswith("unconnected-") or is_power(net):
+                continue
+            x, y = it.src["at"][0], it.src["at"][1]
+            ci, ri = round((x - xs[0]) / pitch), round((y - ys[0]) / pitch)
+            depth = {"-x": ci, "+x": ncol - 1 - ci, "-y": ri, "+y": nrow - 1 - ri}
+            k = min(depth.values())
+            if k >= rings:
+                continue
+            lanes = []
+            for side, dd in depth.items():
+                if dd != k:
+                    continue
+                for o in ((0.0,) if k == 0 else (-pitch / 2, pitch / 2)):
+                    if side in ("-x", "+x"):
+                        a, b = (x, y + o), (end[0] if side == "-x" else end[2], y + o)
+                    else:
+                        a, b = (x + o, y), (x + o, end[1] if side == "-y" else end[3])
+                    g, by = lane_gap(a, b, net)
+                    lanes.append(dict(side=side, offset=o, a=a, b=b, gap=g, by=by, free=g is None or g >= clear - 1e-9))
+            balls.append(dict(ball=it.src["num"], net=net, ring=k + 1, at=(x, y), lanes=lanes,
+                              exit=any(ln["free"] for ln in lanes)))
+        return dict(pitch=pitch, cols=ncol, rows=nrow, layer=layer, end=end, track=track, clear=clear, balls=balls)
 
     def others_in_box(self, box):
         """What is in a rectangle besides copper: {parts, texts, zones}.  A part is in when its
@@ -1202,7 +1328,7 @@ def main(argv=None):
     ap.add_argument("snapshot", help="a PCB snapshot folder (out/reviews/<board>/<id>-pcb) or a geometry.json")
     ap.add_argument("query", choices=["info", "show", "nearest", "gap", "label", "joints", "via-pad", "holes",
                                       "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box",
-                                      "bare", "unused-pads"])
+                                      "bare", "unused-pads", "lanes"])
     ap.add_argument("args", nargs="*", help="the query's SEL / NET / REF / box")
     ap.add_argument("--layer", help="one copper layer")
     ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest; "
@@ -1226,13 +1352,33 @@ def main(argv=None):
     ap.add_argument("--all", action="store_true", help="every row (joints: the unflagged too; others: no row limit)")
     ap.add_argument("--allow", default="0,45,90", help="joints: the turns that are not flagged (default 0,45,90)")
     ap.add_argument("--top", type=int, default=20, help="rows printed (default 20)")
+    ap.add_argument("--plan", help="a routing plan's JSON (route.py's tracks / vias) added to the board as plan-track / "
+                    "plan-via; a relative path not found as given is looked for in the snapshot's board folder")
+    ap.add_argument("--plan-only", action="store_true", help="nearest: measure against the --plan copper alone")
+    ap.add_argument("--power", default="GND*,VSS*,AGND*,DGND*,+*,VDD*,VCC*,NVCC*,VREF*",
+                    help="lanes: fnmatch patterns of the nets whose balls leave by vias, comma-separated "
+                    "(default GND*,VSS*,AGND*,DGND*,+*,VDD*,VCC*,NVCC*,VREF*)")
+    ap.add_argument("--rings", type=int, choices=[1, 2], default=2, help="lanes: the outer rings asked (default 2)")
+    ap.add_argument("--track", type=float, help="lanes: the track width (default: the board's track_width rule)")
+    ap.add_argument("--clear", type=float, help="lanes: the clearance (default: the board's clearance rule)")
+    ap.add_argument("--reach", type=float, help="lanes: end each lane this far past the outer lands' centre line when "
+                    "that is nearer than the courtyard line")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     G = load(a.snapshot)
+    if a.plan:
+        pf = Path(a.plan)
+        if not pf.exists() and not pf.is_absolute() and G.dir:
+            pf = next((c for c in sorted((G.dir / "snap").glob(f"*/{a.plan}"))), pf)
+        if not pf.exists():
+            ap.error(f"--plan: no {a.plan}")
+        G.add_plan(json.loads(pf.read_text()), pf.stem)
+    if a.plan_only and not a.plan:
+        ap.error("--plan-only needs --plan FILE")
     d = G.d
     q = a.query
     need = {"show": 1, "nearest": 1, "gap": 2, "copper": 1, "box": 1, "conn": 1, "stitch": 1, "coupled": 1,
-            "overlap": 1, "probe": 1, "unused-pads": 1}
+            "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1}
     if q in need and len(a.args) != need[q]:
         ap.error(f"{q} takes {need[q]} argument(s)")
     if q == "bare" and not a.args:
@@ -1267,7 +1413,8 @@ def main(argv=None):
                " ".join(f"{v:.3f}" for v in i.box)] for i in cut(its)],
              [dict(kind=i.kind, object=i.name, layers=sorted(i.layers), box=i.box) for i in its], more(its))
     elif q == "nearest":
-        rows = G.nearest(G.select(a.args[0], a.layer), a.layer, a.within, ignore, not a.no_pours)
+        rows = G.nearest(G.select(a.args[0], a.layer), a.layer, a.within, ignore, not a.no_pours,
+                         ("plan-track", "plan-via") if a.plan_only else None)
         emit(a, ["gap", "own", "foreign", "on", "at"],
              [[r["gap"], r["own"].name, r["other"].name, ",".join(r["layers"]), fmt_pt(r["at"])] for r in cut(rows)],
              rows, more(rows) or ("" if rows else f"nothing foreign nearer than {a.within:g} mm" if a.within is not None
@@ -1486,6 +1633,30 @@ def main(argv=None):
               [[f"{short(r['via']['net'])} {fmt_pt(r['via']['at'])}", r["flashed"], r["span"]] for r in cut(keep)])
         if more(keep):
             print(more(keep))
+    elif q == "lanes":
+        r = G.lanes(a.args[0], [x for x in a.power.split(",") if x], a.track, a.clear, a.rings, a.reach)
+        shut = [b for b in r["balls"] if not b["exit"]]
+        part = [b for b in r["balls"] if b["exit"] and not all(ln["free"] for ln in b["lanes"])]
+        if a.json:
+            print(json.dumps(dict({k: v for k, v in r.items() if k != "balls"}, balls=[dict(
+                b, lanes=[dict(ln, by=ln["by"].name if ln["by"] else None) for ln in b["lanes"]]) for b in r["balls"]]), indent=1))
+            return 0
+        print(f"{a.args[0]}: {r['cols']} x {r['rows']} lattice, pitch {r['pitch']:g} mm, lands on {r['layer']}; a {r['track']:g} mm "
+              f"track at {r['clear']:g} mm, each lane to " + (f"{a.reach:g} mm past the outer lands or " if a.reach is not None else "")
+              + f"the courtyard line, the nearer ({', '.join(f'{v:g}' for v in r['end'])})")
+        print(f"{len(r['balls'])} signal ball(s) in rings 1-{a.rings}: {len(r['balls']) - len(shut)} with a free lane, "
+              f"{len(shut)} with none" + (f"; {len(part)} more with a lane blocked (--all lists them)" if part and not a.all else ""))
+        rows = []
+        for b in shut + (part if a.all else []):
+            for ln in b["lanes"]:
+                if ln["free"]:
+                    continue
+                along = f"x {ln['a'][0]:.3f}" if ln["side"] in ("-y", "+y") else f"y {ln['a'][1]:.3f}"
+                rows.append([b["ball"], short(b["net"]), b["ring"], "none" if not b["exit"] else "another",
+                             f"{ln['side']} at {along}", f"{ln['gap']:.4f}", ln["by"].name if ln["by"] else ""])
+        table(["ball", "net", "ring", "free lane", "lane", "gap", "blocked by"], cut(rows))
+        if more(rows):
+            print(more(rows))
     return 0
 
 
