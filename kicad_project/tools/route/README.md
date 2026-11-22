@@ -1454,6 +1454,37 @@ copper.
   quadrants (a higher `priority` over the neighbour where they overlap), not a
   track into the pad (board2 R4: J3 pin 2 between the +5V and VBUS pours).
 
+## `pourneck.py` — the narrowest copper a pour's current crosses (min cut)
+
+    tools/kpy tools/route/pourneck.py --board board1 --net VDD_ARM --layer In4.Cu \
+        --from '34.73,8.35;34.73,9.50' --to 22.5,15.0,35.5,28.0 --amps 2.2 --rise 10 --copper-um 35 [--raster 0.025] [--json]
+    tools/.venv/bin/python tools/route/pourneck.py --selftest
+
+`pour.py --section` cuts straight across a pour's long axis; a pour bent round vias, antipads
+and another rail's fill has its narrowest cut on a curve no straight line finds. `pourneck.py`
+refills in memory (the board loaded WITH its project files), rasterises ONE net's copper on ONE
+layer (fill, tracks, via pads, pads), ties the `--from` items (`x,y` a via or pad there, or
+`REF[.PIN]`) to a source and the copper in `--to` (a box, or `REF`'s courtyard) to a sink, and
+runs a max-flow / min-cut (scipy, in `tools/.venv`; the board side in KiCad's interpreter, which
+has no numpy -- it starts the flow itself; `--geom` re-runs only the flow). It prints the least
+total width, each cut piece with its box, the width the current needs (IPC-2221 internal,
+`--rise` and `--copper-um` are the board's numbers, never defaults) and `POURNECK PASS|FAIL`
+(exit 0 / 1, 2 bad input). A via is its pad on the layer: a feed via's pad is source, so its
+barrel is never a neck, but the ring of copper round it is judged. Other layers' same-net copper
+is not modelled.
+- **The raw raster cut reads low, and the tool corrects it.** 8-neighbour edges weighted
+  (sqrt2 - 1) and (1 - 1/sqrt2) x raster make a straight cut cost its length at 0 and 45
+  degrees, but where a piece meets the copper's edge the graph lacks one diagonal: 0.29 x raster
+  per END of a piece (none for a closed ring round a via). board1 RV64's first figures were the
+  raw raster (VDD_ARM 1.11, VDD_GPU_VPU_DRAM 2.1); corrected (rev 150) 1.21 / 2.38; this tool
+  1.22 / 2.38 at 0.05 mm (raw 1.17 / 2.26), 1.23 / 2.33 at 0.025. `--selftest` holds a 3 mm
+  strip, a 1.1 mm bridge and a 45-degree strip within 0.03 mm at both rasters. The printout shows
+  raw and corrected per piece.
+- **As a review finding's check**: `pour neck | NET LAYER: from (x, y), (x, y) to (x0, y0)-(x1, y1),
+  2.2 A, 10 K, 35 um` (feeds may be `REF` / `REF.PIN`, the load `REF`; `, raster 0.025 mm`
+  optional), in `checks.py`, so `route.py audit --findings` and a guide row run it (zones refilled
+  once a run; about 10 s a rail on board1). board1 r b949b628: ARM and GPU FAIL, SOC and DRAM PASS.
+
 ## `stitch.py` — stitching vias and GND pad drops, as a plan
 
     tools/kpy tools/route/stitch.py --board board2 --plan routing/R6_pours.json --net GND --pitch 5 --merge --out routing/R6_gnd.json

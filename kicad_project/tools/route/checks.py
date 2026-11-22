@@ -23,6 +23,14 @@ carries (`handoff/findings.json`, `route.py audit --findings`):
                                                      on that layer) is no longer than this |
   | distance      | C12.1 to U1.A5 <= 1.27 mm     | two named objects, `REF.PAD` or `REF` (its nearest
                                                      pad), centre to centre; `<=` or `>=` |
+  | pour neck     | VDD_ARM In4.Cu: from (34.73, 8.35), (34.73, 9.50) to (22.5, 15.0)-(35.5, 28.0),
+                    2.2 A, 10 K, 35 um            | the least copper width across any cut of the net's
+                                                     copper on the layer between the feeds (`(x, y)` a
+                                                     via or pad there, or `REF` / `REF.PIN`) and the load
+                                                     (a box, or `REF`: its courtyard) carries the current
+                                                     by IPC-2221 internal at that rise and copper
+                                                     (`pourneck.py`, a min cut on the refilled fill;
+                                                     `, raster 0.025 mm` to set it) |
 
 Everything here is plain geometry on lists (`geometry(B)` reads them from the board once), so
 `tests/test_findings.py` drives it without KiCad.  An inner-layer pair rule on padded vias is
@@ -32,9 +40,9 @@ import math
 import re
 from collections import defaultdict
 
-RULES = ("cap reach", "layers apart", "stitch via", "neck length", "distance")
+RULES = ("cap reach", "layers apart", "stitch via", "neck length", "distance", "pour neck")
 KEYS = {"cap reach": "cap_reach", "layers apart": "layers_apart", "stitch via": "stitch",
-        "neck length": "neck", "distance": "distance"}
+        "neck length": "neck", "distance": "distance", "pour neck": "pour_neck"}
 EPS = 1e-6
 
 
@@ -84,6 +92,26 @@ def parse(rule, val, s, G):
         if not m:
             raise RuleError("'distance' takes 'C12.1 to U1.A5 <= 1.27 mm' (REF.PAD or REF; <= or >=)")
         G.setdefault("distance", []).append(dict(s, a=m.group(1), b=m.group(2), op=m.group(3), mm=float(m.group(4))))
+    elif rule == "pour neck":
+        num = r"(-?\d+(?:\.\d+)?)"
+        pt = r"\(\s*" + num + r"\s*,\s*" + num + r"\s*\)"
+        m = re.fullmatch(r"\s*(\S+)\s+(\S+)\s*:\s*from\s+(.+?)\s+to\s+(" + pt + r"\s*-\s*" + pt
+                         + r"|[A-Za-z]+\d+)\s*,\s*" + num + r"\s*A\s*,\s*" + num + r"\s*K\s*,\s*" + num
+                         + r"\s*um\s*(?:,\s*raster\s+" + num + r"\s*mm\s*)?", val)
+        feeds = []
+        if m:
+            rest = m.group(3)
+            for tok in re.finditer(pt + r"|([A-Za-z]+\d+(?:\.[A-Za-z0-9]+)?)", rest):
+                feeds.append(f"{tok.group(1)},{tok.group(2)}" if tok.group(1) else tok.group(3))
+            left = re.sub(pt + r"|[A-Za-z]+\d+(?:\.[A-Za-z0-9]+)?|[\s,]", "", rest)
+        if not m or not feeds or left:
+            raise RuleError("'pour neck' takes 'NET LAYER: from (x, y), (x, y) | REF[.PIN], ... to (x0, y0)-(x1, y1) "
+                            "| REF, 2.2 A, 10 K, 35 um' (', raster 0.025 mm' optional)")
+        to = (f"{m.group(5)},{m.group(6)},{m.group(7)},{m.group(8)}" if m.group(5) else m.group(4).strip())
+        G.setdefault("pour_neck", []).append(dict(s, net=m.group(1), layer=m.group(2), feeds=feeds, to=to,
+                                                  amps=float(m.group(9)), rise=float(m.group(10)),
+                                                  copper_um=float(m.group(11)),
+                                                  raster=float(m.group(12)) if m.group(12) else 0.05))
     else:
         raise RuleError(f"not a check rule: {rule!r}")
 
@@ -111,7 +139,7 @@ def geometry(B):
             tracks.append((t.GetNetname(), pn.LayerName(t.GetLayer()) if hasattr(pn, "LayerName") else B.b.GetLayerName(t.GetLayer()),
                            (mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y)),
                            mm(t.GetWidth())))
-    return {"pads": pads, "vias": vias, "tracks": tracks}
+    return {"pads": pads, "vias": vias, "tracks": tracks, "board": B}
 
 
 # -- the rules, each -> [site line] ----------------------------------------------------------
@@ -275,6 +303,33 @@ def distance(geo, rule):
     return [] if ok else [f"{rule['a']} to {rule['b']}: {d:.3f} mm, not {rule['op']} {rule['mm']} mm"]
 
 
+def pour_neck(geo, rule):
+    """tools/route/pourneck.py on the loaded board (zones refilled in memory, once per run): the
+    flow in tools/.venv.  Without a board (a geometry built by hand) the rule cannot be judged."""
+    B = geo.get("board")
+    if B is None:
+        return ["pour neck needs the board itself (geometry(B)); a hand-built geometry cannot judge it"]
+    import pourneck as PN
+    from types import SimpleNamespace
+    a = SimpleNamespace(net=rule["net"], layer=rule["layer"], sfrom=";".join(rule["feeds"]), sto=rule["to"],
+                        balls=None)
+    refill = not geo.get("_refilled")
+    try:
+        g = PN.geom_of(B, a, refill=refill)
+    except PN.Fail as e:
+        return [f"{rule['net']} {rule['layer']}: {e}"]
+    geo["_refilled"] = True
+    out, rc = PN.measure(g, rule["raster"], rule["amps"], rule["rise"], rule["copper_um"])
+    if rc == 2 or "verdict" not in out:
+        return [f"{rule['net']} {rule['layer']}: {out.get('error', 'no result')}"]
+    if out["verdict"] == "PASS":
+        return []
+    where = "; ".join(f"{p['width_mm']:.2f} mm at x {p['x'][0]:.2f}-{p['x'][1]:.2f} y {p['y'][0]:.2f}-{p['y'][1]:.2f}"
+                      for p in out["pieces"])
+    return [f"{rule['net']} {rule['layer']}: least cut {out['width_mm']:.3f} mm, {rule['amps']:g} A needs "
+            f"{out['need_mm']:.3f} mm -- {where}"]
+
+
 # -- run ------------------------------------------------------------------------------------
 
 def run(G, geo, classes_of=None, full_width=None):
@@ -289,7 +344,8 @@ def run(G, geo, classes_of=None, full_width=None):
                      "layers_apart": lambda: layers_apart(geo, rule),
                      "stitch": lambda: stitch(geo, rule, classes_of),
                      "neck": lambda: neck(geo, rule, classes_of, full_width),
-                     "distance": lambda: distance(geo, rule)}[key]()
+                     "distance": lambda: distance(geo, rule),
+                     "pour_neck": lambda: pour_neck(geo, rule)}[key]()
             out.append((name, key, rule, sites))
     return out
 
@@ -305,6 +361,8 @@ def label(key, rule):
         return f"{rule['class']}: {rule['net']} within {rule['within']} mm"
     if key == "neck":
         return (f"{rule['class']}: " if rule.get("class") else "") + f"{rule['max']} mm"
+    if key == "pour_neck":
+        return f"{rule['net']} {rule['layer']}: {rule['amps']:g} A across every cut"
     return f"{rule['a']} to {rule['b']} {rule['op']} {rule['mm']} mm"
 
 
