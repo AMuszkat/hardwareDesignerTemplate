@@ -17,8 +17,11 @@
           KiCad's own DRC (schematic parity on).  Any violation not already in
           the baseline fails the plan.  Then every rule of the board's
           general_routing_guide.md that DRC cannot express, every pour's
-          island count (a pour the plan splits fails) and every pour island
-          holding a pad or via cut off from its net (pournet).  Read-only.
+          island count (a pour the plan splits fails), every pour island
+          holding a pad or via cut off from its net (pournet), and every
+          breach of the class clearance by copper running out of an area a
+          .kicad_dru rule relaxes (areaclear.py: DRC judges such a segment
+          by the area's number over its whole length).  Read-only.
   apply   check, then write to the real board (KiCad closed, backup first),
           read back, and record every UUID in <board>/routing/<group>.applied.json
           so the group can be ripped out again.
@@ -29,7 +32,7 @@
           minimum (the guide's "copper to edge", else Board Setup's).
   audit   every rule of the guide on the copper already laid: DRC, angles,
           edge, copper shape, via links, ground beside, non-functional pads,
-          pour islands, pournet.  One PASS/FAIL line each; exit 1 on a failure.  The
+          area clear (areaclear.py), pour islands, pournet.  One PASS/FAIL line each; exit 1 on a failure.  The
           group report quotes it.
   rules   print the rules the guide's table switches on, each with its source.
 
@@ -110,6 +113,7 @@ import guide                                                # noqa: E402
 import exitlane as EL                                       # noqa: E402
 import checks as CK                                         # noqa: E402  (tools/route: the findings' rules, measured)
 import origin                                               # noqa: E402  (tools/route: a plan's origin record)
+import areaclear as AC                                      # noqa: E402  (tools/route: clearance past a relaxed area)
 import drccache                                             # noqa: E402  (tools/place)
 
 
@@ -1170,6 +1174,16 @@ def cmd_check(a, quiet=False, gate=True):
         ocs = (open_conn(str(Path(B.pcb).resolve())), open_conn(S.b))
         copper_notes, cbad = copper_gates(B, S)
         bad += cbad
+        # copper that runs out of a relaxed DRC area: KiCad holds a segment that touches the area to the
+        # area's number over its whole length, past the edge too (board1 R3ab: 0.1035 past U1_FIRST_MM)
+        ac0, ac_info = AC.run(B)
+        if ac_info.get("names"):
+            ac1, _ = AC.run(S)
+            k0 = {AC.key(r) for r in ac0}
+            ac_new = [r for r in ac1 if AC.key(r) not in k0]
+            copper_notes.append(f"area clear: {len(ac0)} breach(es) past {', '.join(ac_info['names'])} before, "
+                                f"{len(ac1)} with this plan ({len(ac_new)} new) (areaclear.py)")
+            bad += ["area clear: " + AC.text(r) for r in ac_new]
         nfp = nfp_rule(B)
         if nfp:
             # a via this plan leaves inside a named courtyard with its unconnected inner pads: one it
@@ -1654,6 +1668,13 @@ def cmd_audit(a):
             gate(name, not sites, f"{CK.label(key, rule)}: " + (f"{len(sites)} site(s): " + "; ".join(sites[:4])
                                                                  + (" ..." if len(sites) > 4 else "") if sites else "holds")
                  + f" ({rule['source']})")
+    ac, ac_info = AC.run(B)
+    if ac_info.get("names"):
+        gate("area clear", not ac, f"{len(ac)} breach(es) of the class clearance past {', '.join(ac_info['names'])}"
+             + (": " + "; ".join(AC.text(r) for r in ac[:4]) + (" ..." if len(ac) > 4 else "") if ac else "")
+             + " -- a segment that touches a relaxed area is held to its number past the edge too (areaclear.py)")
+    else:
+        print(f"  {'area clear':13s} ----  not run: the .kicad_dru relaxes clearance over no rule area on this board")
     nfp = nfp_rule(B)
     if nfp:
         lack = nfp_lacking(B, nfp)

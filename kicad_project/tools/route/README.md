@@ -176,6 +176,24 @@ piece of copper — that pad's net. A GND stub landed on a +3V3 pad is saved as
 net with what was written; a difference is reported as `RULE short:` and fails
 the plan (`apply` restores the board).
 
+⚠ **A rule that relaxes clearance over an area relaxes the whole SEGMENT that touches it**
+(`areaclear.py`; `check`'s `RULE area clear:`, `audit`'s `area clear` row). KiCad judges
+`A.intersectsArea('X') && B.intersectsArea('X')` per item: a track that starts inside the area
+and runs on past its edge is held to the area's number over its whole length, and the handoff's
+"past it every class clearance holds" goes untested -- board1 R3ab: two 45-degree DSI lines 0.1035
+apart ran past U1_FIRST_MM's edge, where their class needs 0.2032, and DRC passed them. Breaking
+the track at the edge does not help either: the outer segment's round cap still reaches into the
+area. `areaclear.py` reads every such rule from the `.kicad_dru`, clips each track at the area's
+outline and measures every piece outside it against every other net's copper on the layer
+(tracks, flashed vias and pads, pour fills, whole) at the stricter class clearance (Board Setup's
+floor under it; a coupled pair or a pair a rule names by `NetName` at the pair rules' number).
+So a line must stand at its class spacing where it crosses the edge: the opening is done inside
+the area. A breach whose other copper lies inside the area is printed `-- to its copper at (x, y)
+inside the area` (board1 R3abB2: CSI_D1_N's jog cornered 0.12 mm inside the edge, 0.1716 from
+CSI_D0_P at the edge). A point inside another relaxed region (another such area, a courtyard a
+clearance rule names) is that region's. Proof: `python3 tools/route/test_areaclear.py` (a 45-degree
+breach, a pair broken and opened at the edge, a pair broken and not opened, pairs, a via and a pad).
+
 That indirection is the whole point. A hand-written clearance test that uses
 *the track's own* net class misses that KiCad enforces the **stricter of the two
 nets'** clearances — a Default track beside a Power pad needs the Power
