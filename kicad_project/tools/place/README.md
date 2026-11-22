@@ -91,6 +91,13 @@ that involves a moved part:
   only;
 - **keep-outs**, per side, with the zone's `allow` list.
 
+**A move that lands on copper a route plan is about to rip reads as a short.** `check` judges the
+moved pads against the board as it is, old links included: a capacitor moved onto its old GND link
+is a COPPER failure that the re-link would have removed. Split the route plan: its rips (and the
+vias they free) as their own plan, checked and applied first, then `check` / `apply` the moves,
+then the new copper -- three stages, applied in that order (board1 RV61_u1gap and RV61_links,
+both hit it the same day).
+
 It then prints the net span (MST of pad positions) before → after for every net
 the plan touches, and each group's extent. Exit 1 on a failure. To audit a
 whole board, write every placed part at its current position into a plan and
