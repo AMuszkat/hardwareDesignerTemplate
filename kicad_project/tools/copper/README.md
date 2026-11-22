@@ -59,7 +59,7 @@ than judging them once the scans were cached (measured: 58 s → 65 s forked).
 | `via to pad gap`, `45-degree via link` | `vialink`, `viafix`, `vianeed`, `entryfix` (a moved via keeps the gap) |
 | `copper to edge` | the fixers' edge margin |
 | `copper shape` | `route.py check` and `audit` run `shape` |
-| `via field`, `bga field` (a BGA) | its courtyard is skipped by `shape`, `fastside`; nothing inside it is pushed. `vialink` lifts there only the BGA's OWN balls: their links, and the gap of a via linked to one (or in one); every other part's link to a via inside it is judged as anywhere |
+| `via field`, `bga field` (a BGA) | its courtyard is skipped by `shape`, `fastside`; nothing inside it is pushed. `vialink` lifts there only the BGA's OWN balls: their links, and the gap of a via linked to one (or in one); every other part's link to a via inside it is judged as anywhere. A ball's own link (its escape) is lifted wherever its via lands; that via's gap outside the courtyard is judged as anywhere |
 | `ground beside` | `fastside`, and `audit` |
 | `frozen` | copper `viafix --push` never moves |
 | `thermals`, `thermal pad` | `thermals.py` |
@@ -131,6 +131,18 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   capacitor link under U1 fails `route.py check` with `RULE vialink`; across the board's 150
   backups the audit only ADDS sites, each inside a field or to a via in another pad
   (`board1_module/tmpWork/vialink_field/`).
+- **A ball's escape is lifted wherever its via lands; the courtyard lifts only the gap.** After
+  the courtyard fix above, a ball's link was lifted only when its via stood INSIDE the courtyard,
+  so a ring-2 ball's mandatory bent escape (leave between two ring-1 lands, turn 45 to its lane,
+  change layer at a pair via outside the ball field) to a via just past the courtyard edge read
+  as `via-angle` and failed `route.py check` (board1 R3ab_c: CSI_D0_P from U1.B14 to a via 0.25
+  mm below the courtyard). Now a link to a `bga field` / `via field` part's own pad is never
+  judged, wherever its via lies (skipped as "escape link of a field's ball, via outside its
+  courtyard"); the via's gap to every pad, the BGA's balls included, is still judged outside the
+  courtyard, and every other part's link stays judged as before. Prove it: the escape plan passes
+  `route.py check`; the board's own audit is unchanged (21 sites); a capacitor linked off-axis to
+  a via outside every courtyard still fails; across 150 backups the audit only REMOVES ball-link
+  sites whose via is outside that ball's courtyard (`board1_module/tmpWork/vialink_escape/`).
 - `shape.py` exempts a BGA field's courtyard by where a piece's CENTRE falls.
   A short escape that only just leaves the field (a via on a site outside the
   ball array, 0.3 mm from the edge, its track 0.3 mm past it) is one thin

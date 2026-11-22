@@ -22,7 +22,12 @@ a BGA's dog-bones and site vias) only the BGA's OWN balls are lifted: a via
 there is not judged against that part's pads (gap or link), and every other
 part's link to it -- a capacitor's, a resistor's under the BGA -- is judged
 exactly as anywhere (board1 RV61: 14 such links under U300 passed while the
-whole courtyard was skipped); such a site carries "field": REF.  Not judged
+whole courtyard was skipped); such a site carries "field": REF.  A field
+part's OWN ball's link is its escape and is lifted wherever its via lands
+(10_layout #39 (2): a ring-2 ball leaves between two ring-1 lands and turns 45
+to its lane, to a via outside the ball field -- just outside the courtyard
+too; board1 R3ab_c); that via's GAP outside the courtyard is judged as
+anywhere, against every pad.  Not judged
 either: a via whose centre lies in a pad of its own net (via-in-pad: no link
 to judge), links to a `via field` part's pads, and vias with no link to a pad
 unless they touch one.  A link is the chain of segments from a via to a pad through plain
@@ -205,8 +210,10 @@ def judge_link(name, p, lid, chain, via_end, vp):
 
 def audit(b, GAP=0.15, EXC=(), fields=(), field_refs=()):
     """(sites, stats).  fields: [(ref, courtyard box nm)] -- a via inside one is not judged against
-    that part's own pads; field_refs: parts whose pads' links are never judged."""
+    that part's own pads; a link to a field part's own pad (its ball's escape) is never judged,
+    wherever the via lies; field_refs: parts whose pads' links are never judged."""
     segs, pads = tables(b); sites, skipped = [], collections.Counter(); nvia = nlink = 0
+    balls_of = tuple(f[0] + '.' for f in fields if len(f) == 2 and f[0])   # every field part's own pads
     def exc_of(vp):
         return next((e for e in EXC if abs(e['via'][0] - mm(vp[0])) < 0.01 and abs(e['via'][1] - mm(vp[1])) < 0.01), None)
     def site(kind, v, pname, lid, at, **kw):
@@ -242,6 +249,7 @@ def audit(b, GAP=0.15, EXC=(), fields=(), field_refs=()):
                 if name in host: continue                        # the pad the via sits in
                 if any(name.startswith(r + '.') for r in field_refs): skipped['link to a via-field part'] += 1; continue
                 if mine(name): skipped["link to its field's own ball"] += 1; continue
+                if name.startswith(balls_of): skipped["escape link of a field's ball, via outside its courtyard"] += 1; continue
                 nlink += 1; j = judge_link(name, p, lid, chain, via_end, vp)
                 if j is None: continue
                 if j[0] == 'skip': skipped['pad not axis-aligned'] += 1; continue
