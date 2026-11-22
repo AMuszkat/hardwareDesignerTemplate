@@ -51,6 +51,10 @@ from pathlib import Path
 
 MARGIN = 3.0
 CELL = 8                       # points (~2.8 mm) per comparison cell
+NOISE = 16                     # grey levels a pixel may move and stay "the same": the rasteriser's
+                               # anti-aliasing jitters by 1-2 levels between two runs on identical
+                               # drawings (board1 RV66: 4-7 "changed" regions on 3 pages whose
+                               # 300-dpi tiles were byte-identical); a drawn line moves it by 60+
 PT = 72 / 25.4
 
 
@@ -193,20 +197,21 @@ def read_pgm(p):
     return (int(m[1]), int(m[2]), data[m.end():]) if m else None
 
 
-def changed_cells(a, b):
-    """Cells (i, j) whose pixels differ; None when the page size differs."""
+def changed_cells(a, b, noise=None):
+    """Cells (i, j) whose pixels differ by more than `noise` grey levels (NOISE); None when the page size differs."""
     if a[0] != b[0] or a[1] != b[1]:
         return None
     w, h, pa, pb = a[0], a[1], a[2], b[2]
     if pa == pb:
         return set()
+    tol = NOISE if noise is None else noise
     cells = set()
     for y in range(h):
         ra, rb = pa[y * w:(y + 1) * w], pb[y * w:(y + 1) * w]
         if ra == rb:
             continue
         for x in range(w):
-            if ra[x] != rb[x]:
+            if abs(ra[x] - rb[x]) > tol:
                 cells.add((x // CELL, y // CELL))
     return cells
 

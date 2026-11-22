@@ -131,6 +131,16 @@ def by_hand():
     if (T["followed"], [t["uuid"] for t in T["moved"]]) != (1, ["r"]):
         bad.append(f"by hand: a turned part's texts: followed {T['followed']}, moved {[t['uuid'] for t in T['moved']]}"
                    ", expected 1 and ['r']")
+    # the page compare: a pixel 1 grey level off is the rasteriser, a drawn line is a change
+    img = lambda v: (16, 16, bytes([200] * 255 + [v]))
+    if changes.changed_cells(img(200), img(201)) != set() or changes.changed_cells(img(200), img(120)) != {(1, 1)}:
+        bad.append("by hand: changed_cells -- 1 grey level must be no change, 80 levels one changed cell")
+    sys.path.insert(0, str(ROOT / "tools" / "review"))
+    import snapshot
+    refs = {"U500", "J1", "U1"}
+    if [snapshot.part_ref(w, refs) for w in ("U500A", "U500", "U1B", "J1", "J1AB", "AB", "U5")] != \
+            ["U500", "U500", "U1", "J1", None, None, None]:
+        bad.append("by hand: part_ref -- a unit letter after a ref names the ref; nothing else does")
     again = changes.diff(new, dict(new, shapes=[shape("s2")]))
     if changes.one_line(again) != "nothing changed":
         bad.append(f"by hand: the same polygon under another UUID: {changes.one_line(again)}")

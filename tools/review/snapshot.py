@@ -318,10 +318,22 @@ def pdf_words(pdf):
             for i, p in enumerate(t.split("<page ")[1:], 1)}
 
 
+def part_ref(word, refs):
+    """The ref a drawn word names, or None: `U500` itself, or a unit of it (`U500A`, `U1B`) -- a
+    multi-unit symbol draws its unit letter after the ref, so U500 was never found by its own name."""
+    if word in refs:
+        return word
+    if len(word) > 1 and word[-1].isalpha() and word[:-1] in refs and word[-2].isdigit():
+        return word[:-1]
+    return None
+
+
 def pictures(out_dir, what, sources, dpi, parts, crop, scope=None):
     """sources: [(name, pdf, page, title)]. Every page as tiles in out_dir/tiles/, with
     out_dir/tiles.md (which parts each tile shows) and out_dir/words.csv (every text, where
-    it is, which tiles show it). `scope`: a box in points the tiles stay inside.
+    it is, which tiles show it). `scope`: a box in points the tiles stay inside. `parts`: the refs,
+    or {source name: refs placed on that page} -- a page's texts that merely spell another
+    page's ref (a BGA's ball names J1, R2, Y1 beside the memory) are not its parts.
     Returns (number of tiles, {source name: [(tile name, box in points)]})."""
     tdir = out_dir / "tiles"
     tdir.mkdir(parents=True, exist_ok=True)
@@ -344,9 +356,10 @@ def pictures(out_dir, what, sources, dpi, parts, crop, scope=None):
         L += [f"## {name} — {title}", "",
               f"{size[0] * mm:.0f} × {size[1] * mm:.0f} mm page, {len(made)} tiles.", "",
               "| tile | x mm | y mm | texts | parts on it |", "|---|---|---|---|---|"]
+        mine = parts.get(name, set()) if isinstance(parts, dict) else parts
         for n, (a, b, c, d) in made:
             inside = [w for x, y, w in ws if a <= x <= c and b <= y <= d]
-            on = sorted({w for w in inside if w in parts}, key=natural)
+            on = sorted({part_ref(w, mine) for w in inside} - {None}, key=natural)
             L.append(f"| tiles/{n}.png | {a * mm:.0f}–{c * mm:.0f} | {b * mm:.0f}–{d * mm:.0f} | "
                      f"{len(inside)} | {', '.join(on)} |")
         L.append("")
@@ -460,11 +473,18 @@ def reader(run, out, kind, scope=None):
         title = {int(s.get("number")): f"{s.get('name')} ({s.findtext('title_block/source')})"
                  for s in (root.iter("sheet") if root is not None else [])}
         pages = [(f"p{i}", pdf, i, title.get(i, "")) for i in range(1, len(pdf_pages(pdf)) + 1)]
+        # which refs are placed on each page: by the sheet file each unit sits on (a sheet used twice
+        # gets both pages' refs, which over-reports, never misses)
+        src = {int(s.get("number")): Path(s.findtext("title_block/source") or "").name
+               for s in (root.iter("sheet") if root is not None else [])}
+        units = unit_sheets(out)
+        on_page = {f"p{i}": {r for (r, _u), f in units.items() if f == src.get(i)} & refs for i in src}
+        page_parts = on_page if any(on_page.values()) else refs
         srcs += [(n_, f_, p_) for n_, f_, p_, _t in pages]
         if kind == "pcb" and sbox:
             run.skip("sheet-tiles", f"a PCB review scoped to {label}: the sheets are whole in sheets/sheet-N.png")
         else:
-            n, by = pictures(out / "sheets", "the schematic", pages, SHEET_DPI, refs, False)
+            n, by = pictures(out / "sheets", "the schematic", pages, SHEET_DPI, page_parts, False)
             tiles.update(by)
             run.rows.append(("sheet-tiles", "done", f"{n} tiles at {SHEET_DPI} dpi", "sheets/tiles.md"))
     views = [(v, out / "pcb" / f"{v}.pdf", 1, v) for v in ("top", "bottom", "inner")
