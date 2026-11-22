@@ -1736,6 +1736,13 @@ check, new DRC, rule failures, vias, track length -- and `<race>/race.json` hold
 One bus took three questions, four answers and a day with no copper; a measured week of it showed
 where the hours went. What would have saved them:
 
+- **A packing model of pair vias tests each pair against ITSELF.** Its candidates must keep each line
+  off its own pair's other via (the pair's own gap + via radius) and off its pair line, or every
+  "close" is a capacity no copper can take: board1's CSI pocket counted 5 of 5 OPTIMAL with a via
+  shape (0, 0.6) -- N's via straight behind P's along the approach -- and all 15 pairs then ran N
+  through P's via (-0.23 to -0.39 mm) and crossed P; every 4-of-5 row failed the same test. Before a
+  build worker is sent on a closing row, run the own-pair check on it (lines through own vias, P / N
+  crossing); keep only via shapes with the two vias side by side ACROSS the approach.
 - **Ask the cheap question before the joint run.** Before a joint model of every net (a 3-hour solve,
   a 21-order sweep), run the variant that drops the hard constraint -- no order, one candidate net
   admitted alone, one half of the bus -- which answers in seconds and names the bind: a 5-second
