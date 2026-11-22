@@ -30,6 +30,8 @@ cannot answer is written as a script in tmpWork/ and NAMED in the report's
     bare     REF [REF ...] [--net N,N]   the pads of a part that no copper of their net reaches (a ball with no stub, no via, no pour)
     unused-pads REF | X0,Y0,X1,Y1   the vias in a part's courtyard (or a rectangle): which drop their unconnected inner
                                  pads (KiCad's 'remove unconnected layers') and which keep a pad on every layer
+    links    REF [REF ...]       each pad's link to a via of its net: its pieces' angles to the pad's axes, its shape
+                                 (axis / 45 / axis+45 / bent / angle / via in pad), the start's offset from the pad's centre
     lanes    REF [--power P,P] [--rings 1|2] [--track W] [--clear C] [--reach MM]
                                  a BGA's outer signal balls' exit lanes on their own layer (ring 1 straight out, ring 2
                                  between two ring-1 lands) to the courtyard line, and what foreign copper stands in them
@@ -827,6 +829,87 @@ class Geometry:
                 rows.append(dict(pad=f"{it.src['ref']}.{it.src['num']}", net=it.net, at=tuple(it.src["at"][:2])))
         return rows
 
+    def links(self, refs):
+        """Each pad's link to a via of its net, on each layer the pad is on: [{pad, net, layer,
+        via, shape, angles, lengths, off}].  A link is a chain of tracks of the pad's net and
+        layer from a point inside the pad to a via's centre through plain joints (one track on
+        in, one out, no pad), at most 4 tracks and 3 mm; collinear tracks count as one piece.
+        angles: each piece's angle to the pad's axes (0 / 90 along one, 45 between them).
+        shape: 'axis' (one piece along an axis), '45' (one piece at 45), 'axis+45' (an axis piece,
+        then one at 45), 'bent' (anything else of 2+ pieces), 'angle' (one piece at another
+        angle); off: the first point's distance from the pad's centre (a link that does not
+        leave the centre).  A via whose centre lies in the pad is 'via in pad'.  `refs`: part
+        references or fnmatch patterns ('C3*')."""
+        pads = [it for it in self.items if it.kind == "pad" and it.net and not it.net.startswith("unconnected-")
+                and any(fnmatch.fnmatchcase(it.src["ref"], r) for r in refs)]
+        by = {}
+        for it in self.items:
+            if it.kind in ("track", "via", "pad"):
+                for L in it.layers:
+                    by.setdefault((it.net, L), []).append(it)
+
+        def inside(it, p):
+            return it.contains(p) or min(pt_seg(p, a, b)[0] for a, b in it.edges()) <= it.r + 1e-6
+
+        def at(p, q):
+            return math.hypot(p[0] - q[0], p[1] - q[1]) <= SNAP
+
+        rows = []
+        for pd in pads:
+            c, rot = tuple(pd.src["at"][:2]), (pd.src.get("rot") or 0.0)
+            for L in sorted(pd.layers):
+                pool = by.get((pd.net, L), [])
+                vias = [v for v in pool if v.kind == "via"]
+                for v in vias:
+                    if inside(pd, v.pts[0]):
+                        rows.append(dict(pad=f"{pd.src['ref']}.{pd.src['num']}", net=pd.net, layer=L, via=v.pts[0],
+                                         shape="via in pad", angles=[], lengths=[], off=0.0))
+                # a link starts at a track end in the pad, the ones at its centre first; a track
+                # wholly in the pad starts one only from the centre (a piece inside the land)
+                starts = sorted(((math.dist(t.pts[k], c), t, k) for t in pool if t.kind == "track" for k in (0, 1)
+                                 if inside(pd, t.pts[k])), key=lambda x: x[0])
+                used = set()
+                for d0, t, k in starts:
+                    if id(t) in used or (d0 > SNAP and inside(pd, t.pts[1 - k])):
+                        continue
+                    if True:
+                        chain, pts, p = [t], [t.pts[k], t.pts[1 - k]], t.pts[1 - k]
+                        n = math.dist(*t.pts)
+                        via = None
+                        while True:
+                            via = next((v for v in vias if at(v.pts[0], p)), None)
+                            if via or len(chain) >= 4 or n > 3.0:
+                                break
+                            on = [o for o in pool if o.kind == "track" and o not in chain and (at(o.pts[0], p) or at(o.pts[1], p))]
+                            if len(on) != 1 or any(o.kind == "pad" and o is not pd and inside(o, p) for o in pool):
+                                break
+                            o = on[0]
+                            q = o.pts[1] if at(o.pts[0], p) else o.pts[0]
+                            chain.append(o); pts.append(q); p = q; n += math.dist(*o.pts)
+                        if not via:
+                            continue
+                        used.update(id(x) for x in chain)
+                        pieces = []
+                        for a, b in zip(pts, pts[1:]):
+                            d = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+                            if pieces and abs((d - pieces[-1][0] + 180) % 360 - 180) < 0.05:
+                                pieces[-1][1] += math.dist(a, b)
+                            else:
+                                pieces.append([d, math.dist(a, b)])
+                        angs = [round(min((d - rot) % 90, 90 - (d - rot) % 90), 2) for d, _ in pieces]
+                        ax = [x < ANGLE_TOL for x in angs]
+                        d45 = [abs(x - 45) < ANGLE_TOL for x in angs]
+                        if len(pieces) == 1:
+                            shape = "axis" if ax[0] else "45" if d45[0] else "angle"
+                        elif len(pieces) == 2 and ax[0] and d45[1]:
+                            shape = "axis+45"
+                        else:
+                            shape = "bent"
+                        rows.append(dict(pad=f"{pd.src['ref']}.{pd.src['num']}", net=pd.net, layer=L, via=via.pts[0],
+                                         shape=shape, angles=angs, lengths=[round(x, 4) for _, x in pieces],
+                                         off=round(math.dist(pts[0], c), 4)))
+        return rows
+
     def unused_pads(self, box):
         """The vias whose centre lies in a rectangle (its edge included), each with what it does
         with its unconnected pads: [{via, drop, flashed, span}].  drop is the via's own property
@@ -871,7 +954,9 @@ class Geometry:
         board coordinates).  gap: the distance from the lane's centre line to the nearest FOREIGN
         object on that layer (another net, or none) found within `clear` of the track, less the
         object's radius and half a track of width `track` (0.0 when they touch or a foreign fill
-        holds the lane; None when nothing stands that near); FREE when gap is None or >= `clear`.  exit: the ball has a free lane.
+        holds the lane; None when nothing stands that near); FREE when gap is None or >= `clear`.
+        `unassigned`: the balls that have a free lane but cannot all leave at once, one track a
+        lane (assign_lanes).  exit: the ball has a free lane.
         `power`: fnmatch patterns for the nets whose balls leave by vias, matched against the
         full name and the last path component; a ball with no net, or KiCad's
         'unconnected-(...)', is not asked.  track / clear default to the board's rules
@@ -943,7 +1028,8 @@ class Geometry:
                     lanes.append(dict(side=side, offset=o, a=a, b=b, gap=g, by=by, free=g is None or g >= clear - 1e-9))
             balls.append(dict(ball=it.src["num"], net=net, ring=k + 1, at=(x, y), lanes=lanes,
                               exit=any(ln["free"] for ln in lanes)))
-        return dict(pitch=pitch, cols=ncol, rows=nrow, layer=layer, end=end, track=track, clear=clear, balls=balls)
+        return dict(pitch=pitch, cols=ncol, rows=nrow, layer=layer, end=end, track=track, clear=clear, balls=balls,
+                    unassigned=assign_lanes(balls)[1])
 
     def others_in_box(self, box):
         """What is in a rectangle besides copper: {parts, texts, zones}.  A part is in when its
@@ -1273,6 +1359,35 @@ class Geometry:
         return dict(at=at, layers=rows, hole=hole, edge=edge)
 
 
+def lane_key(ln):
+    """A lane's identity: two balls whose lanes share it compete for one track (two ring-2
+    balls either side of one gap between ring-1 lands)."""
+    return (ln["side"], round(ln["a"][0] if ln["side"] in ("-y", "+y") else ln["a"][1], 4))
+
+
+def assign_lanes(balls):
+    """Can every ball with a free lane leave AT ONCE, one track a lane?  A maximum bipartite
+    matching (augmenting paths) of balls to their free lanes' keys.  -> ({ball: key}, [the
+    balls left without one]).  A per-ball 'free lane' does not prove it: five ring-2 balls in
+    a row have six gaps, and two gaps blocked can leave one ball short while each still has
+    a free lane of its own."""
+    opts = {b["ball"]: [lane_key(ln) for ln in b["lanes"] if ln["free"]] for b in balls}
+    owner = {}
+
+    def take(ball, seen):
+        for k in opts[ball]:
+            if k in seen:
+                continue
+            seen.add(k)
+            if k not in owner or take(owner[k], seen):
+                owner[k] = ball
+                return True
+        return False
+
+    left = [b["ball"] for b in balls if opts[b["ball"]] and not take(b["ball"], set())]
+    return {v: k for k, v in owner.items()}, left
+
+
 def short(net):
     """A net name without its sheet path, for a table."""
     return (net or "").rsplit("/", 1)[-1] or "(no net)"
@@ -1328,7 +1443,7 @@ def main(argv=None):
     ap.add_argument("snapshot", help="a PCB snapshot folder (out/reviews/<board>/<id>-pcb) or a geometry.json")
     ap.add_argument("query", choices=["info", "show", "nearest", "gap", "label", "joints", "via-pad", "holes",
                                       "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box",
-                                      "bare", "unused-pads", "lanes"])
+                                      "bare", "unused-pads", "lanes", "links"])
     ap.add_argument("args", nargs="*", help="the query's SEL / NET / REF / box")
     ap.add_argument("--layer", help="one copper layer")
     ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest; "
@@ -1381,8 +1496,8 @@ def main(argv=None):
             "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1}
     if q in need and len(a.args) != need[q]:
         ap.error(f"{q} takes {need[q]} argument(s)")
-    if q == "bare" and not a.args:
-        ap.error("bare takes one or more part references")
+    if q in ("bare", "links") and not a.args:
+        ap.error(f"{q} takes one or more part references")
     if q == "lengths" and len(a.args) > 1:
         ap.error("lengths takes one net name or pattern, or none (every net)")
     if q == "stitch" and not a.to:
@@ -1604,6 +1719,23 @@ def main(argv=None):
         emit(a, ["pad", "net", "at"], [[r["pad"], short(r["net"]), fmt_pt(r["at"])] for r in cut(rows)], rows,
              (more(rows) + "\n" if more(rows) else "")
              + f"{len(rows)} pad(s) of {', '.join(a.args)}" + (f" on {a.net}" if a.net else "") + f" with a net and no track, via, shape or pour of it touching them")
+    elif q == "links":
+        rows = G.links(a.args)
+        # a link the board declared (<board>/routing/vialink_exceptions.json in the snapshot) is listed, not counted
+        exc = []
+        for f in Path(a.snapshot).glob("snap/*/routing/vialink_exceptions.json") if Path(a.snapshot).is_dir() else ():
+            exc += [e["via"] for e in json.loads(f.read_text())]
+        for r in rows:
+            r["declared"] = any(abs(e[0] - r["via"][0]) < 0.01 and abs(e[1] - r["via"][1]) < 0.01 for e in exc)
+        bad = [r for r in rows if (r["shape"] not in ("axis", "via in pad") or r["off"] > 0.005) and not r["declared"]]
+        show = rows if a.all else bad
+        emit(a, ["pad", "net", "layer", "via", "shape", "pieces (angle to the pad's axes / length)", "off centre"],
+             [[r["pad"], short(r["net"]), r["layer"], fmt_pt(r["via"]), r["shape"] + (" (declared)" if r["declared"] else ""),
+               ", ".join(f"{x:g} deg / {L:.3f}" for x, L in zip(r["angles"], r["lengths"])), f"{r['off']:.3f}"] for r in cut(show)],
+             show, (more(show) + "\n" if more(show) else "")
+             + f"{len(rows)} link(s) of {', '.join(a.args)}; {len(bad)} not one axis piece out of the pad's centre"
+             + (f", {sum(r['declared'] for r in rows)} more declared in the board's vialink_exceptions.json" if exc else "")
+             + ("" if a.all else " (listed; --all lists every link)"))
     elif q == "unused-pads":
         arg = a.args[0]
         part = next((p for p in d.get("parts", []) if p["ref"] == arg), None)
@@ -1646,6 +1778,9 @@ def main(argv=None):
               + f"the courtyard line, the nearer ({', '.join(f'{v:g}' for v in r['end'])})")
         print(f"{len(r['balls'])} signal ball(s) in rings 1-{a.rings}: {len(r['balls']) - len(shut)} with a free lane, "
               f"{len(shut)} with none" + (f"; {len(part)} more with a lane blocked (--all lists them)" if part and not a.all else ""))
+        un = r["unassigned"]
+        print(f"at once, one track a lane: " + ("every ball with a free lane leaves" if not un else
+              f"{len(un)} cannot -- the lanes they share are taken: {', '.join(un)}"))
         rows = []
         for b in shut + (part if a.all else []):
             for ln in b["lanes"]:

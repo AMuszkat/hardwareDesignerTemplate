@@ -216,6 +216,11 @@ def hand_board():
             tr("S", "B.Cu", (31, 0.25), (33, 0.25)),        # under P's edge: plan-view gap 0.05
             tr("U", "In9.Cu", (34.9, -2), (34.9, 2)),       # a third layer, crossing P too
             tr("X", "F.Cu", (33, 10), (33, 12)),            # 0.9 from the copper shape of net W
+            # links: C9's pads at x 90..102, 3 apart (holes over 1.6 apart), y 0, each 0.5 x 0.5
+            tr("LK1", "F.Cu", (90, 0), (90, -0.4)), tr("LK1", "F.Cu", (90, -0.4), (90, -1.0)),   # one axis piece of 1.0
+            tr("LK2", "F.Cu", (93, 0), (93, -0.3)), tr("LK2", "F.Cu", (93, -0.3), (93.5, -0.8)), # axis 0.3, then 45
+            tr("LK3", "F.Cu", (96, 0), (96.5, -1.0)),       # atan(0.5 / 1.0) = 26.565 deg off the y axis
+            tr("LK5", "F.Cu", (102.1, 0), (102.1, -1.0)),    # along an axis, 0.1 off the pad's centre
         ],
         shapes=[dict(uuid="s1", net="W", layer="F.Cu", kind="poly", box=[30, 10, 32, 12],
                      polys=[dict(outline=rect(31, 11, 2, 2), holes=[])])],
@@ -241,7 +246,10 @@ def hand_board():
                    flashed=["F.Cu", "B.Cu"], drop_unused=False),
               # 0.35 mm straight out of U9's ball A2 (80.5, 0), on its exit lane
               dict(uuid="v9", net="SH9", at=[80.5, -0.35], d=0.4, drill=0.2, type="through", layers=["F.Cu", "B.Cu"],
-                   flashed=["F.Cu", "B.Cu"])],
+                   flashed=["F.Cu", "B.Cu"])]
+             + [dict(uuid=f"vl{n}", net=f"LK{n}", at=list(at), d=0.4, drill=0.2, type="through", layers=["F.Cu", "B.Cu"],
+                     flashed=["F.Cu", "B.Cu"]) for n, at in ((1, (90, -1.0)), (2, (93.5, -0.8)), (3, (96.5, -1.0)),
+                                                             (4, (99, 0.1)), (5, (102.1, -1.0)))],
         pads=[
             pad("R1", "1", "B", (12, 1.0), rect(12, 1.0, 1.0, 0.5), 0.0),
             pad("R1", "2", "A", (12, -1.0), [[12, -1.0]], 0.4),
@@ -256,7 +264,7 @@ def hand_board():
             pad("P1", "1", "P", (30, 0), [[30, 0]], 0.3),
             pad("P2", "1", "P", (40, -3), [[40, -3]], 0.3, ("B.Cu",)),
             pad("P3", "1", "P", (45, 5), [[45, 5]], 0.3),
-        ] + [pad("U9", f"{'ABCD'[j]}{i + 1}", "GND" if (i, j) == (3, 3) else f"U9S{'ABCD'[j]}{i + 1}",
+        ] + [pad("C9", str(n), f"LK{n}", (x, 0), rect(x, 0, 0.5, 0.5), 0.0) for n, x in ((1, 90), (2, 93), (3, 96), (4, 99), (5, 102))] + [pad("U9", f"{'ABCD'[j]}{i + 1}", "GND" if (i, j) == (3, 3) else f"U9S{'ABCD'[j]}{i + 1}",
                  (80 + 0.5 * i, 0.5 * j), [[80 + 0.5 * i, 0.5 * j]], 0.1125) for j in range(4) for i in range(4)],
         zones=[dict(uuid="z-gnd", net="GND", name="", layers=["F.Cu"], priority=0, box=[0, 10, 10, 14],
                     outline=[dict(outline=rect(5, 12, 10, 4), holes=[])],
@@ -463,6 +471,31 @@ def hand_checks(geom, path, c):
          G.lanes("U9", ["GND*"], 0.0889, 0.0889, reach=0.05)["balls"][1]["lanes"][0]["gap"], 0.3 - 0.2 - 0.04445)
     c.eq("lanes: --reach 0.0: A2's lane is its centre, 0.35 from the via's: free (0.10555)",
          [b["ball"] for b in G.lanes("U9", ["GND*"], 0.0889, 0.0889, reach=0.0)["balls"] if not b["exit"]], [])
+    # lanes at once: the fixture's balls each have a lane of their own -> nobody left out
+    c.eq("lanes: at once on U9", L["unassigned"], [])
+    # assign_lanes by hand: X and Y want lane 1.0, Y also 1.5, Z only 1.5 -> one of them short, and it is Z
+    # (X keeps 1.0, Y takes 1.5); X [1.0, 1.5] and Y [1.0] -> X moves to 1.5, both leave
+    def ball(name, *keys):
+        return dict(ball=name, lanes=[dict(side="-y", a=(k, 0), free=f) for k, f in keys])
+    c.eq("lanes: three balls, two lanes", geom.assign_lanes([ball("X", (1.0, True)), ball("Y", (1.0, True), (1.5, True)),
+                                                             ball("Z", (1.5, True))])[1], ["Z"])
+    c.eq("lanes: an augmenting path moves X", geom.assign_lanes([ball("X", (1.0, True), (1.5, True)), ball("Y", (1.0, True))]),
+         ({"X": ("-y", 1.5), "Y": ("-y", 1.0)}, []))
+    c.eq("lanes: a blocked lane is no option", geom.assign_lanes([ball("X", (1.0, True)), ball("Y", (1.0, True), (1.5, False))])[1],
+         ["Y"])
+    # links: C9.1 one axis piece (two collinear tracks, 0.4 + 0.6); C9.2 axis 0.3 then 45 (0.5 * sqrt 2);
+    # C9.3 one piece 26.565 deg off the y axis (atan 0.5); C9.4 a via 0.1 inside its pad; C9.5 on the axis, 0.1 off centre
+    lk = {r["pad"]: r for r in G.links(["C9"])}
+    c.eq("links: every pad", sorted(lk), ["C9.1", "C9.2", "C9.3", "C9.4", "C9.5"])
+    c.eq("links: C9.1 axis, collinear tracks one piece", (lk["C9.1"]["shape"], lk["C9.1"]["angles"], lk["C9.1"]["lengths"],
+                                                          lk["C9.1"]["off"]), ("axis", [0.0], [1.0], 0.0))
+    c.eq("links: C9.2 axis+45", (lk["C9.2"]["shape"], lk["C9.2"]["angles"], lk["C9.2"]["lengths"]),
+         ("axis+45", [0.0, 45.0], [0.3, round(0.5 * math.sqrt(2), 4)]))
+    c.eq("links: C9.3 at an angle", (lk["C9.3"]["shape"], lk["C9.3"]["angles"]),
+         ("angle", [round(math.degrees(math.atan(0.5)), 2)]))
+    c.eq("links: C9.4 via in pad", (lk["C9.4"]["shape"], lk["C9.4"]["via"]), ("via in pad", (99, 0.1)))
+    c.eq("links: C9.5 off centre", (lk["C9.5"]["shape"], lk["C9.5"]["off"]), ("axis", 0.1))
+    c.eq("links: a pattern", len(G.links(["C*"])), 5)
     # --plan: a plan's track 0.35 below the via's centre, 0.1 wide: 0.35 - 0.2 - 0.05 from the via, counted alone;
     # the board's nearest to that via is A2's land, 0.35 - 0.2 - 0.1125
     P = geom.load(path)
