@@ -82,6 +82,19 @@ typed, else inside the board folder (`routing/R1.json`).
   prints the list as it was. To see what is already stranded: every via with no pad and no track in KiCad's
   connectivity and no pad of its net within the reach (board1 after D116: 14 of 36, the two and 12 GND vias older
   than the move).
+  **The trap: a moved pad that sat ON another pad's via.** A capacitor under a BGA stands on the GND balls' own
+  dog-bone vias; the peel took a via held by one track as a dead end, so moving the capacitor named the ball's via
+  (`stub of C10.2`) and left the ball's fan-out track to dangle (board1 RV59: 4 U1 GND ball vias and C37.2's via among
+  26 listed; the worker kept them by hand). The rule now: the peel takes a TRACK held at one end at most, a VIA only
+  when nothing holds it -- a via that copper still reaching a pad holds, or that stands on a pad's land, is that pad's
+  fan-out via and prints `kept: ... still reaches U1.AA21 through its track` (no rip, no decision). And a via the
+  board names as STITCHING -- the guide's `stitch via` row (a via of its net within the distance of a class via this
+  plan does not rip), or the group that laid it (its own `why` in the plan its `*.applied.json` names says stitch, or
+  the plan is `stitch.py`'s) -- prints `stitch -- decide by hand`, never a rip (board1: R3head's (19.95, 31.65), `#42 /
+  D74: the pairs' GND stitching`, had been ripped as `unlinked, beside C54.2`). Prove it: the pre-RV59fix copy with
+  `placement/RV59caps_place.json` lists exactly `routing/RV59caps.json`'s 20 ripvias, 5 kept, 1 stitching; the D116
+  controls (`tmpWork/RV59_orphans/s3_*`) are unchanged line for line; with that plan's `why` made neutral the stitching
+  via is ripped again (`tmpWork/orphans_ballvia/proofs.sh`).
 - **`padvias.py` -- vias IN a pad** (a regulator's output or input capacitor, an exposed pad): `--pads REF.PAD[:N],...`
   keeps N centres (or as many as fit) inside each pad, legal on every copper layer (the other nets' copper by the larger
   class clearance, holes by 14_fab's hole gaps, the via-to-pad gap from every OTHER pad), `--pitch` apart, spread from a
@@ -819,6 +832,10 @@ its docstring. What the spec has to be told:
   was applied to it; ripped by its manifest, the board back to its backup byte for byte).
   `place.board_dir_arg` now refuses such a path. Build copies in the session's scratchpad and file
   only their results (plans, logs, the rehearsed `r_final.kicad_pcb.scratch`) in `tmpWork/`.
+  That suffix keeps any tool from taking it for a board -- and keeps `pcbnew.LoadBoard` from
+  reading it: it returns `None`, and a comparison script dies on `'NoneType' object has no attribute
+  'GetFootprints'` (board1 RV59c63). To compare the real board with it after an apply, copy it into
+  a folder of its own as `<board>.kicad_pcb` first; a script that loads a board checks for `None`.
 - **A waypoint is a `"to_xy"` leg, never a `"to_path"` one**: the leg after a `to_path` leg starts
   at the path's FIRST point (`leg_xy`), not where the route met the path, so its copper and the
   waypoint's need not join. A net whose order the router keeps getting wrong (two nets crossed and
