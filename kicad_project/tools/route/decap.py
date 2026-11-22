@@ -82,10 +82,11 @@ def main():
     a.board = P.board_dir_arg(a.board)
     B = P.Board(a.board)
     mm = B.mm
-    VIA, DRILL, *_ = S.configure(B, a.via, a.clr, a.own, a.reach)
     sys.path.insert(0, str(ROOT / "tools" / "route"))
     import route as R
     RB = R.RBoard(a.board)
+    # the guide's via-link row: sites on the pad's axis first, 45 degrees as it allows, own-pad >= via/2 + gap
+    VIA, DRILL, *_ = S.configure(B, a.via, a.clr, a.own, a.reach, gates=RB.gates)
     LN = S.load_lanes(RB, a.lanes, a.no_lanes)   # a site that shuts a BGA ball's exit lane is skipped
     held = {}                                    # the lanes this plan's copper already stands in
     NFP = R.nfp_rule(RB)                         # prelayout.json "nfp_vias": a via in those courtyards
@@ -125,6 +126,8 @@ def main():
                 if not W_.via_ok(x, y, [r]):
                     P.die(f"{key}: the pinned via site ({x}, {y}) is not legal")
                 v = (S.rect_dist(x, y, *r), x, y)
+                if not S.on_axis(r, x, y):
+                    print(f"WARNING {key}: the pinned via site ({x}, {y}) is off the pad's axis -- vialink fails its link")
                 if LN:
                     k_ = LN.via_keys(x, y, info[k][1], VIA / 2)
                     sh = LN.shut(held, k_)
@@ -133,7 +136,10 @@ def main():
                         shut_by_hand += 1
                     LN.add(held, k_)
             else:
-                v = W_.nearest_via(r, rects, skip=[q for q in chosen if q], net=info[k][1], held=held)
+                v = W_.nearest_via(r, rects, skip=[q for q in chosen if q], net=info[k][1], held=held,
+                                   lw=width(info[k][1]))
+                if v is not None and v[3] == "45":
+                    print(f"NOTE {key}: no axis site; a 45-degree link to ({v[1]}, {v[2]}) (the guide's last resort)")
             if v is None:
                 P.die(f"{ref}.{info[k][0]}: no legal via site within {S.REACH} mm")
             chosen.append((v[1], v[2]))

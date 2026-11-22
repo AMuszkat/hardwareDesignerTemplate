@@ -296,6 +296,27 @@ it goes. It moves nothing.
   21.5, 0) ranked first with its VDD_ARM via at (22.088, 21.5), which `check` then refused for U1 P26; the
   two-via positions in U1's west corridor all shut a ball. Prove it both ways: a part far from any BGA prints
   the same as with `--no-lanes`, and a known lane-shutting site is named with its ball.
+- **Every via site is on its pad's axis, its link is clear, and a keep-out bars a position.** The guide's
+  via-link rule (one straight segment out of the pad's centre into the via's, along an axis; 45 degrees as
+  its "45-degree via link" row allows; never nearer a pad than its "via to pad gap") is what `route.py
+  check`'s vialink gate judges, so the candidates are the pad's four axis rays (0.01 mm steps from the pad's
+  box centre, vialink's `pad_frame`), then the four diagonals only when no axis site is legal (marked `[45]`,
+  ranked behind every all-axis position; none when the row says "never"). The own-pad distance is at least
+  via/2 + the gap (vialink's via-touch), and the link itself, at the caller's width (`decap.py`: the net's
+  class width; else 0.15), keeps the clearance from every foreign pad, track and via -- a site whose via is
+  legal but whose link crosses copper is no site. A position whose courtyard enters a `placement.json`
+  keep-out of its side (B, F, both; `allow` honoured: `place.keepout_hits`) is barred like `check` bars it,
+  and the barred positions that would have ranked ahead of the winner are printed with the keep-outs' names
+  (`barred (...) in 'pair corridor south of U1 (bottom)'`). `--no-keepouts` drops that; `--bar "x0,y0,x1,y1;.."`
+  adds the brief's own bars; `--extra-via x,y` a planned via; `--near REF:NET --rank near` ranks by distance
+  to that BGA's balls of the net; `--json` writes the ranked positions; `--no-axis` is the old any-angle
+  search. Distances use the largest class clearance, so it can find fewer sites than a net-aware search (board1
+  C32: 809 vs axsearch.py's 1045) -- never a site the net-aware one would refuse. board1 RV61_c54b: the old
+  search put C32's and C200's vias off their pads' axes and the vialink gate failed each after the plan was
+  written; it now reproduces the hand-built axsearch.py's winner, C32 (22.5, 13.3, 270, B) with vias (22.5,
+  12.02)/(22.5, 14.16), naming the two nearer sites it bars ('pair corridor south of U1 (bottom)' 6.97 mm,
+  'DRAM channel U1-U500' 7.16 mm); with `--no-keepouts` the pair-corridor site (32.70, 29.15) wins. Prove it
+  with vialink's own tests on what it emits: 86 sites on board1, 72 axis + 1 `via-45`, 0 off-axis.
 
 ## `pack.py` — a search, when a block must be re-arranged
 
