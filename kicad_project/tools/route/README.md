@@ -1389,6 +1389,12 @@ is a judgement about what it must not run under, and no search makes that call.
 not KiCad's default 0.25 mm: the antipads leave narrower bridges and the pour
 otherwise fragments.
 
+**A via it lays inside a courtyard that prelayout.json `nfp_vias` names carries
+`"nfp": true`** (the fab's non-functional pad removal); before, the plan's via
+had none and `route.py check` failed it on `RULE nfp` (board1, a cap's GND via
+in U300's courtyard). Prove it: a `decap.py` plan for a cap under the BGA
+passes `nfp` 0 new; the same plan with the key stripped fails it.
+
 ## `pour.py` — what a pour actually does
 
 A zone's outline is a wish; its **fill** is the copper, and DRC does not read

@@ -88,6 +88,9 @@ def main():
     RB = R.RBoard(a.board)
     LN = S.load_lanes(RB, a.lanes, a.no_lanes)   # a site that shuts a BGA ball's exit lane is skipped
     held = {}                                    # the lanes this plan's copper already stands in
+    NFP = R.nfp_rule(RB)                         # prelayout.json "nfp_vias": a via in those courtyards
+    in_nfp = lambda x, y: bool(NFP) and any(     # carries "nfp": true, or route.py check fails it
+        q.Contains(RB.pn.VECTOR2I(RB.pn.FromMM(x), RB.pn.FromMM(y))) for _r, polys in NFP["areas"] for q in polys)
     shut_by_hand = 0                             # a pinned via or a stub that shuts a lane: exit 1
     width = lambda net: class_width(a.board, RB.netclass, net)
     skip = set(a.skip.split(",")) if a.skip else set()
@@ -139,6 +142,8 @@ def main():
             net = info[k][1]
             vias.append(dict(net=net, at=[v[1], v[2]], pad=VIA, drill=DRILL,
                              _=f"{ref}.{info[k][0]} down to its plane or pour"))
+            if in_nfp(v[1], v[2]):
+                vias[-1]["nfp"] = True
             w = width(net)
             pts = stub(centre, (v[1], v[2]), w)
             if len(pts) > 1 and math.dist(pts[0], pts[-1]) > 1e-6:
