@@ -157,6 +157,12 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
    will read. `check` and `apply` exit 5 on a **stale plan** — the spec or the
    board changed since it was routed: run `netgroup.py` again;
    `--accept-stale` only on purpose, with the reason in the report.
+   **`check` does not run the findings.** Before the real board, apply the
+   plan to the scratch copy and run `route.py audit --findings --board
+   <scratch>` there: a closed finding the group re-opens fails on the copy,
+   not after the real apply (board1 R1: a re-laid U500 field passed `check`
+   and put three SE_50 vias 1.30-1.60 mm from GND, re-opening RV22.1's
+   1.27 mm stitch on the real board).
 4. **Apply** with KiCad closed: `route.py apply` (backup, write with `pcbnew`,
    read back, UUID manifest). Then **`route.py audit`**: DRC, joints, edge,
    shape, via links, ground beside, pour islands, in one `AUDIT PASS|FAIL`
