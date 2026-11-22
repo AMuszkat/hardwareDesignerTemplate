@@ -197,7 +197,10 @@ def hand_board():
                for r, at in (("R1", [12, 0]), ("R2", [15, 5]), ("R4", [12.3, 2.4]), ("R5", [3, 6]), ("J1", [2, 15]), ("H1", [2, 17]))]
         + [dict(ref="V1", value="", footprint="", at=[60, 0], rot=0, side="F", courtyard=[58, -2, 62, 2], box=None, dnp=False),
            dict(ref="U9", value="", footprint="", at=[80.75, 0.75], rot=0, side="F", courtyard=[79.5, -0.5, 82.0, 2.0], box=None,
-                dnp=False)],
+                dnp=False),
+           # ring: K91 under U9's courtyard, K92 outside it, each with a pad on ball A1's net, on B.Cu
+           dict(ref="K91", value="1u", footprint="", at=[81.8, 1.75], rot=0, side="B", courtyard=None, box=None, dnp=False),
+           dict(ref="K92", value="1u", footprint="", at=[85.2, 5.0], rot=0, side="B", courtyard=None, box=None, dnp=False)],
         tracks=[
             tr("A", "F.Cu", (0, 0), (10, 0)), tr("B", "F.Cu", (0, 0.5), (10, 0.5)),
             # net C: a chain with a 45, a 45, a 90 and a 26.57-degree joint, and a tee
@@ -264,7 +267,8 @@ def hand_board():
             pad("P1", "1", "P", (30, 0), [[30, 0]], 0.3),
             pad("P2", "1", "P", (40, -3), [[40, -3]], 0.3, ("B.Cu",)),
             pad("P3", "1", "P", (45, 5), [[45, 5]], 0.3),
-        ] + [pad("C9", str(n), f"LK{n}", (x, 0), rect(x, 0, 0.5, 0.5), 0.0) for n, x in ((1, 90), (2, 93), (3, 96), (4, 99), (5, 102))] + [pad("U9", f"{'ABCD'[j]}{i + 1}", "GND" if (i, j) == (3, 3) else f"U9S{'ABCD'[j]}{i + 1}",
+        ] + [pad("C9", str(n), f"LK{n}", (x, 0), rect(x, 0, 0.5, 0.5), 0.0) for n, x in ((1, 90), (2, 93), (3, 96), (4, 99), (5, 102))] + [pad("K91", "1", "U9SA1", (81.75, 1.75), [[81.75, 1.75]], 0.1, ("B.Cu",)),
+             pad("K92", "1", "U9SA1", (85.0, 5.0), [[85.0, 5.0]], 0.1, ("B.Cu",))] + [pad("U9", f"{'ABCD'[j]}{i + 1}", "GND" if (i, j) == (3, 3) else f"U9S{'ABCD'[j]}{i + 1}",
                  (80 + 0.5 * i, 0.5 * j), [[80 + 0.5 * i, 0.5 * j]], 0.1125) for j in range(4) for i in range(4)],
         zones=[dict(uuid="z-gnd", net="GND", name="", layers=["F.Cu"], priority=0, box=[0, 10, 10, 14],
                     outline=[dict(outline=rect(5, 12, 10, 4), holes=[])],
@@ -496,6 +500,13 @@ def hand_checks(geom, path, c):
     c.eq("links: C9.4 via in pad", (lk["C9.4"]["shape"], lk["C9.4"]["via"]), ("via in pad", (99, 0.1)))
     c.eq("links: C9.5 off centre", (lk["C9.5"]["shape"], lk["C9.5"]["off"]), ("axis", 0.1))
     c.eq("links: a pattern", len(G.links(["C*"])), 5)
+    # ring: U9's rail U9SA1 is ball A1 (80, 0) alone; its courtyard edge 0.5 away (x 79.5, y -0.5).
+    # K91's pad (81.75, 1.75): hypot(1.75, 1.75) = 2.4749 to A1, centre (81.8, 1.75) inside -> under, out 0.
+    # K92's pad (85, 5): hypot(5, 5) = 7.0711; centre (85.2, 5.0) is (3.2, 3.0) past the corner (82, 2) -> 4.3863
+    R = G.ring("U9", "U9SA1", "K*")
+    c.eq("ring: the rail's balls and the edge", (R["balls"], R["edge"]), (["A1"], [(0.5, "A1")]))
+    c.eq("ring: under and ring, nearest first", [(k["ref"], k["where"], k["ball"], k["d"], k["out"]) for k in R["caps"]],
+         [("K91", "under", "A1", 2.4749, 0.0), ("K92", "ring", "A1", 7.0711, 4.3863)])
     # --plan: a plan's track 0.35 below the via's centre, 0.1 wide: 0.35 - 0.2 - 0.05 from the via, counted alone;
     # the board's nearest to that via is A2's land, 0.35 - 0.2 - 0.1125
     P = geom.load(path)

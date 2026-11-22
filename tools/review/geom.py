@@ -32,6 +32,9 @@ cannot answer is written as a script in tmpWork/ and NAMED in the report's
                                  pads (KiCad's 'remove unconnected layers') and which keep a pad on every layer
     links    REF [REF ...]       each pad's link to a via of its net: its pieces' angles to the pad's axes, its shape
                                  (axis / 45 / axis+45 / bent / angle / via in pad), the start's offset from the pad's centre
+    ring     REF NET [--parts P]  a rail's capacitors at a BGA: each under its courtyard or on the ring outside it, its
+                                 rail pad's distance to the rail's nearest ball, and how near the courtyard edge the
+                                 rail's balls come (the bound on the nearest ring site)
     lanes    REF [--power P,P] [--rings 1|2] [--track W] [--clear C] [--reach MM]
                                  a BGA's outer signal balls' exit lanes on their own layer (ring 1 straight out, ring 2
                                  between two ring-1 lands) to the courtyard line, and what foreign copper stands in them
@@ -910,6 +913,44 @@ class Geometry:
                                          off=round(math.dist(pts[0], c), 4)))
         return rows
 
+    def ring(self, ref, net, parts="C*"):
+        """A rail's capacitors at a BGA: {courtyard, balls, edge, caps: [{ref, value, at, side, where, pad, ball, d,
+        out}]}.
+
+        balls: the BGA's pads on the rail (`net`: a name or pattern, as `net_list`).  edge: per ball, its centre's
+        distance to the nearest courtyard side (the smallest of the four), smallest first -- a capacitor outside
+        the courtyard stands at least that far from the nearest ball.  caps: every OTHER part matching `parts`
+        (fnmatch) with a pad on the rail; where is 'under' when the part's centre is inside the courtyard, else
+        'ring'; d is the centre-to-centre distance from its rail pad to the nearest rail ball (ball names it);
+        out is how far its centre stands outside the courtyard (0 under it).  Nearest first."""
+        bga = next((q for q in self.d.get("parts", []) if q["ref"] == ref), None)
+        if bga is None:
+            raise SystemExit(f"geom: no part {ref!r} in this dump")
+        cy = bga.get("courtyard") or bga.get("box")
+        rail = set(self.net_list(net))
+        pads = [i for i in self.items if i.kind == "pad" and i.net in rail]
+        balls = [i for i in pads if i.src["ref"] == ref]
+        if not balls:
+            raise SystemExit(f"geom: {ref} has no pad on {net}")
+        edge = sorted((min(b.src["at"][0] - cy[0], cy[2] - b.src["at"][0], b.src["at"][1] - cy[1], cy[3] - b.src["at"][1]),
+                       b.src["num"]) for b in balls)
+        info = {q["ref"]: q for q in self.d.get("parts", [])}
+        caps = []
+        for it in pads:
+            r = it.src["ref"]
+            if r == ref or not fnmatch.fnmatch(r, parts) or any(c["pad"] == f"{r}.{it.src['num']}" for c in caps):
+                continue
+            q = info.get(r, {})
+            at = q.get("at") or it.src["at"]
+            pa = it.src["at"]
+            d, b = min((math.hypot(pa[0] - x.src["at"][0], pa[1] - x.src["at"][1]), x.src["num"]) for x in balls)
+            out = math.hypot(max(cy[0] - at[0], 0, at[0] - cy[2]), max(cy[1] - at[1], 0, at[1] - cy[3]))
+            caps.append(dict(ref=r, value=q.get("value", ""), at=tuple(at[:2]), side=q.get("side", ""),
+                             where="under" if out == 0 else "ring", pad=f"{r}.{it.src['num']}", ball=b,
+                             d=round(d, 4), out=round(out, 4)))
+        caps.sort(key=lambda c: c["d"])
+        return dict(courtyard=cy, balls=[b.src["num"] for b in balls], edge=[(round(e, 4), n) for e, n in edge], caps=caps)
+
     def unused_pads(self, box):
         """The vias whose centre lies in a rectangle (its edge included), each with what it does
         with its unconnected pads: [{via, drop, flashed, span}].  drop is the via's own property
@@ -1443,7 +1484,7 @@ def main(argv=None):
     ap.add_argument("snapshot", help="a PCB snapshot folder (out/reviews/<board>/<id>-pcb) or a geometry.json")
     ap.add_argument("query", choices=["info", "show", "nearest", "gap", "label", "joints", "via-pad", "holes",
                                       "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box",
-                                      "bare", "unused-pads", "lanes", "links"])
+                                      "bare", "unused-pads", "lanes", "links", "ring"])
     ap.add_argument("args", nargs="*", help="the query's SEL / NET / REF / box")
     ap.add_argument("--layer", help="one copper layer")
     ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest; "
@@ -1478,6 +1519,7 @@ def main(argv=None):
     ap.add_argument("--clear", type=float, help="lanes: the clearance (default: the board's clearance rule)")
     ap.add_argument("--reach", type=float, help="lanes: end each lane this far past the outer lands' centre line when "
                     "that is nearer than the courtyard line")
+    ap.add_argument("--parts", default="C*", help="ring: the parts counted, an fnmatch pattern (default C*)")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     G = load(a.snapshot)
@@ -1493,7 +1535,7 @@ def main(argv=None):
     d = G.d
     q = a.query
     need = {"show": 1, "nearest": 1, "gap": 2, "copper": 1, "box": 1, "conn": 1, "stitch": 1, "coupled": 1,
-            "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1}
+            "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1, "ring": 2}
     if q in need and len(a.args) != need[q]:
         ap.error(f"{q} takes {need[q]} argument(s)")
     if q in ("bare", "links") and not a.args:
@@ -1736,6 +1778,16 @@ def main(argv=None):
              + f"{len(rows)} link(s) of {', '.join(a.args)}; {len(bad)} not one axis piece out of the pad's centre"
              + (f", {sum(r['declared'] for r in rows)} more declared in the board's vialink_exceptions.json" if exc else "")
              + ("" if a.all else " (listed; --all lists every link)"))
+    elif q == "ring":
+        R = G.ring(a.args[0], a.args[1], a.parts)
+        rows = R["caps"]
+        emit(a, ["part", "value", "side", "where", "rail pad", "nearest ball", "pad to ball", "outside courtyard"],
+             [[c["ref"], c["value"], c["side"], c["where"], c["pad"], c["ball"], f"{c['d']:.3f}", f"{c['out']:.3f}"]
+              for c in cut(rows)], R, (more(rows) + "\n" if more(rows) else "")
+             + f"{len(rows)} part(s) of {a.parts} on {a.args[1]}: {sum(c['where'] == 'under' for c in rows)} under "
+             + f"{a.args[0]}'s courtyard, {sum(c['where'] == 'ring' for c in rows)} on the ring; {len(R['balls'])} ball(s) "
+             + f"on the rail, the nearest to the courtyard edge {R['edge'][0][1]} at {R['edge'][0][0]:.3f} mm "
+             + "(no ring part stands nearer than that to a ball)")
     elif q == "unused-pads":
         arg = a.args[0]
         part = next((p for p in d.get("parts", []) if p["ref"] == arg), None)
