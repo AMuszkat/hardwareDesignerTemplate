@@ -138,7 +138,8 @@ and writes them all to `handoff/findings.json`. The board runs them with
 them as its `findings` gate — closed findings included, so the one that
 comes back fails in seconds. Never delete a Check line when its finding
 closes. **Run every new Check line before you publish it**:
-`route.py audit --findings --board <a copy>` on a copy of the snapshot with
+`route.py audit --findings --board <a copy's ABSOLUTE path>` (a relative one
+resolves against the board tools' folder: "no such board") on a copy of the snapshot with
 the new `findings.json`. It must pass on the reviewed board as it stands,
 or it fails work that already passed (board 1's RV50: a proposed `cap
 reach` over six caps failed three of them on today's board). A plan
