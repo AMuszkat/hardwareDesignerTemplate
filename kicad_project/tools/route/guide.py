@@ -93,6 +93,14 @@ def _rows(text, skip_block=False):
     return out
 
 
+def _via_link_source(vl):
+    """The vialink gate judges two rows -- the links (the '45-degree via link' row's item) and the
+    gap ('via to pad gap') -- so its label names both, each by its item (the text before ':'):
+    it printed only the gap's, '#48 (2)', for a gate that mostly judges #48 (3)'s links (board1)."""
+    part = lambda k: vl[k].split(":")[0].strip() if vl.get(k) else None
+    vl["source"] = "; ".join(f"{n} {part(k)}" for n, k in (("links", "link_source"), ("gap", "gap_source")) if part(k))
+
+
 def _parse(rule, val, src, G):
     """One row into G."""
     s = {"source": src or f"{FILE} (no source given)"}
@@ -104,12 +112,13 @@ def _parse(rule, val, src, G):
         G["edge"] = dict(s, min=_mm(val, rule))
     elif rule == "via to pad gap":
         G.setdefault("via_link", dict(s))["gap"] = _mm(val, rule)
-        G["via_link"]["source"] = s["source"]
+        G["via_link"]["gap_source"] = s["source"]; _via_link_source(G["via_link"])
     elif rule == "45-degree via link":
         v = val.lower()
         if v not in ("last resort", "allowed", "never"):
             raise GuideError(f"{FILE}: '45-degree via link' takes 'last resort', 'allowed' or 'never', got '{val}'")
         G.setdefault("via_link", dict(s))["diag"] = v
+        G["via_link"]["link_source"] = s["source"]; _via_link_source(G["via_link"])
     elif rule == "copper shape":
         if val.lower() not in ("on", "off"):
             raise GuideError(f"{FILE}: 'copper shape' takes 'on' or 'off'")
