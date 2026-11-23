@@ -1842,6 +1842,11 @@ either session goes through it -- but the router is where the waiting happens:
   on a pid (`kill -0 $pid`, `tail --pid=$pid`) or on a file, pass. The hook is declared in both
   sessions' `.claude/settings.json`, beside the wall.
 - **Several specs of one group at once are a race, not three background runs:** `race.py`, below.
+- **`--timeout` does not lengthen a round: `--iters` (default 300) ends it first.** TRAP (board1 R_EMMC/D126,
+  2026-11-23): a round given `--timeout 2400` stopped at iteration 300 after 2093 s, and the next was briefed with a
+  longer timeout to "give it real CPU". WAY AROUND: read the last `iteration N:` line against `--iters`. A run that
+  ends at the cap with pressure still climbing is not converging: change the spec (layers, sites, a rung), not
+  the clock. Raise `--iters` only where the overlap count was still falling. PROOF: `grep "iteration 300" netgroup.log`.
 - **Memory runs out before cores do, and it kills.** On board1's 30 GB machine six router runs forking 4-12
   workers each beside a 24-worker solve took the board session, the concept session and the editor with
   them (2026-11-16, the kernel's OOM killer). Now: `run` refuses a job while less than the floor is
