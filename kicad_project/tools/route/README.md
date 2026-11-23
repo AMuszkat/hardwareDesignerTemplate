@@ -1790,6 +1790,13 @@ has moved. `budget.py`'s docstring is the manual; in short:
   another group's diagonal set it. WAY AROUND: a no-cost probe (netgroup set-up only, or sites.py) on a copy with
   the part moved, its site map diffed against the unmoved one; name a part in a wall only when the diff opens a cell.
   PROOF: `diff probe_before/map.txt probe_after/map.txt` lists the cells the move opens.
+- **Before laying a BGA's channel vias, test their topology, not only DRC.** TRAP (board1 R1a, 2026-11-23): 45
+  channel vias passed every gate and went on the board. The next sub-group found CK_A's pair vias inside CK_B's
+  span on the same layer, 0.256 mm apart where a line needs 0.345 mm. That shuts one pair inside the other: +6.6 mm
+  of skew against a 1 ps match. DRC, pretest and audit cannot see it. WAY AROUND: in the via-site solver, for every
+  two pairs routed on one layer, either one's vias stay outside the other's span, or a lane (width + 2 x clearance)
+  fits between them. Run the same test on any applied via set before the tracks are planned. PROOF: the test
+  flags exactly the shut pair on the applied set.
 - **Gate a plan on a copy of TODAY's board, not the copy it was routed on.** TRAP (board1 R1 round 8,
   2026-11-23): the row passed every gate on its round's base copy, made hours before; the real board had since
   taken 304 tracks of other groups and moved 5 parts, none of which that gate had seen. WAY AROUND: diff the base
