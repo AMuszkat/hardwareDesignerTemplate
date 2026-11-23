@@ -83,6 +83,14 @@ design.
 revision with a publish that adds a `## Qn`: a board's tools reopen a walled
 group only on a revision after the one its wall was written at.
 
+**A wall at a part's own exit** (a BGA's fan, a connector's rows) is read
+against the part's pin table before the ladder is written: balls the vendor
+calls not connected may carry a track -- some datasheets say so in the
+signal table -- and the handoff's pin accounting lists them only as
+unconnected. That is a rung with no term, and the board cannot see it. One
+eMMC's third wall asked for layers and part moves while its datasheet let
+signals run through 100 unused balls.
+
 **A question about a route** (pair order, which side a bus leaves, a
 crossing, an escape) is never answered from pin order alone. Before an
 option goes into the handoff, measure it yourself on a snapshot of the board
