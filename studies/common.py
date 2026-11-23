@@ -156,6 +156,17 @@ def plane_strip_nh(h_mm, d_mm, w_mm):
     return 4e-7 * math.pi * (h_mm * 1e-3) * (d_mm * 1e-3) / (w_mm * 1e-3) * 1e9
 
 
+def plane_ring_nh(h_mm, r_in_mm, r_out_mm, open_frac=1.0):
+    """The inductance of the ring of pour round a via: current spreading from the via's pad
+    (radius r_in) out to radius r_out between the pour and its return plane h mm away,
+    L = mu0 h ln(r_out / r_in) / (2 pi open_frac), in nH.  open_frac is the share of the ring
+    that is copper (1 = whole, 0.5 = a via at a pour's edge).  It is what a min-cut measure of a
+    pour reads as a 'neck' at a single feed via -- the ring can never be wider than the pad is
+    round -- and what plane_strip_nh's w leaves out when w is wider than the via."""
+    import math
+    return 4e-7 * math.pi * (h_mm * 1e-3) * math.log(r_out_mm / r_in_mm) / (2 * math.pi * open_frac) * 1e9
+
+
 def mounted_srf_hz(l_nh, c_uf):
     """The frequency up to which a capacitor of c_uf holds its rail through a mounting loop of
     l_nh: 1 / (2 pi sqrt(L C)).  Above it the smaller capacitors at the pins and the planes carry
