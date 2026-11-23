@@ -876,6 +876,11 @@ its docstring. What the spec has to be told:
   For a search: `exitlane.evaluate(lanes, blocked, routed)` is the gate on a set of blocked (ball, lane key)
   pairs, `blocked_by(result, item)` the pairs one via / pad / track would newly block, `shuts(result, extra)`
   the balls that then fail -- `tools/place/sites.py` drops via sites with them (board1 RV61_c28).
+  A search that runs WITHOUT pcbnew (a numpy / CP-SAT via model) asks the same: `tools/kpy
+  tools/route/exitlane_dump.py BOARD_DIR OUT.json --ref U1` once on the scratch copy the plan will meet, then
+  `exitlane_dump.load(OUT)["U1"]` and `shut_by(r, items)` in plain python -- same lanes, blocked set, width and
+  clearance. TRAP (board1 R1-0, 2026-11-23): a channel via model with no lane term reported 'closes' that
+  pretest failed on 10 U1 balls; with the dump's term it finds those same 10.
 - **An area rule whose area is wider than the fab's is a hole in DRC: measure what it relaxes.** KiCad's
   `intersectsCourtyard` relaxes a gap wherever BOTH items touch the courtyard -- a track laid along the courtyard
   line is relaxed for its whole length -- and a memory's courtyard can be 3 mm wider each way than its ball array,
