@@ -729,6 +729,12 @@ its docstring. What the spec has to be told:
   directly, so a script that counts clusters with it reads every routed two-pad net as 1 open (board1
   R_next_inventory, 2026-11-23: eight connected MDI nets counted open). Use `route.py status`, or
   `board.GetConnectivity().GetConnectedItems(pad, False)` and look for the other pad in the result.
+- **A via added in memory over another net's stale fill takes that zone's net.** TRAP (board1 R6a_in4,
+  2026-11-23): 50 trial channel vias added with `PCB_VIA` over the board's saved fills came back, after the
+  first `BuildConnectivity()` and `SaveBoard`, all on NVCC_DRAM -- the zone under them; refilling first did not
+  help. WAY AROUND: `zone.UnFill()` on every zone, then `BuildConnectivity()`, then fill, and read each via's
+  net back before judging anything (board1 `tmpWork/R6a_in4/addvias.py`). PROOF: with UnFill first the 50
+  read back on their own nets.
 - **A rip at the 199 limit shows old violations as new.** `route.py check` compares against a baseline
   KiCad cut at 199 a test, so a plan that REMOVES copper uncovers violations that were there before
   and hidden (board1 D115: 74 via_dangling). Prove they predate the plan (the same items on the
