@@ -1099,6 +1099,14 @@ class Grid:
                            f"nearest at ({r['at'][0]:.3f}, {r['at'][1]:.3f})")
             if len(d["wall"]) > top:
                 out.append(f"      ... and {len(d['wall']) - top} more")
+            walls = sorted({r["net"] for r in d["wall"] if r["kind"] == "net" and r["net"]})
+            if walls:
+                # a net walled in by ANOTHER routed net's frozen copper (an earlier leg of this run, or
+                # its prelaid escape): the leg order did it, not the board (board1 P_PHY2: LED1's leg to
+                # R213 walled LED2's trunk; LED2 routed once its legs were reversed)
+                out.append(f"   walled by {', '.join(walls)}'s fixed copper (prelaid, or an earlier leg of this run): if it is a leg, give {d['net']}'s "
+                           "leg an earlier \"stage\" (or theirs a later one) so the two are negotiated "
+                           "together, or reorder its legs")
         if d["edge"]:
             out.append(f"   it also ends at the window's {' / '.join(d['edge'])} edge: a wider window may open it")
         if d["via"]:

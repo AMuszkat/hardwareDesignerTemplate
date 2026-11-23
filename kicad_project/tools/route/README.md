@@ -668,6 +668,24 @@ its docstring. What the spec has to be told:
   the polygon; the same group with the router choosing SPEED's via (`ethled_rv2`) puts it 0.270 mm
   off the polygon, against 0.170 mm before (both pass `polyclr.py`); R_ETHLED2, R_EMMC_t2 c_v3 (a
   polygon on its routed F.Cu), R_J2 and `ethled_rv` give identical plans, old code against new.
+- **A pad of a routed net is its real outline, and every clearance is the stricter of two classes**
+  (netgroup, 2026-11-23). TRAP (board1 P_PHY2 v15c): a pad of a net routed IN the group was its
+  fixed copper only as the stadium inscribed in its box, so the group's other nets never saw a
+  rectangle's corners -- PHY_CLK125 shorted into Y200.3, LED1 0.067 mm from R214.1, INT_N 0.076
+  from R215.1; and every static item got one `padclr`, so an SE_50 pad (0.2032) was kept at the
+  spec's 0.1016 and LED1 came 0.149 from U200.19. 8 DRC errors, which P_PHY3 patched with spec
+  blocks. WAY AROUND: the stadium stays the net's track end (heading, trunk); the pad's own
+  outline (`TransformShapeToPolygon` per layer: rect, roundrect, chamfered, custom, rotated) is
+  added to its fixed copper as zero-width rows + outline, and every pad near the window goes to
+  the writer's test. Each board item carries `GetOwnClearance(layer)` (class and local override),
+  a spec item its net's; each static is stamped at max(padclr, its own, the routed nets'
+  strictest), and the routed nets' `clearance` is raised to their strictest class (printed).
+  `padclr` / `clearance` are floors now. A net walled in by another routed net's fixed copper
+  (a leg's order) is named in the BLOCKED report with "give the leg an earlier stage".
+  PROOF (`board1_module/tmpWork/T_netgroup_pad/`, `run.sh`): spec_v15c with no blocks gives
+  `CHECK FAIL (0 new DRC, 2 rule)` against 8 new DRC before (the 2 rules: LED1's via-angle at
+  U202.1, there before, and a new INT_N notch); R_ETHLED2 and R_J2 identical plans old vs new;
+  R_EMMC_t2 c_v3 re-routes D2/D3/D4, its check on T_ngpoly 30 new DRC against 40 old, no new kind.
 - **Parallel `--only` runs need a spec copy each** (netgroup, 2026-11-23). TRAP: board1's R_EMMC_t1 ran six
   `--only` subsets of ONE spec side by side; they share its plan and `plan.partial.json.tmp`, and crashed each
   other (`FileNotFoundError` on the partial). WAY AROUND: copy the spec per run (its plan and partial follow it).

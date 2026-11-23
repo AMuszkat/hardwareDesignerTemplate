@@ -12,8 +12,11 @@ THE SPEC
 
   {"group": "R3", "why": "...", "plan": "routing/R3_spi.json",
    "window": [x0, y0, x1, y1], "pitch": 0.2, "width": 0.2,
-   "clearance": 0.15,        # between the nets routed here (their class)
-   "padclr": 0.2,            # to everything else (the strictest class near)
+   "clearance": 0.15,        # between the nets routed here (their class; raised to the
+                             # strictest class among them, as KiCad holds the stricter of two)
+   "padclr": 0.2,            # to everything else: a FLOOR -- each static item is kept at the
+                             # stricter of this, its own clearance (class, local override) and
+                             # the routed nets' class
    "via": [0.6, 0.3], "via_sep": 0.8,
    "layers": ["F.Cu", "B.Cu"],          # default: every copper layer that is not a
                                         # a guide 'plane layer' row
@@ -339,6 +342,15 @@ def main():
             sys.exit(f"{n}: {len(leaves[n])} nets on the board end in that name "
                      f"({', '.join(leaves[n])}). Rename one in the schematic, or route them by hand.")
 
+    def own_clr(item, lid):
+        """mm: the item's OWN clearance as KiCad's DRC resolves it on that layer -- its net class, a
+        pad's or footprint's local override, a custom rule on it alone.  KiCad holds two items apart by
+        the stricter of their two clearances; 0 if pcbnew cannot say."""
+        try:
+            return B.mm(item.GetOwnClearance(lid))
+        except Exception:
+            return 0.0
+
     pads, tracks, bvias, padbox = [], [], [], {}
     HOLECLR = B.mm(B.b.GetDesignSettings().m_HoleClearance)      # copper to hole (14_fab), every layer
     H2H = B.mm(B.b.GetDesignSettings().m_HoleToHoleMin)          # a new via's hole to a hole
@@ -368,7 +380,11 @@ def main():
                 # alone, stamped from `holes` below
                 continue
             bb = p.GetBoundingBox()
-            rec = dict(ref=ref, pad=p.GetNumber(), net=p.GetNetname().rsplit("/", 1)[-1],
+            cu_ = list(p.GetLayerSet().CuStack())
+            lid_ = (pcbnew.B_Cu if f.IsFlipped() else pcbnew.F_Cu) if (pcbnew.F_Cu in cu_ or pcbnew.B_Cu in cu_) \
+                else cu_[0]
+            rec = dict(ref=ref, pad=p.GetNumber(), net=p.GetNetname().rsplit("/", 1)[-1], obj=p,
+                       clr=own_clr(p, lid_),
                        tht=p.GetDrillSizeX() > 0, round=p.GetShape() == pcbnew.PAD_SHAPE_CIRCLE,
                        cu="B.Cu" if f.IsFlipped() else "F.Cu",          # an SMD pad's own side
                        L=B.mm(bb.GetLeft()), T=B.mm(bb.GetTop()), R=B.mm(bb.GetRight()), B=B.mm(bb.GetBottom()),
@@ -387,28 +403,39 @@ def main():
                     if L_ not in (pcbnew.F_Cu, pcbnew.B_Cu) and not t.FlashLayer(L_)}
             bvias.append(dict(net=n, x=B.mm(t.GetPosition().x), y=B.mm(t.GetPosition().y),
                               r=B.mm(t.GetWidth(pcbnew.F_Cu)) / 2, o="on the board", unfl=unfl,
+                              clr=own_clr(t, pcbnew.F_Cu),
                               hole=B.mm(t.GetDrillValue()) / 2 + B.mm(B.b.GetDesignSettings().m_HoleClearance)))
         else:
             tracks.append(dict(net=n, layer=canon(t.GetLayer()), a=(B.mm(t.GetStart().x), B.mm(t.GetStart().y)),
-                               b=(B.mm(t.GetEnd().x), B.mm(t.GetEnd().y)), w=B.mm(t.GetWidth()), o="on the board"))
+                               b=(B.mm(t.GetEnd().x), B.mm(t.GetEnd().y)), w=B.mm(t.GetWidth()), o="on the board",
+                               clr=own_clr(t, t.GetLayer())))
+    # each net's class clearance, off its board copper (the smallest own clearance of its pads and
+    # tracks: a pad's local override, a mounting hole's 0.6, only raises its own pad) -- for the
+    # spec's copper below, which has no pcbnew item to ask
+    NETCLR = {}
+    for it_ in pads + tracks + bvias:
+        if it_.get("clr", 0) > 1e-9 and it_["net"]:
+            NETCLR[it_["net"]] = min(NETCLR.get(it_["net"], 9.0), it_["clr"])
     # the spec's own extra copper (ground and supply vias, pad links) is on the board
     # as far as the router is concerned -- else it routes through where they will go
     for e in S.get("extra_tracks", []):
         for a_, b_ in zip(e["pts"], e["pts"][1:]):
             tracks.append(dict(net=e["net"].rsplit("/", 1)[-1], layer=e["layer"], a=tuple(a_), b=tuple(b_),
-                               w=float(e["width"]), o="the spec's extra_tracks"))
+                               w=float(e["width"]), o="the spec's extra_tracks",
+                               clr=NETCLR.get(e["net"].rsplit("/", 1)[-1], 0.0)))
     for e in S.get("extra_vias", []):
         bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2,
-                          o="the spec's extra_vias"))
+                          o="the spec's extra_vias", clr=NETCLR.get(e["net"].rsplit("/", 1)[-1], 0.0)))
     # a LATER group's copper, reserved: an obstacle here, never written to this plan
     # (reserve the later groups' tracks, not just their vias)
     for e in S.get("reserve_tracks", []):
         for a_, b_ in zip(e["pts"], e["pts"][1:]):
             tracks.append(dict(net=e["net"].rsplit("/", 1)[-1], layer=e["layer"], a=tuple(a_), b=tuple(b_),
-                               w=float(e["width"]), o="reserved by the spec's reserve_tracks"))
+                               w=float(e["width"]), o="reserved by the spec's reserve_tracks",
+                               clr=NETCLR.get(e["net"].rsplit("/", 1)[-1], 0.0)))
     for e in S.get("reserve_vias", []):
         bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2,
-                          o="reserved by the spec's reserve_vias"))
+                          o="reserved by the spec's reserve_vias", clr=NETCLR.get(e["net"].rsplit("/", 1)[-1], 0.0)))
 
     # every copper PCB_SHAPE drawn on the board (a net-tied polygon: a bus head, a star, a taper,
     # L105.2 / C105.1's NVCC_DRAM patch) is copper like a track -- not a zone, so the pour loop below
@@ -429,6 +456,7 @@ def main():
             continue
         bb = d.GetBoundingBox()
         shapes.append(dict(net=d.GetNetname().rsplit("/", 1)[-1], layer=canon(d.GetLayer()), ps=ps,
+                           clr=own_clr(d, d.GetLayer()),
                            bb=(B.mm(bb.GetLeft()), B.mm(bb.GetTop()), B.mm(bb.GetRight()), B.mm(bb.GetBottom()))))
 
     def shape_dist(s_, a_, b_=None):
@@ -490,6 +518,21 @@ def main():
     G.fix_exact = bool(S.get("fix_exact"))           # frozen bundles: see maze.Grid.fix_exact
     G.static_exact = bool(S.get("static_exact"))     # a BGA field's diagonal lanes: maze.Grid.static_exact
 
+    # KiCad holds two items apart by the STRICTER of their two clearances.  Between the nets routed
+    # here: the spec's "clearance", raised to the strictest class among them.  To a static item (a
+    # foreign pad, track, via, polygon): the spec's "padclr", raised to that item's own clearance and
+    # to the routed nets' -- one padclr for all of them took an SE_50 pad (0.2032) at 0.1016, and
+    # PHY_LED1 came 0.149 from U200.19 (board1 P_PHY2).  Inside a field its area rule holds, as before.
+    RCLR = max([NETCLR.get(n, 0.0) for n in nets] + [0.0])
+    if RCLR > maze.CLR + 1e-9:
+        print(f"clearance between the routed nets {maze.CLR} -> {RCLR}: the strictest class among them "
+              "(KiCad holds the stricter of two nets' clearances)")
+        maze.CLR = RCLR
+
+    def SC(c):
+        """The clearance a routed track or via keeps from a static item whose own clearance is c."""
+        return max(maze.PADCLR, c or 0.0, RCLR)
+
     goals_of = {n: [tuple(l["to"]) for l in S["nets"][n]["legs"] if "to" in l] + ([tuple(S["nets"][n]["src_pad"])]
                                                                    if S["nets"][n].get("src_pad") else [])
                 for n in nets}
@@ -514,6 +557,54 @@ def main():
     # -- instead of being left to find it on the board
     def at_(x, y):
         return f"({x:.3f}, {y:.3f})"
+
+    def pad_shape(p, lay_):
+        """A pad's copper on a layer as pcbnew draws it (rect, roundrect, chamfered, custom, rotated),
+        in the form shape_dist() reads; None for a pad with no copper there."""
+        ps = pcbnew.SHAPE_POLY_SET()
+        try:
+            p["obj"].TransformShapeToPolygon(ps, B.b.GetLayerID(lay_), 0, ERR, pcbnew.ERROR_INSIDE)
+        except Exception:
+            return None
+        return dict(ps=ps, bb=(p["L"], p["T"], p["R"], p["B"]), net=p["net"], layer=lay_) \
+            if ps.OutlineCount() else None
+
+    def poly_rows(s_, lay_):
+        """A polygon as zero-width tracks: one per grid row through the cells inside it, plus its
+        outline -- the form a routed net's fixed copper takes, which the grid grows by the clearance."""
+        rows = collections.defaultdict(list)
+        for c in G.rect(*s_["bb"], G.step):
+            if shape_dist(s_, G.xy(c)) < 1e-9:
+                rows[c // G.nx].append(c % G.nx)
+        segs = []
+        for j_, ii in sorted(rows.items()):
+            ii.sort()
+            st_ = pv_ = ii[0]
+            for i_ in ii[1:] + [None]:
+                if i_ is not None and i_ == pv_ + 1:
+                    pv_ = i_
+                    continue
+                y_ = round(G.y0 + j_ * G.step, 6)
+                segs.append((lay_, (round(G.x0 + st_ * G.step, 6), y_), (round(G.x0 + pv_ * G.step, 6), y_), 0.0))
+                if i_ is not None:
+                    st_ = pv_ = i_
+        for k_ in range(s_["ps"].OutlineCount()):
+            ol = s_["ps"].Outline(k_)
+            pts_ = [(B.mm(ol.CPoint(k).x), B.mm(ol.CPoint(k).y)) for k in range(ol.PointCount())]
+            segs += [(lay_, a_, b_, 0.0) for a_, b_ in zip(pts_, pts_[1:] + pts_[:1])]
+        return segs
+
+    # a pad's REAL outline, for the plan writer's test (cuts_round) and, for a pad of a net routed
+    # here, as that net's fixed copper: modelled as the stadium inscribed in its box alone, its
+    # rectangle's corners were invisible to the group's other nets (board1 P_PHY2: PHY_CLK125 shorted
+    # into Y200.3, LED1 0.067 from R214.1, INT_N 0.076 from R215.1)
+    PADSH = collections.defaultdict(list)        # layer -> (shape, track halo): every pad, the writer's test
+    pad_poly = collections.defaultdict(list)     # a routed net's own pads' outlines, as fixed copper
+    gx0_, gy0_ = G.x0, G.y0
+    gx1_, gy1_ = G.x0 + (G.nx - 1) * G.step, G.y0 + (G.ny - 1) * G.step
+
+    def near_window(p, m_):
+        return not (p["R"] < gx0_ - m_ or p["L"] > gx1_ + m_ or p["B"] < gy0_ - m_ or p["T"] > gy1_ + m_)
     for p in pads:
         k = (p["ref"], p["pad"])
         lays = LAYERS if p["tht"] else [L_ for L_ in (p["cu"],) if L_ in LAYERS]
@@ -534,8 +625,15 @@ def main():
                     seg = ((p["L"] + h / 2, p["y"]), (p["R"] - h / 2, p["y"]), h)
                 else:
                     seg = ((p["x"], p["T"] + wd / 2), (p["x"], p["B"] - wd / 2), wd)
+                # the stadium stays the net's track end (a source's heading, a trunk to join); the
+                # pad's own outline is added as its fixed copper, so the others keep the clearance
+                # from its corners too
                 for L_ in lays:
                     fixed[owner]["tracks"].append((L_, *seg))
+                    sh_ = pad_shape(p, L_) if near_window(p, maze.CLR + maze.W + G.step) else None
+                    if sh_ is not None:
+                        pad_poly[owner].extend(poly_rows(sh_, L_))
+                        PADSH[L_].append((dict(sh_, net=owner), maze.CLR + maze.W / 2))
             continue
         Fp = next((F for F in FO if F["ref"] == p["ref"]), None)
         if Fp is not None:
@@ -545,15 +643,22 @@ def main():
             cl = float(Fp.get("clr", maze.PADCLR))
             wf = float(Fp.get("width", maze.W))
             G.block(lays, G.rect(p["L"], p["T"], p["R"], p["B"], cl + wf / 2))
-            G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], maze.PADCLR + maze.VIA_R))
+            G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], SC(p["clr"]) + maze.VIA_R))
             continue
         inf = next(((c_, w_) for (bx_, c_, w_) in FCY
                     if bx_[0] <= p["L"] and p["R"] <= bx_[2] and bx_[1] <= p["T"] and p["B"] <= bx_[3]), None)
         if inf:
             G.block(lays, G.rect(p["L"], p["T"], p["R"], p["B"], inf[0] + inf[1] / 2))
-            G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], maze.PADCLR + maze.VIA_R))
+            G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], SC(p["clr"]) + maze.VIA_R))
             continue
-        G.static_pad(p["L"], p["T"], p["R"], p["B"], lays)
+        c_ = SC(p["clr"])
+        G.block(lays, G.rect(p["L"], p["T"], p["R"], p["B"], c_ + maze.W / 2))
+        G.block(["via"], G.rect(p["L"], p["T"], p["R"], p["B"], c_ + maze.VIA_R))
+        if near_window(p, c_ + maze.W + G.step):
+            for L_ in lays:
+                sh_ = pad_shape(p, L_)
+                if sh_ is not None:
+                    PADSH[L_].append((sh_, c_ + maze.W / 2))
     for F in FO:
         bx = [p for p in pads if p["ref"] == F["ref"]]
         # the field is the part's COURTYARD: KiCad's area rule holds where both items intersect it
@@ -628,7 +733,8 @@ def main():
                         nxt.append((pt(u1), b_, None))
                 pieces = nxt
             for a_, b_, f_ in pieces:
-                G.static_track(t["layer"], a_, b_, t["w"], clr=f_["_clr"] - f_["_shrink"] if f_ is not None else maze.PADCLR)
+                G.static_track(t["layer"], a_, b_, t["w"], clr=f_["_clr"] - f_["_shrink"] if f_ is not None
+                               else SC(t.get("clr")))
     board_vias = collections.defaultdict(list)
     for v in bvias:
         board_vias[v["net"]].append((v["x"], v["y"]))
@@ -688,7 +794,7 @@ def main():
             F = field_of(v["x"], v["y"])
             G.mark(f"via of {v['net'] or 'no net'} at {at_(v['x'], v['y'])}, {v['o']} (in field {F['ref']})")
             for L_ in LAYERS:
-                cl = F["_clr"] - F["_shrink"] if L_ in F.get("open", []) else maze.PADCLR
+                cl = F["_clr"] - F["_shrink"] if L_ in F.get("open", []) else SC(v.get("clr"))
                 rr = v["r"] + cl + maze.W / 2
                 if (L_ in v.get("unfl", ()) and L_ in F.get("open", [])
                         and v["net"] not in S.get("keep_pads", {}).get(L_, ())):
@@ -699,14 +805,14 @@ def main():
                 # a via near the field's edge: past the edge the track is the group's width, so the
                 # cells outside the field keep the full halo (board1: a 0.181 B.Cu run 0.066 from a
                 # dog-bone 0.3 inside U1's courtyard)
-                G.block([L_], {c_ for c_ in G.disc(v["x"], v["y"], v["r"] + maze.PADCLR + maze.W / 2)
+                G.block([L_], {c_ for c_ in G.disc(v["x"], v["y"], v["r"] + SC(v.get("clr")) + maze.W / 2)
                                if not in_field(*G.xy(c_))})
-            G.block(["via"], G.disc(v["x"], v["y"], v["r"] + maze.PADCLR + maze.VIA_R))
+            G.block(["via"], G.disc(v["x"], v["y"], v["r"] + SC(v.get("clr")) + maze.VIA_R))
         else:
             G.mark(f"via of {v['net'] or 'no net'} at {at_(v['x'], v['y'])}, {v['o']}")
-            G.static_via(v["x"], v["y"], v["r"])
+            G.static_via(v["x"], v["y"], v["r"], clr=SC(v.get("clr")))
             for L_ in LAYERS:
-                ROUND[L_].append((v["x"], v["y"], v["r"] + maze.PADCLR + maze.W / 2, v["net"]))
+                ROUND[L_].append((v["x"], v["y"], v["r"] + SC(v.get("clr")) + maze.W / 2, v["net"]))
 
     # every drilled pad's HOLE, on every layer routed here: the board's copper-to-hole from its wall
     # (DRC's hole_clearance, every copper layer, pad or no pad).  An NPTH whose pad lists no copper
@@ -743,7 +849,7 @@ def main():
     ns_ = 0
     for s_ in shapes:
         L_, T_, R_, B_ = s_["bb"]
-        m_ = maze.PADCLR + max(maze.W / 2, maze.VIA_R) + G.step
+        m_ = SC(s_["clr"]) + max(maze.W / 2, maze.VIA_R) + G.step
         if R_ < gx0 - m_ or L_ > gx1 + m_ or B_ < gy0 - m_ or T_ > gy1 + m_:
             continue
         ns_ += 1
@@ -777,17 +883,17 @@ def main():
             continue
         G.mark(f"{shape_name(s_)}, on the board -- copper, not a zone: no track through it on its layer, "
                "no via in it on any layer")
-        rv_ = maze.PADCLR + maze.VIA_R
+        rv_ = SC(s_["clr"]) + maze.VIA_R
         G.block(["via"], {c for c, d_ in dist.items() if d_ * d_ <= rv_ * rv_ + G.eps})
         if lay_ in LAYERS:
             def rt_(c):
                 F = field_of(*G.xy(c))
-                cl = F["_clr"] - F["_shrink"] if (F is not None and lay_ in F.get("open", [])) else maze.PADCLR
+                cl = F["_clr"] - F["_shrink"] if (F is not None and lay_ in F.get("open", [])) else SC(s_["clr"])
                 return cl + maze.W / 2
             G.block([lay_], {c for c, d_ in dist.items() if d_ * d_ <= rt_(c) ** 2 + G.eps})
             Fc = field_of((L_ + R_) / 2, (T_ + B_) / 2)
             PSHAPE[lay_].append((s_, (Fc["_clr"] - Fc["_shrink"] if (Fc is not None and lay_ in Fc.get("open", []))
-                                      else maze.PADCLR) + maze.W / 2, s_["net"]))
+                                      else SC(s_["clr"])) + maze.W / 2, s_["net"]))
     if ns_:
         print(f"{ns_} copper polygon(s) (net-tied PCB_SHAPEs) in the window")
 
@@ -953,7 +1059,8 @@ def main():
               f"{ocost}/cell, aprons for " + ", ".join(aprons))
 
     for n in nets:
-        G.register(n, "fixed", tracks=fixed[n]["tracks"] + fixed_poly.get(n, []), vias=fixed[n]["vias"])
+        G.register(n, "fixed", tracks=fixed[n]["tracks"] + fixed_poly.get(n, []) + pad_poly.get(n, []),
+                   vias=fixed[n]["vias"])
         for x, y, _r, _s in fixed[n]["vias"]:
             # its own dog-bone is a legal layer change for it, and so is the via it starts on
             if (FO and in_field(x, y)) or math.dist((x, y), tuple(S["nets"][n]["src"])) < 0.05:
@@ -1463,8 +1570,8 @@ def main():
                 t = max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)) if L2 else 0.0
                 if math.hypot(a[0] + t * dx - x, a[1] + t * dy - y) < r - 1e-4:
                     return True
-            # ... or another net's copper polygon on this layer nearer than its track halo
-            for s_, r, n_ in PSHAPE.get(layer, ()):
+            # ... or another net's copper polygon or pad on this layer nearer than its track halo
+            for s_, r, n_ in list(PSHAPE.get(layer, ())) + [(q_, r_, q_["net"]) for q_, r_ in PADSH.get(layer, ())]:
                 if n_ == net:
                     continue
                 L_, T_, R_, B_ = s_["bb"]
