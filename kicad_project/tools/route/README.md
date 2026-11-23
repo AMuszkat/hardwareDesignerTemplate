@@ -389,6 +389,17 @@ again from it — same UUID, same padstack flags — then reads them back
   `kicad_project/`: apply, rip, apply, rip equal to the board before item by
   item; an old-format rip then re-apply; a missing ripvia exits 2 with no
   lock left and the next apply passes).
+- **A board put back from its backup by `cp`, not by `rip`, leaves the
+  manifests of what it undid.** TRAP (board1, 2026-11-23): a real-board
+  script applied a group, failed on a later step, and its `fail()` copied
+  the pre-run backup back. `routing/<group>.applied.json` stayed and now
+  described copper that was gone. The re-run's apply of that group stopped
+  at `... is already applied; rip it first, or --force` (exit 3). `--force`
+  would rip by UUIDs that no longer exist. WAY AROUND: a script that
+  restores a backup also sets aside every `<board>/routing/*.applied.json`
+  newer than that backup (`find ... -newer $BAK`, renamed `.restored-HHMM`).
+  `route.py status` then lists only what is on the board. PROOF: the re-run
+  applied both groups ("applied R_U1W_nwp2 ... read back and matched").
 
 `route.py angles` audits the copper already on the board with the same code
 `check` runs on the scratch copy (the short-diagonal test no longer depends on
