@@ -184,8 +184,10 @@ def _geom_of(B, a, refill, P):
                 cand.append((f"{f.GetReference()}.{p.GetNumber()}", f"{f.GetReference()}.{p.GetNumber()}",
                              mm(q.x), mm(q.y), s, None))
                 items += s
-    if not fill and not items:
+    lenient = getattr(a, "lenient", False)        # pourdrop.py: one layer of several may hold no feed, no load, no copper
+    if not fill and not items and not lenient:
         sys.exit(f"{a.net} has no copper on {a.layer}")
+    via_pads = {}                                 # via label -> the pad numbers feed_vias found it serving
 
     def src_of(c, why=""):
         d = {"label": c[1] + why, "rings": c[4]}
@@ -205,6 +207,7 @@ def _geom_of(B, a, refill, P):
             for c in vias:
                 if p.HitTest(pn.VECTOR2I(pn.FromMM(c[2]), pn.FromMM(c[3]))):
                     out.append((c, f" (in {ref}.{p.GetNumber()})"))
+                    via_pads.setdefault(c[1], set()).add(p.GetNumber())
             for t in b.GetTracks():
                 if t.Type() == pn.PCB_VIA_T or short(t.GetNetname()) != a.net or not p.IsOnLayer(t.GetLayer()):
                     continue
@@ -214,6 +217,7 @@ def _geom_of(B, a, refill, P):
                     for c in vias:
                         if math.hypot(c[2] - mm(e1.x), c[3] - mm(e1.y)) < 0.005:
                             out.append((c, f" (linked to {ref}.{p.GetNumber()})"))
+                            via_pads.setdefault(c[1], set()).add(p.GetNumber())
         seen, uniq = set(), []
         for c, why in out:
             if c[1] not in seen:
@@ -226,6 +230,8 @@ def _geom_of(B, a, refill, P):
         if "," in tok:
             x, y = (float(v) for v in tok.split(","))
             best = min(cand, key=lambda c: math.hypot(c[2] - x, c[3] - y), default=None)
+            if (best is None or math.hypot(best[2] - x, best[3] - y) > 0.3) and lenient:
+                continue
             if best is None or math.hypot(best[2] - x, best[3] - y) > 0.3:
                 sys.exit(f"--from {tok}: no {a.net} via or pad on {a.layer} within 0.3 mm")
             srcs.append(src_of(best))
@@ -237,6 +243,8 @@ def _geom_of(B, a, refill, P):
                 srcs += [src_of(c) for c in hit]
                 continue
             fv = feed_vias(ref, num) if ref in B.fps else []
+            if not fv and lenient:
+                continue
             if not fv:
                 sys.exit(f"--from {tok}: no pad of {a.net} on {a.layer}, and no {a.net} via in or linked "
                          f"straight to its pad (name its feed vias by 'x,y')")
@@ -246,17 +254,21 @@ def _geom_of(B, a, refill, P):
 
     sink = None
     sink_rings = load_ref = None
+    sink_items = []                               # REF.balls: each ball via / pad, with the pads it serves
     toks = a.sto.split(",")
     if a.sto.endswith(".balls"):
         ref = a.sto[:-len(".balls")]
         if ref not in B.fps:
             sys.exit(f"--to {a.sto}: {ref} is not a part on the board")
+        via_pads.clear()
         lv = [c for c in cand if c[0] != "via" and c[0].split(".")[0] == ref] + [c for c, _why in feed_vias(ref, "")]
-        if not lv:
+        if not lv and not lenient:
             sys.exit(f"--to {a.sto}: no pad of {a.net} on {a.layer} and no {a.net} via in or linked straight to "
                      f"one of {ref}'s pads (give the load as a box round its balls)")
         sink = list(B.courtyard(B.fps[ref]))
         sink_rings = [poly for c in lv for poly in c[4]]
+        sink_items = [{"at": [c[2], c[3]], "rings": c[4], "label": c[1],
+                       "pads": sorted(via_pads.get(c[1], ())) if c[0] == "via" else [c[0].split(".", 1)[1]]} for c in lv]
         n_pads = sum(1 for p in B.fps[ref].Pads() if short(p.GetNetname()) == a.net)
         sink_label = f"{ref}'s {len(lv)} ball via(s) / pad(s) on the layer ({n_pads} pads on the net)"
         load_ref = ref
@@ -276,7 +288,9 @@ def _geom_of(B, a, refill, P):
         balls = sum(1 for p in B.fps[balls_ref].Pads() if short(p.GetNetname()) == a.net)
     return {"board": str(B.pcb), "net": a.net, "layer": a.layer, "zones": len(zones),
             "fill": fill, "items": items, "sources": srcs, "sink": sink, "sink_label": sink_label,
-            "sink_rings": sink_rings, "balls_ref": balls_ref, "balls": balls}
+            "sink_rings": sink_rings, "sink_items": sink_items,
+            "vias": [{"at": [c[2], c[3]], "rings": c[4]} for c in cand if c[0] == "via"],
+            "balls_ref": balls_ref, "balls": balls}
 
 
 # ---------------------------------------------------------------------------

@@ -1750,6 +1750,48 @@ is not modelled.
   door reads 3.0 to the box and 0.5 to the ball vias. With one or two ball vias the least cut is
   their own rings (2 pi x the pad's radius each): a box round them then.
 
+## `pourdrop.py` — a rail's DC drop through its pours, feed vias to every ball via
+
+    tools/kpy tools/route/pourdrop.py --board board1 --net VDD_ARM --layers In4.Cu --from '34.73,8.35;34.73,9.50' --to U1.balls --amps 2.2 --copper-um 35 --hot-c 105 --max-mohm 5.7
+    tools/kpy tools/route/pourdrop.py --board board1 --net VDD_GPU_VPU_DRAM --layers In4.Cu,In5.Cu --from L102.2 --to U1.balls --amps 2.5 --copper-um 35 --hot-c 105 [--save-geom F | --geom F] [--json]
+    tools/kpy tools/route/pourdrop.py --selftest
+
+A vendor's IR budget ("VDD_ARM < 7.7 mohm from the PMIC to the balls") is a resistance, and no
+width measure gives it: `pourneck.py` reads the least cut, which says where a plane is narrow and
+nothing about what the narrow place costs. `pourdrop.py` solves the sheet: the net's filled copper
+on every layer named, on one raster (0.025 mm), each via and each ball pad one node tied across its
+layers, the feed vias held at 0 V, each ball via sinking `amps` x (the balls it serves / the
+part's balls of the net). It prints the worst and the mean resistance to a ball via and where the
+worst is; `--max-mohm` judges it. FAIL also when a ball via is not reached from the feeds or a
+ball has no via (exit 1); exit 2 on a board it cannot read. About 70 s a rail with the refill,
+10 s from a saved geometry (`--geom`).
+
+- **Copper is hot: `--hot-c` is the temperature the budget is held at**, never 20 C. 35 um reads
+  0.493 mohm/sq at 20 C and 0.657 at 105 C (+33 %). TRAP (board1 Q111, 2026-11-23): the board's
+  own count of a two-layer rail read 3.9 mohm with cold copper; the same copper reads 5.05 hot
+  (this tool at 20 C: 3.79).
+- **What it counts is the pours only.** Not in the figure, and owed by the limit: the feed vias'
+  barrels from the regulator's layer to the pour, the ball vias' barrels from the pour to the
+  balls' layer, and the stub from via to ball. So the `--max-mohm` of a plane is the vendor's
+  path figure LESS that series part (a study's number: board1 `s24_field_web`, 7.7 -> 5.7 and
+  7.8 -> 6.4), never the vendor's figure itself. A via between two layers of the rail is an ideal
+  tie (its barrel is not charged); balls of one rail are taken to draw equal current.
+- **Why it, and not a width, inside a ball field.** Between a BGA's antipads a plane's webs are
+  under any width-for-current figure by construction (0.5 mm pitch: under 0.4 mm a web), many in
+  parallel. A web's heat is bounded by the voltage across the rail alone (`studies/common.py
+  joule_rise_bound`, V^2 / 8 k rho: 20 mV in hot copper is under 6 K), so a rail inside its drop
+  budget cannot overheat any web, and the drop is what the webs cost. Outside the field the
+  IPC width still applies (`pour neck ... to <the field's box>`).
+- **As a review finding's check**: `pour drop | NET LAYER[+LAYER]: from (x, y), (x, y) to REF.balls,
+  2.5 A, <= 6.4 mohm, 35 um, 105 C` (feeds may be `REF` / `REF.PIN`; `, raster 0.025 mm` optional),
+  in `checks.py`, so `route.py audit --findings` and a guide row run it. board1 (D130): VDD_ARM
+  In4 5.36 of 5.7 PASS; VDD_GPU_VPU_DRAM 9.49 of 6.4 FAIL on In4 alone, 5.05 PASS with its second
+  pour on In5.
+- `--selftest` holds seven cases with a hand figure: a strip (9.6 squares), the same on two tied
+  layers (4.8), a second layer fed through one via, a disc (ln(R/r) / 2 pi squares), an L with a
+  3 : 1 current share, a gap (FAIL: not reached) and a ball with no via (FAIL: not served). A
+  round pad's edge on a raster costs about 1.5 % at 0.05 mm; the tolerances scale with the raster.
+
 ## `stitch.py` — stitching vias and GND pad drops, as a plan
 
     tools/kpy tools/route/stitch.py --board board2 --plan routing/R6_pours.json --net GND --pitch 5 --merge --out routing/R6_gnd.json

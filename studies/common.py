@@ -141,6 +141,50 @@ def via_barrel(drill_mm, wall_mm, length_mm, rho20_ohm_mm, tcr_per_k=0.0, hot_c=
     return dict(area=area, r=r, rise=rise)
 
 
+def joule_rise_bound(drop_v, rho_ohm_mm, k_w_mmk):
+    """The most a conductor can heat itself, from the voltage across it alone: K.
+
+        dT <= V^2 / (8 k rho)
+
+    above the hottest of the terminals it is sunk into, for ANY shape, any
+    length, any number of terminals -- a neck, a web between antipads, a via
+    barrel, a whole pour -- with V the largest drop between two of them and
+    everything that is not a terminal taken as an insulator (so laminate and
+    air only help).  Kohlrausch's relation: with div(grad phi) = 0 and
+    k div(grad T) = -|grad phi|^2 / rho, u = T + (phi - V/2)^2 / (2 k rho) is
+    harmonic with no flux through the insulated faces, so its maximum is on a
+    terminal, where it is at most T_terminal + V^2 / (8 k rho).  rho and k at
+    the copper's temperature (their product is the Wiedemann-Franz L T: hot
+    copper bounds lower for the same volts).
+
+    What it is for: a rail held to a DC drop (a vendor's IR budget) cannot
+    overheat any part of its path, however narrow -- 20 mV in hot copper is
+    under 6 K.  A width rule (IPC-2221) is then needed only where no drop
+    limit binds, and the drop itself is what a narrow place costs.
+    """
+    return drop_v ** 2 / (8.0 * k_w_mmk * rho_ohm_mm)
+
+
+def rod_between_sinks(width_mm, thick_mm, length_mm, rho_ohm_mm, k_w_mmk=None):
+    """A straight piece of copper `length_mm` long carrying current end to end,
+    both ends sunk into wide copper -> dict(area mm^2, r ohm, rise K per A^2 or None).
+    rise is the midpoint's, I^2 rho L^2 / (8 k A^2), the laminate an insulator:
+    an upper bound for a web between two round antipads when `width_mm` is the
+    web's narrowest and `length_mm` an antipad's diameter (the web is that
+    narrow at one point only)."""
+    area = width_mm * thick_mm
+    r = rho_ohm_mm * length_mm / area
+    rise = rho_ohm_mm * length_mm ** 2 / (8 * k_w_mmk * area ** 2) if k_w_mmk else None
+    return dict(area=area, r=r, rise=rise)
+
+
+def ipc2221_width_mm(amps, thick_mm, rise_k=10.0, internal=True):
+    """The width IPC-2221's fit asks of a planar conductor `thick_mm` thick for `amps`: mm
+    (ipc2221_a inverted)."""
+    area_mil2 = (amps / ((0.024 if internal else 0.048) * rise_k ** 0.44)) ** (1 / 0.725)
+    return area_mil2 * 0.00064516 / thick_mm
+
+
 def ipc2221_a(area_mm2, rise_k=10.0, internal=True):
     """IPC-2221's current fit for a planar conductor: I = k dT^0.44 A^0.725, A in mil^2,
     k 0.024 internal / 0.048 external."""

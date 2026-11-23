@@ -41,6 +41,20 @@ carries (`handoff/findings.json`, `route.py audit --findings`):
                                                      `, source disc 0.75 mm` measures outside that
                                                      radius of each feed via and judges the via's
                                                      join, `, min width 1.5 mm` a width too) |
+  | pour drop     | VDD_ARM In4.Cu: from (34.73, 8.35), (34.73, 9.50) to U1.balls, 2.2 A,
+                    <= 5.7 mohm, 35 um, 105 C     | the net's pours on the layer(s) (`In4.Cu+In5.Cu`:
+                                                     tied at every via of the net) drop no more than
+                                                     this, in milliohm of the whole current, between
+                                                     the feeds and ANY of the part's ball vias, the
+                                                     current shared equally among its balls, copper
+                                                     of that thickness at that temperature; every
+                                                     ball via reached and every ball of the net with
+                                                     a via (`pourdrop.py`, the sheet solved on the
+                                                     refilled fill; `, raster 0.025 mm` to set it).
+                                                     The measure INSIDE a fine-pitch ball field, where
+                                                     the IPC width of `pour neck` cannot be had: the
+                                                     limit is the page's path resistance less the
+                                                     barrels and stubs the solve leaves out |
 
 Everything here is plain geometry on lists (`geometry(B)` reads them from the board once), so
 `tests/test_findings.py` drives it without KiCad.  An inner-layer pair rule on padded vias is
@@ -50,9 +64,9 @@ import math
 import re
 from collections import defaultdict
 
-RULES = ("cap reach", "layers apart", "stitch via", "neck length", "distance", "pour neck")
+RULES = ("cap reach", "layers apart", "stitch via", "neck length", "distance", "pour neck", "pour drop")
 KEYS = {"cap reach": "cap_reach", "layers apart": "layers_apart", "stitch via": "stitch",
-        "neck length": "neck", "distance": "distance", "pour neck": "pour_neck"}
+        "neck length": "neck", "distance": "distance", "pour neck": "pour_neck", "pour drop": "pour_drop"}
 EPS = 1e-6
 
 
@@ -134,6 +148,26 @@ def parse(rule, val, s, G):
                                                   raster=float(m.group(12)) if m.group(12) else 0.05,
                                                   source_disc=float(m.group(13)) if m.group(13) else None,
                                                   min_width=float(m.group(14)) if m.group(14) else None))
+    elif rule == "pour drop":
+        num = r"(-?\d+(?:\.\d+)?)"
+        pt = r"\(\s*" + num + r"\s*,\s*" + num + r"\s*\)"
+        m = re.fullmatch(r"\s*(\S+)\s+([A-Za-z0-9.]+(?:\s*\+\s*[A-Za-z0-9.]+)*)\s*:\s*from\s+(.+?)\s+to\s+"
+                         r"([A-Za-z]+\d+\.balls)\s*,\s*" + num + r"\s*A\s*,\s*<=\s*" + num + r"\s*mohm\s*,\s*" + num
+                         + r"\s*um\s*,\s*" + num + r"\s*C\s*(?:,\s*raster\s+" + num + r"\s*mm\s*)?", val)
+        feeds = []
+        if m:
+            rest = m.group(3)
+            for tok in re.finditer(pt + r"|([A-Za-z]+\d+(?:\.[A-Za-z0-9]+)?)", rest):
+                feeds.append(f"{tok.group(1)},{tok.group(2)}" if tok.group(1) else tok.group(3))
+            left = re.sub(pt + r"|[A-Za-z]+\d+(?:\.[A-Za-z0-9]+)?|[\s,]", "", rest)
+        if not m or not feeds or left:
+            raise RuleError("'pour drop' takes 'NET LAYER[+LAYER]: from (x, y), (x, y) | REF[.PIN], ... to REF.balls, "
+                            "2.5 A, <= 6.4 mohm, 35 um, 105 C' (then, optional: ', raster 0.025 mm')")
+        G.setdefault("pour_drop", []).append(dict(s, net=m.group(1), layers=[x.strip() for x in m.group(2).split("+")],
+                                                  feeds=feeds, to=m.group(4), amps=float(m.group(5)),
+                                                  max_mohm=float(m.group(6)), copper_um=float(m.group(7)),
+                                                  hot_c=float(m.group(8)),
+                                                  raster=float(m.group(9)) if m.group(9) else 0.025))
     else:
         raise RuleError(f"not a check rule: {rule!r}")
 
@@ -362,6 +396,35 @@ def pour_neck(geo, rule):
             f"{out['need_mm']:.3f} mm{mw} -- {where}{joins}"]
 
 
+def pour_drop(geo, rule):
+    """tools/route/pourdrop.py on the loaded board (zones refilled in memory, once per run): the
+    sheet solve in tools/.venv.  Without a board (a geometry built by hand) the rule cannot be judged."""
+    B = geo.get("board")
+    name = f"{rule['net']} {'+'.join(rule['layers'])}"
+    if B is None:
+        return ["pour drop needs the board itself (geometry(B)); a hand-built geometry cannot judge it"]
+    import pourdrop as PD
+    import pourneck as PN
+    from types import SimpleNamespace
+    a = SimpleNamespace(net=rule["net"], layers=rule["layers"], sfrom=";".join(rule["feeds"]), sto=rule["to"])
+    try:
+        g = PD.geoms_of(B, a, refill=not geo.get("_refilled"))
+    except PN.Fail as e:
+        return [f"{name}: {e}"]
+    geo["_refilled"] = True
+    out, rc = PD.measure(g, rule["raster"], rule["amps"], rule["copper_um"], rule["hot_c"], rule["max_mohm"])
+    if rc == 2 or "verdict" not in out:
+        return [f"{name}: {out.get('error', 'no result')}"]
+    if out["verdict"] == "PASS":
+        return []
+    sites = []
+    if "worst_mohm" in out and out["worst_mohm"] > rule["max_mohm"]:
+        sites.append(f"{name}: {out['worst_mohm']:.2f} mohm to the ball via at ({out['worst_at'][0]:.2f}, "
+                     f"{out['worst_at'][1]:.2f}), {rule['max_mohm']:g} allowed ({out['worst_mv']:.1f} mV at "
+                     f"{rule['amps']:g} A, {rule['copper_um']:g} um at {rule['hot_c']:g} C)")
+    return sites + [f"{name}: {f}" for f in PD.faults(out)]
+
+
 # -- run ------------------------------------------------------------------------------------
 
 def run(G, geo, classes_of=None, full_width=None):
@@ -377,7 +440,8 @@ def run(G, geo, classes_of=None, full_width=None):
                      "stitch": lambda: stitch(geo, rule, classes_of),
                      "neck": lambda: neck(geo, rule, classes_of, full_width),
                      "distance": lambda: distance(geo, rule),
-                     "pour_neck": lambda: pour_neck(geo, rule)}[key]()
+                     "pour_neck": lambda: pour_neck(geo, rule),
+                     "pour_drop": lambda: pour_drop(geo, rule)}[key]()
             out.append((name, key, rule, sites))
     return out
 
@@ -395,6 +459,8 @@ def label(key, rule):
         return (f"{rule['class']}: " if rule.get("class") else "") + f"{rule['max']} mm"
     if key == "pour_neck":
         return f"{rule['net']} {rule['layer']}: {rule['amps']:g} A across every cut"
+    if key == "pour_drop":
+        return f"{rule['net']} {'+'.join(rule['layers'])}: <= {rule['max_mohm']:g} mohm to every ball via of {rule['to'][:-6]}"
     return f"{rule['a']} to {rule['b']} {rule['op']} {rule['mm']} mm"
 
 

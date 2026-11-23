@@ -166,7 +166,7 @@ the table for each:
 
 The rules are the routing guide's check rules (`kicad_project/tools/route/
 checks.py`: `cap reach`, `layers apart`, `stitch via`, `neck length`,
-`distance`); the publisher validates the line with the board's own parser
+`distance`, `pour neck`, `pour drop`); the publisher validates the line with the board's own parser
 and writes them all to `handoff/findings.json`. The board runs them with
 `route.py audit --findings` before it asks again, and the next snapshot runs
 them as its `findings` gate — closed findings included, so the one that
@@ -175,7 +175,11 @@ that feeds the balls** -- `to REF.balls` (the part's ball vias on the
 layer), never the field box or the courtyard: every piece of the net's
 copper inside a box is load, so a lobe that enters the field and feeds no
 ball passes it (board1 RV64.2 passed at 3.01 mm with the rail's 19 balls
-behind one 0.57 mm door, D129). Never delete a Check line when its finding
+behind one 0.57 mm door, D129). **Inside a ball field a width is the wrong
+measure** (every web between antipads is under it): the pair is `pour neck`
+to the field's box, for the copper up to the field, and `pour drop ... to
+REF.balls, <= X mohm` for the field itself, X the handoff's plane limit
+(board1 D130). Never delete a Check line when its finding
 closes. **Run every new Check line before you publish it**:
 `route.py audit --findings --board <a copy's ABSOLUTE path>` (a relative one
 resolves against the board tools' folder: "no such board") on a copy of the snapshot with
