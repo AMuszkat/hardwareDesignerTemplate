@@ -14,6 +14,8 @@ THE SPEC
    "window": [x0, y0, x1, y1], "pitch": 0.2, "width": 0.2,
    "clearance": 0.15,        # between the nets routed here (their class; raised to the
                              # strictest class among them, as KiCad holds the stricter of two)
+   "own_clearance": 0.1016,  # optional: between the routed nets, NOT raised to their class -- only
+                             # where a custom DRC rule grants it (a bus's own lines); check proves it
    "padclr": 0.2,            # to everything else: a FLOOR -- each static item is kept at the
                              # stricter of this, its own clearance (class, local override) and
                              # the routed nets' class
@@ -535,7 +537,15 @@ def main():
     # to the routed nets' -- one padclr for all of them took an SE_50 pad (0.2032) at 0.1016, and
     # PHY_LED1 came 0.149 from U200.19 (board1 P_PHY2).  Inside a field its area rule holds, as before.
     RCLR = max([NETCLR.get(n, 0.0) for n in nets] + [0.0])
-    if RCLR > maze.CLR + 1e-9:
+    if S.get("own_clearance") is not None:
+        # a custom DRC rule sets the group's OWN nets apart at less than their class (board1 14_fab's
+        # 'fab: eMMC bus, own lines', 0.1016 between two EMMC_* nets): the spec says so and the raise to
+        # the class is skipped between the routed nets only -- to foreign copper RCLR still holds (SC),
+        # and route.py check's DRC is the proof that the rule exists
+        maze.CLR = float(S["own_clearance"])
+        print(f"clearance between the routed nets {maze.CLR} (spec 'own_clearance'; their class {RCLR} "
+              "holds to everything else)")
+    elif RCLR > maze.CLR + 1e-9:
         print(f"clearance between the routed nets {maze.CLR} -> {RCLR}: the strictest class among them "
               "(KiCad holds the stricter of two nets' clearances)")
         maze.CLR = RCLR
