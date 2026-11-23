@@ -1601,6 +1601,10 @@ def cmd_drc(a):
             "cannot run, and a run without it reads exactly like a pass", 4)
     import drccache
     d, msg = drccache.report(pcb, board_dir)
+    if a.out and d is not None:                      # the whole report, item positions and all
+        import json
+        Path(a.out).write_text(json.dumps(d, indent=1))
+        print(f"report: {a.out}")
     lines, rc = drc_summary(Board(a.board), d, msg)
     if rc == 4:
         die(lines[-1], 4)
@@ -1818,7 +1822,7 @@ def main():
     ap.add_argument("--box", help="render: X0,Y0,X1,Y1 in board mm")
     ap.add_argument("--margin", type=float, default=2.0, help="render: mm round the --refs courtyards")
     ap.add_argument("--scale", type=float, default=6.0, help="render: pixels per PDF point")
-    ap.add_argument("--out", help="render: the PNG to write")
+    ap.add_argument("--out", help="render: the PNG to write; drc: also write the full DRC JSON report there")
     a = ap.parse_args()
     a.board = board_dir_arg(a.board)
     if a.moves:
