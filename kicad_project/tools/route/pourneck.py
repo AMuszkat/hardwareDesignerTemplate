@@ -4,6 +4,8 @@
     tools/kpy tools/route/pourneck.py --board board1 --net VDD_ARM --layer In4.Cu \
         --from '34.73,8.35;34.73,9.50' --to 22.5,15.0,35.5,28.0 \
         --amps 2.2 --rise 10 --copper-um 35 [--raster 0.05] [--json]
+    tools/kpy tools/route/pourneck.py --board board1 --net VDD_SOC --layer In4.Cu --from C63 --to U1 \
+        --source-disc 0.75 --min-width 1.5
     tools/.venv/bin/python tools/route/pourneck.py --selftest
 
 A section across a pour's long axis (`pour.py --section`) measures straight cuts; a
@@ -40,7 +42,17 @@ The measure:
     less -- this tool does not split the field, so it judges the whole current).
 
 --from: ';'-separated items: 'x,y' (the net's via or pad on --layer at that point,
-within 0.3 mm), 'REF' or 'REF.PIN' (that part's pads of the net on --layer).
+within 0.3 mm), 'REF' or 'REF.PIN' (that part's pads of the net on --layer; for a part on
+another layer, the net's vias in its pad or joined to it by one straight track: its feed vias).
+
+--source-disc R: the neck is measured OUTSIDE R mm of each feed VIA's centre -- the source grows
+to every copper cell of the net inside that disc (a layout rule that sets a pour's width "outside
+0.75 mm of the feed via": the ring round a lone 0.4 mm via is 1.26 mm and never reads wider).
+Inside the disc the pour must meet the via's pad SOLID over at least half its ring: sampled just
+outside the pad (pad + 0.02 mm) and 0.05 mm further, an arc whose angle shrinks outward (a
+spoke's parallel sides) is a spoke and does not count.  --min-width W gives the verdict on a
+width (a page's "at least 1.5 mm wide") with or without --amps; with --source-disc the join is
+part of it.
 --to: 'x0,y0,x1,y1' (the net's copper with its cell centre inside the box), or 'REF'
 (that part's courtyard box).  Exit 0 PASS, 1 FAIL, 2 bad input.
 
@@ -149,7 +161,11 @@ def _geom_of(B, a, refill, P):
                 continue
             s = shape(t)
             p = t.GetPosition()
-            cand.append(("via", f"via ({mm(p.x):.3f}, {mm(p.y):.3f})", mm(p.x), mm(p.y), s))
+            try:
+                vw = mm(t.GetWidth(lid))
+            except TypeError:
+                vw = mm(t.GetWidth())
+            cand.append(("via", f"via ({mm(p.x):.3f}, {mm(p.y):.3f})", mm(p.x), mm(p.y), s, vw / 2))
             items += s
         elif t.GetLayer() == lid:
             items += shape(t)
@@ -159,10 +175,44 @@ def _geom_of(B, a, refill, P):
                 s = shape(p)
                 q = p.GetPosition()
                 cand.append((f"{f.GetReference()}.{p.GetNumber()}", f"{f.GetReference()}.{p.GetNumber()}",
-                             mm(q.x), mm(q.y), s))
+                             mm(q.x), mm(q.y), s, None))
                 items += s
     if not fill and not items:
         sys.exit(f"{a.net} has no copper on {a.layer}")
+
+    def src_of(c, why=""):
+        d = {"label": c[1] + why, "rings": c[4]}
+        if c[0] == "via":
+            d.update({"at": [c[2], c[3]], "pad_r": c[5]})
+        return d
+
+    def feed_vias(ref, num):
+        """The net's vias that feed REF's pads of the net from another layer: a via whose centre is in
+        the pad (via in pad), or one straight track of the net from inside the pad to the via's centre
+        (#44's link).  For an SMD part on another layer than --layer."""
+        vias = [c for c in cand if c[0] == "via"]
+        out = []
+        for p in B.fps[ref].Pads():
+            if short(p.GetNetname()) != a.net or (num and p.GetNumber() != num):
+                continue
+            for c in vias:
+                if p.HitTest(pn.VECTOR2I(pn.FromMM(c[2]), pn.FromMM(c[3]))):
+                    out.append((c, f" (in {ref}.{p.GetNumber()})"))
+            for t in b.GetTracks():
+                if t.Type() == pn.PCB_VIA_T or short(t.GetNetname()) != a.net or not p.IsOnLayer(t.GetLayer()):
+                    continue
+                for e0, e1 in ((t.GetStart(), t.GetEnd()), (t.GetEnd(), t.GetStart())):
+                    if not p.HitTest(e0):
+                        continue
+                    for c in vias:
+                        if math.hypot(c[2] - mm(e1.x), c[3] - mm(e1.y)) < 0.005:
+                            out.append((c, f" (linked to {ref}.{p.GetNumber()})"))
+        seen, uniq = set(), []
+        for c, why in out:
+            if c[1] not in seen:
+                seen.add(c[1])
+                uniq.append((c, why))
+        return uniq
 
     srcs = []
     for tok in [t.strip() for t in a.sfrom.split(";") if t.strip()]:
@@ -171,15 +221,21 @@ def _geom_of(B, a, refill, P):
             best = min(cand, key=lambda c: math.hypot(c[2] - x, c[3] - y), default=None)
             if best is None or math.hypot(best[2] - x, best[3] - y) > 0.3:
                 sys.exit(f"--from {tok}: no {a.net} via or pad on {a.layer} within 0.3 mm")
-            srcs.append({"label": best[1], "rings": best[4]})
+            srcs.append(src_of(best))
         else:
             ref, _, num = tok.partition(".")
             hit = [c for c in cand if c[0] != "via" and c[0].split(".")[0] == ref
                    and (not num or c[0].split(".", 1)[1] == num)]
-            if not hit:
-                sys.exit(f"--from {tok}: no pad of {a.net} on {a.layer} (an SMD part on another layer: "
-                         f"name its feed vias by 'x,y')")
-            srcs += [{"label": c[1], "rings": c[4]} for c in hit]
+            if hit:
+                srcs += [src_of(c) for c in hit]
+                continue
+            fv = feed_vias(ref, num) if ref in B.fps else []
+            if not fv:
+                sys.exit(f"--from {tok}: no pad of {a.net} on {a.layer}, and no {a.net} via in or linked "
+                         f"straight to its pad (name its feed vias by 'x,y')")
+            srcs += [src_of(c, why) for c, why in fv]
+    if getattr(a, "source_disc", None) and not any("at" in s_ for s_ in srcs):
+        sys.exit("--source-disc needs a feed VIA in --from ('x,y' of a via, or REF whose pad a via feeds)")
 
     sink = None
     toks = a.sto.split(",")
@@ -206,7 +262,60 @@ def _geom_of(B, a, refill, P):
 # the flow, in tools/.venv
 # ---------------------------------------------------------------------------
 
-def solve(g, raster):
+def ring_join(fill, at, pad_r, n=720, gap=0.02, step=0.05, solid_ratio=0.9):
+    """How the pour (fill polygons only) meets a via's pad: sample a circle just outside the pad
+    (pad_r + gap) and one `step` further out.  Returns the degrees joined, the degrees joined SOLID
+    and the arcs judged spokes.  A thermal spoke is a strip of constant width, so its angle shrinks
+    as the radius grows (0.2 mm at r 0.22 -> 0.27: 0.81 of it); a solid join's arc keeps its angle
+    (an antipad's edge moves slowly).  An arc whose outer coverage is under `solid_ratio` of its
+    inner one is a spoke.  A sliver between two antipads can read as one: conservative."""
+    import numpy as np
+    from matplotlib.path import Path as MPath
+    th = np.arange(n) * 2 * math.pi / n
+
+    def cover(r):
+        pts = np.column_stack([at[0] + r * np.cos(th), at[1] + r * np.sin(th)])
+        m = np.zeros(n, bool)
+        for poly in fill:
+            if len(poly[0]) < 3:
+                continue
+            sub = MPath(np.asarray(poly[0])).contains_points(pts)
+            for hole in poly[1:]:
+                if len(hole) >= 3:
+                    sub &= ~MPath(np.asarray(hole)).contains_points(pts)
+            m |= sub
+        return m
+    c1, c2 = cover(pad_r + gap), cover(pad_r + gap + step)
+    deg = 360.0 / n
+    if c1.all():
+        arcs = [np.arange(n)]
+    elif not c1.any():
+        arcs = []
+    else:
+        k0 = int(np.argmin(c1))                        # start the walk on a gap, so no arc wraps
+        order = (np.arange(n) + k0) % n
+        arcs, cur = [], []
+        for k in order:
+            if c1[k]:
+                cur.append(k)
+            elif cur:
+                arcs.append(np.array(cur))
+                cur = []
+        if cur:
+            arcs.append(np.array(cur))
+    solid, spokes = 0.0, []
+    for arc in arcs:
+        ratio = float(c2[arc].mean())
+        if ratio >= solid_ratio:
+            solid += len(arc) * deg
+        else:
+            mid = float(np.degrees(th[arc[len(arc) // 2]]))
+            spokes.append({"deg": round(len(arc) * deg, 1), "at_deg": round(mid, 1), "outer_ratio": round(ratio, 2)})
+    return {"joined_deg": round(float(c1.sum()) * deg, 1), "solid_deg": round(solid, 1), "spokes": spokes,
+            "ok": solid >= 180.0 - 1e-6}
+
+
+def solve(g, raster, disc=None):
     import numpy as np
     from matplotlib.path import Path as MPath
     from scipy import ndimage
@@ -244,6 +353,18 @@ def solve(g, raster):
 
     cu = paint(g["fill"]) | paint(g["items"])
     src = paint([p for s in g["sources"] for p in s["rings"]]) & cu
+    discs = []
+    if disc:
+        # D128 (board1 Q102): the neck is measured OUTSIDE `disc` mm of the feed via's centre -- the
+        # source grows to every copper cell inside that disc; the ring inside it is judged by ring_join.
+        for s_ in g["sources"]:
+            if "at" not in s_:
+                continue
+            vx, vy = s_["at"]
+            inside = ((cx[None, :] - vx) ** 2 + (cy[:, None] - vy) ** 2) <= disc * disc
+            src |= inside & cu
+            discs.append({"via": s_["label"], "at": s_["at"], "radius_mm": disc,
+                          **ring_join(g["fill"], s_["at"], s_["pad_r"])})
     bx = g["sink"]
     inbox = ((cx[None, :] >= bx[0]) & (cx[None, :] <= bx[2]) & (cy[:, None] >= bx[1]) & (cy[:, None] <= bx[3]))
     snk = inbox & cu & ~src
@@ -320,17 +441,28 @@ def solve(g, raster):
                        "x": [round(float(mid_x[sel].min()), 2), round(float(mid_x[sel].max()), 2)],
                        "y": [round(float(mid_y[sel].min()), 2), round(float(mid_y[sel].max()), 2)]})
     pieces.sort(key=lambda p: -p["width_mm"])
-    return {"width_mm": round(width + corr, 3), "raw_mm": round(width, 3), "cells": int(n), "grid": [int(nx), int(ny)],
-            "source_cells": int(src.sum()), "sink_cells": int(snk.sum()), "pieces": pieces}
+    out = {"width_mm": round(width + corr, 3), "raw_mm": round(width, 3), "cells": int(n), "grid": [int(nx), int(ny)],
+           "source_cells": int(src.sum()), "sink_cells": int(snk.sum()), "pieces": pieces}
+    if disc:
+        out.update({"source_disc_mm": disc, "discs": discs})
+    return out
 
 
 def judge(g, a):
     out = {"net": g["net"], "layer": g["layer"], "board": g.get("board"), "raster_mm": a.raster,
            "from": [s["label"] for s in g["sources"]], "to": g["sink_label"]}
-    r = solve(g, a.raster)
+    disc = getattr(a, "source_disc", None)
+    r = solve(g, a.raster, disc)
     out.update(r)
     if "error" in r:
         return out, 2
+    verdicts = []
+    if disc:
+        verdicts.append(all(d["ok"] for d in r["discs"]))
+    mw = getattr(a, "min_width", None)
+    if mw is not None:
+        out["min_width_mm"] = mw
+        verdicts.append(r["width_mm"] >= mw - 1e-9)
     amps = a.amps
     if amps is None and a.amps_per_ball is not None:
         if not g.get("balls"):
@@ -339,14 +471,17 @@ def judge(g, a):
         amps = a.amps_per_ball * g["balls"]
         out["balls"] = f"{g['balls']} of {g['balls_ref']}'s pads x {a.amps_per_ball:g} A"
     if amps is None:
-        return out, 0
+        if mw is None and not disc:
+            return out, 0
+        out["verdict"] = "PASS" if all(verdicts) else "FAIL"
+        return out, 0 if out["verdict"] == "PASS" else 1
     if a.rise is None or a.copper_um is None:
         out["error"] = "--amps needs --rise K and --copper-um UM (the board's layout page gives them)"
         return out, 2
     need = need_width_mm(amps, a.rise, a.copper_um)
     out.update({"amps": round(amps, 4), "need_mm": round(need, 3),
                 "carries_amps": round(carries_amps(r["width_mm"], a.rise, a.copper_um), 3),
-                "verdict": "PASS" if r["width_mm"] >= need - 1e-9 else "FAIL"})
+                "verdict": "PASS" if r["width_mm"] >= need - 1e-9 and all(verdicts) else "FAIL"})
     return out, 0 if out["verdict"] == "PASS" else 1
 
 
@@ -377,10 +512,20 @@ def show(out):
     for p in out["pieces"]:
         print(f"   cut piece {p['width_mm']:.3f} mm (raw {p['raw_mm']:.3f}, {p['ends']} edge end(s)) at x {p['x'][0]:.2f}-{p['x'][1]:.2f}, "
               f"y {p['y'][0]:.2f}-{p['y'][1]:.2f}")
-    if "verdict" in out:
+    for d in out.get("discs", []):
+        sp = (f", {len(d['spokes'])} spoke-like arc(s) " + " ".join(f"{q['deg']:g} deg at {q['at_deg']:g}" for q in d["spokes"])
+              if d["spokes"] else "")
+        print(f"   disc {d['radius_mm']:g} mm round {d['via']}: the pour meets its pad over {d['joined_deg']:g} of 360 deg, "
+              f"solid {d['solid_deg']:g}{sp} -> {'JOINED' if d['ok'] else 'NOT JOINED'} (solid over half its ring wanted)")
+    disc_txt = f" outside {out['source_disc_mm']:g} mm of the feed via" if out.get("source_disc_mm") else ""
+    mw_txt = f", {out['min_width_mm']:g} mm wanted" if out.get("min_width_mm") is not None else ""
+    if "verdict" in out and "need_mm" not in out:
+        print(f"POURNECK {out['verdict']} {out['net']} {out['layer']}: least cut{disc_txt} {out['width_mm']:.3f} mm "
+              f"(raw raster {out['raw_mm']:.3f}){mw_txt}")
+    elif "verdict" in out:
         bl = f" ({out['balls']})" if out.get("balls") else ""
-        print(f"POURNECK {out['verdict']} {out['net']} {out['layer']}: least cut {out['width_mm']:.3f} mm "
-              f"(raw raster {out['raw_mm']:.3f}; carries {out['carries_amps']:.2f} A), {out['amps']:g} A{bl} needs {out['need_mm']:.3f} mm")
+        print(f"POURNECK {out['verdict']} {out['net']} {out['layer']}: least cut{disc_txt} {out['width_mm']:.3f} mm "
+              f"(raw raster {out['raw_mm']:.3f}; carries {out['carries_amps']:.2f} A), {out['amps']:g} A{bl} needs {out['need_mm']:.3f} mm{mw_txt}")
     else:
         print(f"POURNECK {out['net']} {out['layer']}: least cut {out['width_mm']:.3f} mm (no current given)")
     if out.get("error"):
@@ -399,12 +544,15 @@ def selftest():
     sq = lambda x0, y0, x1, y1: [[[x0, y0], [x1, y0], [x1, y1], [x0, y1]]]
     fails = []
 
-    def case(name, fill, src, box, want, tol):
-        g = {"net": "N", "layer": "In4.Cu", "fill": fill, "items": [], "sources": [{"label": "s", "rings": src}],
+    def case(name, fill, src, box, want, tol, disc=None, at=None, items=()):
+        s0 = {"label": "s", "rings": src}
+        if at:
+            s0.update({"at": at, "pad_r": 0.2})
+        g = {"net": "N", "layer": "In4.Cu", "fill": fill, "items": list(items), "sources": [s0],
              "sink": box, "sink_label": "box"}
         for r in (0.05, 0.025):
             A.raster = r
-            got = solve(g, r)["width_mm"]
+            got = solve(g, r, disc)["width_mm"]
             ok = abs(got - want) <= tol
             print(f"  {name:28s} raster {r:<5g} want {want:.3f}  got {got:.3f}  {'ok' if ok else 'WRONG'}")
             if not ok:
@@ -418,6 +566,49 @@ def selftest():
     d = 2 / math.sqrt(2)
     diag = [[[0, 0], [d, -d], [10 + d, 10 - d], [10, 10]]]
     case("45-degree strip 2 mm", [diag], [sq(-1, -2, 1.2, 1.2)], [9.3, 8.0, 12, 12], 2.0, 0.08)
+    # D128's disc (board1 Q102): a 0.4 mm feed via alone in a 3 mm strip.  Without the disc the least
+    # cut is the ring round its pad (2 pi x 0.2 = 1.26 mm); with a 0.75 mm disc it is the strip, 3.0
+    # (passes 1.5); a 1.1 mm bridge 3 mm from the via, outside the disc, is still the neck (fails 1.5).
+    circ = lambda x, y, r, k=48: [[x + r * math.cos(2 * math.pi * i / k), y + r * math.sin(2 * math.pi * i / k)]
+                                  for i in range(k)]
+    via = [[circ(2.0, 1.5, 0.2)]]
+    case("via ring, no disc (as before)", [sq(0, 0, 10, 3)], via, [9.5, 0, 10, 3], 1.26, 0.08, items=via)
+    case("via, disc 0.75: the strip", [sq(0, 0, 10, 3)], via, [9.5, 0, 10, 3], 3.0, 0.06, disc=0.75,
+         at=[2.0, 1.5], items=via)
+    holed = [[sq(0, 0, 10, 3)[0], [[4.5, 0.5], [5.5, 0.5], [5.5, 2.4], [4.5, 2.4]]]]
+    case("via, disc 0.75, bridge outside", holed, via, [9.5, 0, 10, 3], 1.1, 0.06, disc=0.75,
+         at=[2.0, 1.5], items=via)
+    # a neck wholly INSIDE the disc does not count: two 0.3 mm antipads 0.5 mm from the via, which
+    # leave 0.15 mm of pour each side of its pad
+    pinch = [[sq(0, 0, 10, 3)[0], circ(2.0, 1.0, 0.15), circ(2.0, 2.0, 0.15)]]
+    case("via, disc 0.75, pinch inside", pinch, via, [9.5, 0, 10, 3], 3.0, 0.06, disc=0.75,
+         at=[2.0, 1.5], items=via)
+    # the join inside the disc: solid fill (360), the strip's half cut by a wide antipad (about 180 or
+    # more), and a thermal relief -- a 0.25 mm gap round the pad, four 0.2 mm spokes at 45 degrees
+    def jcase(name, fill, want_ok):
+        j = ring_join(fill, [2.0, 1.5], 0.2)
+        ok = j["ok"] == want_ok
+        print(f"  {name:28s} joined {j['joined_deg']:5.1f} solid {j['solid_deg']:5.1f} spokes {len(j['spokes'])}  "
+              f"{'JOINED' if j['ok'] else 'NOT JOINED'}  {'ok' if ok else 'WRONG'}")
+        if not ok:
+            fails.append(name)
+    jcase("join: solid", [sq(0, 0, 10, 3)], True)
+    jcase("join: 3/8 open (antipad)", [[sq(0, 0, 10, 3)[0], circ(2.0 + 0.62, 1.5, 0.5)]], True)
+    jcase("join: 3/4 cut (antipads)", [[sq(0, 0, 10, 3)[0], [[2.1, 1.0], [5, 1.0], [5, 2.0], [2.1, 2.0]],
+                                        [[2.0 - 0.6, 0.6], [2.0 + 0.05, 0.6], [2.0 + 0.05, 1.32], [1.4, 1.32]]]], False)
+    holes = []
+    for q in range(4):                                 # four sectors of the gap annulus, between the spokes
+        c0 = q * math.pi / 2 + math.pi / 4
+        outer, inner = [], []
+        for k in range(181):
+            t = c0 + k * (math.pi / 2) / 180
+            for r, lst in ((0.45, outer), (0.2, inner)):
+                x, y = r * math.cos(t), r * math.sin(t)
+                if all(abs(-x * math.sin(c0 + m * math.pi / 2) + y * math.cos(c0 + m * math.pi / 2)) > 0.1
+                       for m in (0, 1)):
+                    lst.append([2.0 + x, 1.5 + y])
+        holes.append(outer + inner[::-1])
+    jcase("join: 4 spokes (thermal)", [[sq(0, 0, 10, 3)[0]] + holes], False)
     a = A()
     a.raster = 0.05
     print(f"  IPC-2221 internal, 10 K, 35 um: 2.2 A needs {need_width_mm(2.2, 10, 35):.3f} mm "
@@ -441,6 +632,11 @@ def main():
     ap.add_argument("--rise", type=float, default=None, help="K, the temperature rise of the fit")
     ap.add_argument("--copper-um", type=float, default=None, help="the layer's copper thickness, um")
     ap.add_argument("--raster", type=float, default=0.05, help="mm (default 0.05)")
+    ap.add_argument("--source-disc", type=float, default=None, metavar="R",
+                    help="grow each feed VIA's source to a disc of R mm round its centre (the neck measured outside "
+                         "R; board1 D128: 0.75), and judge the pour's join to its pad inside it")
+    ap.add_argument("--min-width", type=float, default=None, metavar="MM",
+                    help="a width the least cut must reach (a layout page's 'at least N mm wide'), with or without --amps")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
     ap.add_argument("--save-geom", default=None, help="keep the net's geometry here (a --geom input)")
     ap.add_argument("--geom", default=None, help="skip the board: run the flow on a saved geometry")
@@ -479,7 +675,7 @@ def main():
     argv = [x for x in sys.argv[1:]]
     cmd = [str(VENV_PY), __file__, "--geom", path, "--raster", str(a.raster)]
     for k, v in (("--amps", a.amps), ("--amps-per-ball", a.amps_per_ball), ("--rise", a.rise),
-                 ("--copper-um", a.copper_um)):
+                 ("--copper-um", a.copper_um), ("--source-disc", a.source_disc), ("--min-width", a.min_width)):
         if v is not None:
             cmd += [k, str(v)]
     if a.json:

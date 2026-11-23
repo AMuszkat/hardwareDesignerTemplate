@@ -1694,6 +1694,16 @@ is not modelled.
   2.2 A, 10 K, 35 um` (feeds may be `REF` / `REF.PIN`, the load `REF`; `, raster 0.025 mm`
   optional), in `checks.py`, so `route.py audit --findings` and a guide row run it (zones refilled
   once a run; about 10 s a rail on board1). board1 r b949b628: ARM and GPU FAIL, SOC and DRAM PASS.
+- **A lone feed via's ring is a neck no rule means: `--source-disc R` measures outside it.** TRAP
+  (board1 Q102, rev 166): a bulk cap's own pour "at least 1.5 mm wide" read 1.336 (C63) and 1.366
+  (C48) at every site -- the least cut was the ring of pour round the cap's one 0.4 mm via, which is
+  2 pi x 0.2 = 1.26 mm plus the raster and can never read 1.5. WORKED (D128): `--from C63 --source-disc
+  0.75 --min-width 1.5` grows the source to the 0.75 mm disc round the feed via (derived from the
+  cap's pad: a via in it or one straight link from it) and judges the pour's join inside the disc
+  (solid, no spokes, over half its ring). On today's board C63 at (30.70, 13.00) reads 1.746 PASS,
+  JOINED 360 deg; without the option the same run still reads 1.336, as before. `--selftest` holds
+  the ring (1.31 / 1.34 without, 3.0 with), a 1.1 mm bridge outside the disc (still 1.1), a pinch
+  wholly inside it (not counted), and a join solid / 3/8 open / 3/4 cut / on four spokes.
 
 ## `stitch.py` — stitching vias and GND pad drops, as a plan
 
