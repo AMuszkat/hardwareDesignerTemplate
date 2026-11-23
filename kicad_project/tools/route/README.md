@@ -2060,3 +2060,10 @@ against the copy's copper on the spec's layers. A cell whose flood reaches no go
 and do not spend the run.
 **PROOF:** board1 tmpWork/R_PMIC/netgroup_r161.log (BLOCKED SOURCE, RTC_RESET_B (24.0, 25.0), a 1527-cell
 pocket).
+
+**TRAP: netgroup's padclr floors FOREIGN TRACKS too** (board1 NORTHGAP / D125, 2026-11-23). The spec's padclr
+(0.2032, set for BGA lands) also held every foreign Default-class track off by 0.2032, where DRC needs 0.1016. A
+lane at J1 that is legal at DRC (x 24.855-24.871 beside PDM_DATA2) read as shut, and a west corridor counted 3
+lanes where DRC gives 4. **WAY AROUND:** before reading a SHUT end or a lane count as a wall, re-count the
+corridor at the class clearance of the copper that bounds it. A track-only bound is the class number, not padclr.
+**PROOF:** board1 tmpWork/D125_relay/probe_rmA.log, map_rmA_west.txt.
