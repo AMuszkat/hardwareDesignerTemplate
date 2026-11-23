@@ -2027,6 +2027,11 @@ either session goes through it -- but the router is where the waiting happens:
   records the exit code in `<jobs>/NAME.json`, so `wait` reports it long after the process is gone. The
   job folder is git-ignored and per session: `kicad_project/bgwait.tmp/<boardN>/` for a board session,
   `out/bgwait/` for the concept session, the system temp folder when neither can be written.
+- **Unbuffered Python is not enough through a pipe.** `tools/kpy x.py | grep -v NOISE` in a job's script
+  buffers grep's output, so the job's log stays 0 B until the job ends and `wait` shows nothing (board1
+  NORTHGAP r6, 2026-11-24: a 23-minute search showed an empty log). Put `grep --line-buffered` (or
+  `stdbuf -oL`) in every pipe that feeds the log. Proof: `run --name p -- bash -c 'for i in 1 2 3; do echo
+  x$i; sleep 1; done | grep x'` reads 0 B after 3 s; the same with `--line-buffered` reads its lines.
 - **`wait` always has a limit and always comes back with evidence.** `--timeout` defaults to 100 s (inside
   the Bash tool's default 120 s; the cap is 3600 s -- give the Bash call a longer timeout too). It returns
   the moment ALL jobs ended, or at the limit with exit 124, and each time prints per job: state, exit code,
