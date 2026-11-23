@@ -2088,3 +2088,9 @@ lane at J1 that is legal at DRC (x 24.855-24.871 beside PDM_DATA2) read as shut,
 lanes where DRC gives 4. **WAY AROUND:** before reading a SHUT end or a lane count as a wall, re-count the
 corridor at the class clearance of the copper that bounds it. A track-only bound is the class number, not padclr.
 **PROOF:** board1 tmpWork/D125_relay/probe_rmA.log, map_rmA_west.txt.
+
+**TRAP: race.py wants each spec's plan path relative to the board folder** (board1 R_PMIC / D126, 2026-11-23). A
+spec written for a plain netgroup run with an absolute `plan` path (`/home/.../tmpWork/.../R_X.json`) is refused by
+race.py in a second ("plan leaves the board folder"), and the refusal is charged as a round. **WAY AROUND:** write
+`plan` as `routing/...` or `tmpWork/...`, relative to the board folder, in every variant spec before the race.
+**PROOF:** board1 tmpWork/R_PMIC/d126/ (the first race refused, the second ran).
