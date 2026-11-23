@@ -6,7 +6,7 @@ limit -- for both session types (the concept side calls it by path).
     python3 tools/bgwait.py wait R2_a R2_b [PID ...] [--timeout 100]
     python3 tools/bgwait.py status [NAME ...]
     python3 tools/bgwait.py kill NAME ...
-    python3 tools/bgwait.py clean
+    python3 tools/bgwait.py clean NAME ... | --all-ended
 
 WHY IT EXISTS.  A board session started three router runs in the background
 and waited with `while pgrep -f "netgroup.py ... R2_emmc_"; do sleep 20; done`.
@@ -92,7 +92,10 @@ ended jobs' records and prints, per script, runs, wall hours, core-hours, cores
 a run and runs at once, then how much of the machine was busy on average --
 the scripts that left it idle are named (`--since YYYY-MM-DD`, `--dir`).  `kill` sends
 SIGTERM to the job's process group, SIGKILL after `--grace` seconds (default
-5) to whatever is left in its session.  `clean` forgets the ended jobs.
+5) to whatever is left in its session.  `clean NAME ...` forgets those ended jobs; a bare `clean`
+refuses -- the jobs folder is shared by the session and all its workers, and forgetting every ended
+job deletes their default logs and the records `cores` reads (board1, 2026-11-23: a worker's bare
+`clean` took 82, the session's included).  `--all-ended` is the old behaviour, asked for by name.
 
 WHERE THE JOB FILES LIVE -- git-ignored, one folder per session:
     HW_BGWAIT_DIR                       when set (tests);
@@ -1015,12 +1018,21 @@ def cmd_kill(a):
     return code
 
 
-def cmd_clean(_a):
+def cmd_clean(a):
     mine = Path(jobs_dir())
+    if not a.jobs and not a.all_ended:
+        print("bgwait: clean needs the NAMEs of the ended jobs to forget (or --all-ended): the folder is "
+              f"shared by every job of this session and its workers ({mine})", file=sys.stderr)
+        return 2
     n = 0
+    want = set(a.jobs or [])
     for p in sorted(mine.glob("*.json")):
+        if want and p.stem not in want:
+            continue
         t = Target(name=p.stem, path=p)
         if t.job is None or t.running():
+            if p.stem in want:
+                print(f"bgwait: {p.stem} is still running -- not forgotten", file=sys.stderr)
             continue
         log = Path(t.job.get("log") or "")
         if log.parent == mine and log.exists():        # a log written elsewhere (--log) is the caller's
@@ -1135,7 +1147,9 @@ def main(argv=None):
     p.add_argument("--grace", type=float, default=5.0)
     p.add_argument("--tail", type=int, default=3)
     p.set_defaults(fn=cmd_kill)
-    p = sub.add_parser("clean", help="forget the ended jobs (their job files and default logs)")
+    p = sub.add_parser("clean", help="forget the named ended jobs (their job files and default logs)")
+    p.add_argument("jobs", nargs="*", metavar="NAME")
+    p.add_argument("--all-ended", action="store_true", help="forget EVERY ended job in this session's folder")
     p.set_defaults(fn=cmd_clean)
     p = sub.add_parser("cores", help="how much of the machine each script used, from the ended jobs' records")
     p.add_argument("--since", metavar="YYYY-MM-DD", help="jobs started on or after this day")
