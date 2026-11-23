@@ -807,6 +807,9 @@ its docstring. What the spec has to be told:
   A small window at a fine pitch does it too (board1 R3ab: 11.5 x 9.5 mm at
   0.025 mm, every 10-net run "not shut in -- 45-degree rule" at 900000, routed
   at 5000000): raise `--limit` before reading that line as the 45-degree rule.
+  So does adding a layer: the search is per layer, so each one added multiplies the cells it reaches. Board1's
+  P_EMMClay (2026-11-23) went from F + In2 to F + In2 + In7 (+ B.Cu) and stopped in 25 s at 900000 with "EMMC_D7
+  not shut in"; at `--limit 5000000` it routed. PROOF: `board1_module/tmpWork/P_EMMClay/STATE.md`.
 - **A `goal_layer` the goal pad does not have is not refused** (netgroup,
   2026-11): a leg with `goal_layer` F.Cu "closed" on J2's B.Cu-only pad by ending
   an F.Cu track over it. Give a SMD pad's own layer; `route.py check` sees the
