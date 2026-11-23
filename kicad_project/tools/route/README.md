@@ -2028,12 +2028,6 @@ check, new DRC, rule failures, vias, track length -- and `<race>/race.json` hold
   variant's processes with it.
 - A spec whose `"plan"` is an absolute path, or leaves the board folder, is refused: a variant writes only
   into its own copy.
-- **A spec's net keys are LEAF names** (`DRAM_CK_T_A`, never `/LPDDR4/DRAM_CK_T_A`): `netgroup.py` looks
-  each key up by the part after the last `/`, one board net per leaf, and exits `no such net on the board`
-  otherwise. `race.py` now checks every key of every spec (within a variant's `--only`) that way on the
-  board, once, BEFORE any child starts and before the budget is touched: a bad key is printed per spec
-  with the nearest leaf, and the race exits 2 with nothing run and nothing booked (`--no-preflight`
-  skips it). board1 R1a, 2026-11-23: five full-path specs ended in 9 s, 'no such net' in every child.
 
 ## A bus between two BGAs: test cheaply, use the cores, prove the chain whole (board1's U1-U500 DRAM)
 
