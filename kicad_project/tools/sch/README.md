@@ -244,6 +244,26 @@ given as data). Two uses:
   It also checks a PLAN before `draw`: `--board <scratch folder>` holding the
   preview's sheets (outside `kicad_project/`) proves the handoff parity of what
   `draw` would install (board1 RV58).
+- **A no-connect the board may route through** (`netlist.json` `"nc_through"`:
+  `{"U300": {"nets": [...], "pins": [...]}}`, board1 Q104, rev 169: the eMMC's NC
+  balls): `parity --handoff` accepts such a pin unconnected or on ONE of its part's
+  listed nets, counts it as one more end of that net (a separate island of that
+  name is a `split`), and prints `N nc_through pin(s) routed through`. It still
+  fails one on any other net, and any no-connect pin the key does not list; with
+  no key, nothing changes. **Wiring one takes three steps, and the first is the
+  trap:** KiCad (10.0) nets a pin of electrical type `no_connect` ALONE however
+  it is wired -- the label is drawn and the pin stays `unconnected-(...)` -- so
+  (1) retype the ball in the board's library (`symgen.py` from the pin table,
+  `passive`); `plan` now stops naming every such pin a source puts on a net,
+  instead of a parity DIFFERENT with no word why. (2) A `--from-sch` plan reads
+  the symbol the SHEET embeds, so the sheet's copy is refreshed too (Konnect
+  `update_symbols_from_library` on that sheet), then `plan --from-sch --move
+  U300.A1=EMMC_D3` takes the pin off the no-connect list and onto the net. A
+  `--handoff` plan takes the board's list instead: `<board>/schematic.json`
+  `"nc_through_used": {"U300.A1": "EMMC_D3"}` (refused for a pin or a net the
+  handoff does not list). (3) `draw`; its handoff parity proves the rest.
+  Proven on a copy of board1 (2026-11-23): A1 on EMMC_D3 passes, the same with
+  EMMC_D3 dropped from the list, A1 dropped from `pins`, or the key removed fails.
 - **`plan --handoff`**, a new board, once the handoff marks the netlist
   `complete`: the layout comes from it directly. What is the board's own —
   the sheets, and per refdes (a glob is fine) the symbol, footprint, units

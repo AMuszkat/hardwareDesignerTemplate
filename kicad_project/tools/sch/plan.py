@@ -296,6 +296,22 @@ class Source:
         src.nets = {n: [tuple(x) for x in nodes if x[0] in src.parts] for n, nodes in nl["nets"].items()}
         src.rails = set(nl.get("rails", []))
         src.nc = {tuple(x) for x in nl.get("nc", []) if x[0] in src.parts}
+        # a vendor no-connect the board routes a signal through (the handoff's "nc_through",
+        # board1 Q104): which balls the board uses is the board's, in schematic.json
+        # "nc_through_used": {"U300.A1": "EMMC_D3"} -- off the no-connect list, onto its net
+        thru = nl.get("nc_through", {})
+        for pinref, net in cfg.get("nc_through_used", {}).items():
+            ref, _, pin = pinref.partition(".")
+            t = thru.get(ref)
+            if not t or pin not in t["pins"]:
+                raise SystemExit(f"sch: schematic.json nc_through_used {pinref}: the handoff's nc_through "
+                                 f"does not list that pin")
+            if net not in t["nets"] or net not in src.nets:
+                raise SystemExit(f"sch: schematic.json nc_through_used {pinref}={net}: not one of {ref}'s "
+                                 f"nc_through nets ({', '.join(t['nets'])})")
+            if ref in src.parts:
+                src.nc.discard((ref, pin))
+                src.nets[net].append((ref, pin))
         src.flags = set(cfg.get("pwr_flags", []))
         return src
 
@@ -1553,7 +1569,28 @@ def plan_root(ctx, sub):
 
 # == output ==================================================================
 
+def nc_typed_on_nets(src):
+    """Pins the source puts on a net whose library pin is of type no_connect. KiCad (10.0)
+    nets such a pin alone, wired or not -- the label is drawn and the pin stays
+    'unconnected-(...)' -- so the plan's parity fails with no word why (board1 Q104: an
+    nc_through ball of U300 wired to EMMC_D3)."""
+    out = []
+    for n, nodes in src.nets.items():
+        for r, p in nodes:
+            part = src.parts.get(r)
+            if part and part.lib and any(q.number == p and q.type == "no_connect"
+                                         for u in part.units for q in part.lib.unit_pins(u)):
+                out.append(f"{r}.{p}={n}")
+    return sorted(out)
+
+
 def run(src, out, only=None):
+    bad = nc_typed_on_nets(src)
+    if bad:
+        raise SystemExit(f"sch: {len(bad)} pin(s) put on a net are of type no_connect in their symbol, and "
+                         f"KiCad nets such a pin alone however it is wired: {', '.join(bad[:8])}"
+                         f"{' ...' if len(bad) > 8 else ''} -- retype each in the board's library first "
+                         "(symgen.py from the pin table: passive, or the net's own type), then plan again")
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     plans = {}

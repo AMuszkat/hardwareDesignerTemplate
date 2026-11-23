@@ -279,8 +279,20 @@ def handoff_parity(board):
                 out.append(("net", f"{r}.{'/'.join(g)}", f"{r} pins {', '.join(g)} are on {', '.join(got)}; "
                             f"the handoff puts them on {', '.join(want)} (either way round)"))
             swapped |= {(r, p) for p in g}
+    # a vendor no-connect the board may route a signal through (handoff rev 169, board1 Q104:
+    # U300's NC balls): unconnected, or on ONE of that part's listed nets -- then it is one more
+    # end of that net, and must be drawn as one with it
+    thru, via_thru, thru_on = {}, {}, []
+    for r, t in nl.get("nc_through", {}).items():
+        for p in t["pins"]:
+            thru[(r, p)] = set(t["nets"])
+    for (r, p), allowed in thru.items():
+        if r in real and not loose((r, p)) and base(drawn[(r, p)]) in allowed:
+            via_thru.setdefault(base(drawn[(r, p)]), set()).add(drawn[(r, p)])
+            thru_on.append(f"{r}.{p}={base(drawn[(r, p)])}")
+    nl["_nc_through_drawn"] = sorted(thru_on)          # for the report line; not handoff data
     for n, pins in sorted(nl["nets"].items()):
-        seen = set()
+        seen = set(via_thru.get(n, ()))
         for r, p in pins:
             if r not in real:
                 continue
@@ -304,8 +316,13 @@ def handoff_parity(board):
             if r in real:
                 checked += 1
                 if not loose((r, p)):
+                    on = base(drawn[(r, p)])
+                    if kind == "nc" and on in thru.get((r, p), ()):
+                        continue                    # nc_through: routed through, on one of its nets
                     what = "no-connect" if kind == "nc" else "OPEN (leave unconnected, no flag)"
-                    out.append((kind, f"{r}.{p}", f"{r}.{p} is on {base(drawn[(r, p)])}; the handoff says {what}"))
+                    if kind == "nc" and (r, p) in thru:
+                        what += f" or one of its nc_through nets ({', '.join(sorted(thru[(r, p)]))})"
+                    out.append((kind, f"{r}.{p}", f"{r}.{p} is on {on}; the handoff says {what}"))
     return out, checked, nl
 
 
@@ -319,6 +336,10 @@ def cmd_parity(a):
         if len(out) > 60:
             print(f"  ... and {len(out) - 60} more")
         prose = nl.get("prose_only", [])
+        if nl.get("nc_through"):
+            on = nl["_nc_through_drawn"]
+            print(f"{len(on)} nc_through pin(s) routed through on a listed net"
+                  + (f": {', '.join(on[:8])}{' ...' if len(on) > 8 else ''}" if on else ""))
         print(f"{checked} pins of {len(nl['parts']) - len(prose)} parts checked against the handoff; "
               f"{len(prose)} parts have their connections only in prose there (not checked)")
         print("HANDOFF PARITY OK" if not out else f"HANDOFF PARITY FAIL: {len(out)} difference(s)")
