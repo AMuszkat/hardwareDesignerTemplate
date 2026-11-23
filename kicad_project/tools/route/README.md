@@ -1141,6 +1141,11 @@ its docstring. What the spec has to be told:
   `python3 tools/route/test_maze_pres.py` (two nets whose ends overlap, pres_mul 10: the old
   code walled A at iteration 19, now PASS). A run walled after many iterations at a high
   `--pres-mul` before 2026-11-23 is not proof of a wall: count it again.
+- **A zone outline inset by exactly the copper-to-edge number fails at its corners.** KiCad
+  turns a rounded corner into chords, so the copper there sits about 2 um nearer the edge than
+  the arc. board1's R6 GND planes, inset 0.4 with corner radius R2.6 against an outline of R3.0,
+  read 0.398 at the corners. Inset the corners a few um more (R2.595 read 0.405). Prove it with
+  `route.py check`, which reads the edge after the fill.
 - **The search runs compiled when it can.** `route/_maze.c` is the same A*
   (built by `tools/setup.sh` with the system C compiler into
   `tools/.native/`, loaded through ctypes over the grid's own buffers): the
