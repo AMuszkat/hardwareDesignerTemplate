@@ -410,6 +410,72 @@ def main():
         bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2,
                           o="reserved by the spec's reserve_vias"))
 
+    # every copper PCB_SHAPE drawn on the board (a net-tied polygon: a bus head, a star, a taper,
+    # L105.2 / C105.1's NVCC_DRAM patch) is copper like a track -- not a zone, so the pour loop below
+    # never saw it, and a new via landed inside one (board1 R_ETHLED: SPEED's via at (35.3, 6.6) in
+    # the F.Cu NVCC_DRAM polygon, DRC shorting_items).  Read as padvias.py reads them, outline as
+    # pcbnew makes it (TransformShapeToPolygon), its distance from a point by SquaredDistance.
+    ERR = pcbnew.FromMM(0.001)
+    shapes = []
+    for d in B.b.GetDrawings():
+        try:
+            if d.Type() != pcbnew.PCB_SHAPE_T or not d.IsOnCopperLayer():
+                continue
+        except Exception:
+            continue
+        ps = pcbnew.SHAPE_POLY_SET()
+        d.TransformShapeToPolygon(ps, d.GetLayer(), 0, ERR, pcbnew.ERROR_INSIDE)
+        if ps.OutlineCount() == 0:
+            continue
+        bb = d.GetBoundingBox()
+        shapes.append(dict(net=d.GetNetname().rsplit("/", 1)[-1], layer=canon(d.GetLayer()), ps=ps,
+                           bb=(B.mm(bb.GetLeft()), B.mm(bb.GetTop()), B.mm(bb.GetRight()), B.mm(bb.GetBottom()))))
+
+    def shape_dist(s_, a_, b_=None):
+        """mm from a point (or a segment a-b) to a shape's copper; 0 inside it."""
+        pa = pcbnew.VECTOR2I(pcbnew.FromMM(a_[0]), pcbnew.FromMM(a_[1]))
+        if b_ is None or math.dist(a_, b_) < 1e-9:
+            return B.mm(int(round(s_["ps"].SquaredDistance(pa) ** 0.5)))
+        pb = pcbnew.VECTOR2I(pcbnew.FromMM(b_[0]), pcbnew.FromMM(b_[1]))
+        return B.mm(int(round(s_["ps"].SquaredDistanceToSeg(pcbnew.SEG(pa, pb)) ** 0.5)))
+
+    def shape_name(s_):
+        L_, T_, R_, B_ = s_["bb"]
+        return (f"the net-tied copper polygon of {s_['net'] or 'no net'} on {s_['layer']} "
+                f"(x {L_:.3f}..{R_:.3f}, y {T_:.3f}..{B_:.3f})")
+
+    # the spec's own copper inside ANOTHER net's polygon is a short the router cannot route round:
+    # refuse it now, by name (a through via is copper on every layer, whatever layer the polygon is on)
+    bad_ = []
+    for key_ in ("extra_vias", "reserve_vias"):
+        for e in S.get(key_, []):
+            n_ = e["net"].rsplit("/", 1)[-1]
+            for s_ in shapes:
+                if s_["net"] == n_:
+                    continue
+                g_ = shape_dist(s_, e["at"]) - float(e["pad"]) / 2
+                if g_ < 1e-6:
+                    bad_.append(f"{key_}: {n_}'s via at ({e['at'][0]:.3f}, {e['at'][1]:.3f}) (pad {e['pad']}) "
+                                f"{'lies inside' if g_ < -float(e['pad']) / 2 + 1e-6 else 'touches'} {shape_name(s_)}")
+                elif g_ < maze.PADCLR - 1e-6:
+                    print(f"warning: {key_}: {n_}'s via at ({e['at'][0]:.3f}, {e['at'][1]:.3f}) is {g_:.3f} mm "
+                          f"from {shape_name(s_)}, under the spec's padclr {maze.PADCLR} (DRC decides)")
+    for key_ in ("extra_tracks", "reserve_tracks"):
+        for e in S.get(key_, []):
+            n_ = e["net"].rsplit("/", 1)[-1]
+            lay_ = canon(B.b.GetLayerID(e["layer"]))
+            for s_ in shapes:
+                if s_["net"] == n_ or s_["layer"] != lay_:
+                    continue
+                for a_, b_ in zip(e["pts"], e["pts"][1:]):
+                    if shape_dist(s_, tuple(a_), tuple(b_)) - float(e["width"]) / 2 < 1e-6:
+                        bad_.append(f"{key_}: {n_}'s track {a_} -> {b_} on {lay_} touches {shape_name(s_)}")
+    if bad_:
+        print("\n".join(bad_))
+        sys.exit(f"{spec_path.name}: {len(bad_)} piece(s) of the spec's own copper short into another net's "
+                 "net-tied copper polygon (above) -- move them out of it (a PCB_SHAPE with a net is copper, "
+                 "not a zone: nothing refills round it)")
+
     # On a slot grid (pitch = track + clearance) the next slot is EXACTLY at the
     # clearance distance, which a non-strict grid counts as blocked: say so with
     # "strict", or it is inferred from the numbers.
@@ -665,6 +731,66 @@ def main():
             rv = h["r"] + H2H + float(DRILL) / 2
         G.block(["via"], G.seg(h["a"], h["b"], rv) if h["a"] != h["b"] else G.disc(h["a"][0], h["a"][1], rv))
 
+    # the board's copper polygons (read above): another net's is static copper -- on its own layer a
+    # track keeps padclr from it (a field's rule inside a field, on the layers the field opens, as a
+    # track there does), and a NEW VIA keeps padclr from it whatever layer it is on (a through via is
+    # copper on every layer); a routed net's own is its fixed copper, hard for the others and free
+    # for it, laid as rows of zero-width tracks one cell apart plus its outline
+    PSHAPE = collections.defaultdict(list)       # layer -> (shape, track halo, net): the writer's test
+    fixed_poly = collections.defaultdict(list)   # a routed net's own polygons, as fixed copper
+    gx0, gy0 = G.x0, G.y0
+    gx1, gy1 = G.x0 + (G.nx - 1) * G.step, G.y0 + (G.ny - 1) * G.step
+    ns_ = 0
+    for s_ in shapes:
+        L_, T_, R_, B_ = s_["bb"]
+        m_ = maze.PADCLR + max(maze.W / 2, maze.VIA_R) + G.step
+        if R_ < gx0 - m_ or L_ > gx1 + m_ or B_ < gy0 - m_ or T_ > gy1 + m_:
+            continue
+        ns_ += 1
+        lay_ = s_["layer"]
+        cand = G.rect(L_, T_, R_, B_, m_)
+        dist = {c: shape_dist(s_, G.xy(c)) for c in cand}
+        if s_["net"] in fixed and s_["net"]:
+            rows = collections.defaultdict(list)
+            for c, d_ in dist.items():
+                if d_ < 1e-9:
+                    rows[c // G.nx].append(c % G.nx)
+            segs = []
+            for j_, ii in rows.items():
+                ii.sort()
+                st_ = pv_ = ii[0]
+                for i_ in ii[1:] + [None]:
+                    if i_ is not None and i_ == pv_ + 1:
+                        pv_ = i_
+                        continue
+                    y_ = round(G.y0 + j_ * G.step, 6)
+                    segs.append((lay_, (round(G.x0 + st_ * G.step, 6), y_), (round(G.x0 + pv_ * G.step, 6), y_), 0.0))
+                    if i_ is not None:
+                        st_ = pv_ = i_
+            for k_ in range(s_["ps"].OutlineCount()):
+                ol = s_["ps"].Outline(k_)
+                pts_ = [(B.mm(ol.CPoint(k).x), B.mm(ol.CPoint(k).y)) for k in range(ol.PointCount())]
+                segs += [(lay_, a_, b_, 0.0) for a_, b_ in zip(pts_, pts_[1:] + pts_[:1])]
+            # kept apart from fixed[...]["tracks"]: those are read as the net's track ends too (a
+            # source's heading, a trunk to join), which a polygon's fill rows are not
+            fixed_poly[s_["net"]].extend(segs)
+            continue
+        G.mark(f"{shape_name(s_)}, on the board -- copper, not a zone: no track through it on its layer, "
+               "no via in it on any layer")
+        rv_ = maze.PADCLR + maze.VIA_R
+        G.block(["via"], {c for c, d_ in dist.items() if d_ * d_ <= rv_ * rv_ + G.eps})
+        if lay_ in LAYERS:
+            def rt_(c):
+                F = field_of(*G.xy(c))
+                cl = F["_clr"] - F["_shrink"] if (F is not None and lay_ in F.get("open", [])) else maze.PADCLR
+                return cl + maze.W / 2
+            G.block([lay_], {c for c, d_ in dist.items() if d_ * d_ <= rt_(c) ** 2 + G.eps})
+            Fc = field_of((L_ + R_) / 2, (T_ + B_) / 2)
+            PSHAPE[lay_].append((s_, (Fc["_clr"] - Fc["_shrink"] if (Fc is not None and lay_ in Fc.get("open", []))
+                                      else maze.PADCLR) + maze.W / 2, s_["net"]))
+    if ns_:
+        print(f"{ns_} copper polygon(s) (net-tied PCB_SHAPEs) in the window")
+
     # the field's pad area: escapes only, and they are laid -- unless the spec opens
     # its inner layers, where the balls have no lands and the dog-bones are the
     # only obstacles
@@ -827,7 +953,7 @@ def main():
               f"{ocost}/cell, aprons for " + ", ".join(aprons))
 
     for n in nets:
-        G.register(n, "fixed", tracks=fixed[n]["tracks"], vias=fixed[n]["vias"])
+        G.register(n, "fixed", tracks=fixed[n]["tracks"] + fixed_poly.get(n, []), vias=fixed[n]["vias"])
         for x, y, _r, _s in fixed[n]["vias"]:
             # its own dog-bone is a legal layer change for it, and so is the via it starts on
             if (FO and in_field(x, y)) or math.dist((x, y), tuple(S["nets"][n]["src"])) < 0.05:
@@ -1336,6 +1462,16 @@ def main():
                     continue
                 t = max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / L2)) if L2 else 0.0
                 if math.hypot(a[0] + t * dx - x, a[1] + t * dy - y) < r - 1e-4:
+                    return True
+            # ... or another net's copper polygon on this layer nearer than its track halo
+            for s_, r, n_ in PSHAPE.get(layer, ()):
+                if n_ == net:
+                    continue
+                L_, T_, R_, B_ = s_["bb"]
+                if max(a[0], b[0]) < L_ - r or min(a[0], b[0]) > R_ + r or \
+                        max(a[1], b[1]) < T_ - r or min(a[1], b[1]) > B_ + r:
+                    continue
+                if shape_dist(s_, tuple(a), tuple(b)) < r - 1e-4:
                     return True
         return False
 

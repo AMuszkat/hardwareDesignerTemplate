@@ -652,6 +652,22 @@ its docstring. What the spec has to be told:
   hole the route keeps 0.224 mm, against -0.20 before. R_J2's spec with and without its blocks, the
   same spec widened over H2's 2.7 mm PTH, and three R2 specs give byte-identical plans or partials,
   old code against new.
+- **A net-tied copper polygon (a PCB_SHAPE with a net) is copper, not a zone** (netgroup,
+  2026-11-23). TRAP: netgroup stamped pads, tracks, vias and zones but never the board's drawn
+  polygons, so R_ETHLED's ETH_LED_SPEED_N via landed at (35.3, 6.6) inside the F.Cu NVCC_DRAM
+  polygon of L105 / C105 and route.py check failed `shorting_items`. A zone's fill is only an
+  antipad to a via; a polygon is a short on every layer the via passes. WAY AROUND: every
+  copper PCB_SHAPE in the window (a fill or a stroke) is stamped on its layer from its outline
+  (`TransformShapeToPolygon` + `SquaredDistance`): no via within padclr + via radius of it on ANY
+  layer, no track within the clearance that applies (a field's own inside it) + half a track on
+  its layer, each stamp `G.mark`ed so a shut net names the polygon. A routed net's own polygon is
+  its fixed copper. straighten() is tested against the polygons too. A spec's `extra_vias` /
+  `reserve_vias` inside or touching another net's polygon, or an `extra_track` / `reserve_track`
+  into one on its layer, is REFUSED with its name (exit 1); a via nearer than padclr is a warning.
+  PROOF (`board1_module/tmpWork/T_netgroup_poly/`, `run.sh`): R_ETHLED's spec is refused, naming
+  the polygon; the same group with the router choosing SPEED's via (`ethled_rv2`) puts it 0.270 mm
+  off the polygon, against 0.170 mm before (both pass `polyclr.py`); R_ETHLED2, R_EMMC_t2 c_v3 (a
+  polygon on its routed F.Cu), R_J2 and `ethled_rv` give identical plans, old code against new.
 - **A capacity split is only as true as its exits.** `fanout.py layers` proved board1's U1 at
   139 of 139 and no router closed it: the model ended 0.5 mm past the ball array, at the
   field's clearance. Each exit it counted and the board did not have cost a routing round --
