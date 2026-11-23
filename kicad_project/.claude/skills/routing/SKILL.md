@@ -75,6 +75,14 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   the first pour is laid over the corridor -- board2's +5V pour (R4) took the
   only two-layer room between a 0.4 mm receptacle and a 2.54 mm header whose
   maps run in opposite directions; 48 inversions surfaced at R5 (board2 Q7).
+- **A group is "ready to route" only once its pads have via sites, not once its bbox is free.**
+  An inventory (open nets, clustered by where their pads sit) shows where a group lies and that no other
+  group's box overlaps it. It does not show whether each pad that must change layer has a via site on one of
+  its axes or 45s, or whether the lanes between a part's pin row and its strap row hold the tracks they must.
+  Before a group goes out as ready, survey each such pad's sites and each corridor's lane count on the board as
+  it is. A pad with no site, or a corridor with fewer lanes than nets, is a placement count to settle first.
+  board1's PHY group was dispatched as ready from a free bbox. It had 0 of 25 joins: the strap pads under
+  U200's pin row had no via site, and two 0.5-0.6 mm corridors each had one lane for three to five needs.
 - **Count a fine-pitch row's via sites before planning anything beyond it.**
   A row of 0.4 mm pads that drops to vias (a board-to-board receptacle) has a
   strip between its pads' outer ends and the next obstacle:
