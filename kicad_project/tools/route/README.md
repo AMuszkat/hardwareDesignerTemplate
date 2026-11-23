@@ -1602,6 +1602,21 @@ had none and `route.py check` failed it on `RULE nfp` (board1, a cap's GND via
 in U300's courtyard). Prove it: a `decap.py` plan for a cap under the BGA
 passes `nfp` 0 new; the same plan with the key stripped fails it.
 
+- **`decap.py` judges each cap's own pad copper where it stands** (2026-11-23, board1). TRAP: it
+  found via sites through `World.nearest_via` (or took `--pin`s) and never asked whether the cap's
+  pads themselves sat on foreign copper, so C17 placed at (22.50, 12.00) r180 B -- the site `sites.py`
+  once offered, both pads on a VDD_SOC via at gap 0 (R_U1W D126-6) -- got two vias and two stubs in
+  the plan. WAY AROUND: before its vias are searched each cap is tested with `sites.py`'s `PadCopper`
+  (imported, not copied: the real pad shape per flashed layer, the stricter class clearance); a
+  refused cap is left out of the plan with sites.py's reason line (`C17 (22.50, 12.00) rot 180
+  PADCOPPER: pad 1/VDD_GPU_VPU_DRAM over VDD_SOC via (22.500,12.020) on B.Cu, gap 0.000 < 0.1016;
+  ... -- refused: no via, no stub`), a `pad copper:` summary and `PADCOPPER FAIL` follow, the plan
+  is still written for the others and the exit is 1; `--no-padcopper` gives the old behaviour. PROOF
+  (`board1_module/tmpWork/decapfix/`): on a scratch copy with C16/C17/C18 moved, `--refs C16,C17,C18`
+  with the same pins wrote 6 vias before and 4 after (C17 refused), C16's and C18's vias and stubs
+  identical and in the same order; `--no-padcopper` writes a plan byte-identical to the old tool's;
+  the caps as placed on the real board are not refused.
+
 ## `pour.py` — what a pour actually does
 
 A zone's outline is a wish; its **fill** is the copper, and DRC does not read

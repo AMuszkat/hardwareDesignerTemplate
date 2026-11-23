@@ -21,6 +21,15 @@ the priority: the shape of a power pour is a judgement about what it must not
 run under (a sensitive bus that must see ground), and no search makes that
 call.  Everything else here is mechanical.  Measure the fill afterwards with
 `pour.py`: DRC passes a pour that fell into islands.
+
+PAD COPPER.  A cap whose own pads sit on a foreign via or track is no decoupling position, however
+legal its via sites are (board1 R_U1W D126-6: C17 at (22.50, 12.00) r180 B on a VDD_SOC via, gap 0).
+So each cap is first judged where it stands, pad by pad, by `sites.py`'s PadCopper (imported, never
+copied: pcbnew's real pad shape per flashed copper layer against every foreign track, arc, via, pad and
+no-pads rule area, at the stricter class clearance).  A refused cap gets no via and no stub, its reason
+is printed as sites.py prints it (`PADCOPPER: pad 1/... over VDD_SOC via (...) on B.Cu, gap 0.000 <
+0.2032`), the other caps keep their order, the plan is written and the exit is 1.  `--no-padcopper`
+gives the old behaviour.
 """
 
 import argparse
@@ -78,6 +87,8 @@ def main():
     ap.add_argument("--reach", type=float, help="how far from its pad a via may be")
     ap.add_argument("--lanes", help="exit-lane entries from this file (default: routing/prelayout.json \"exit_lanes\")")
     ap.add_argument("--no-lanes", action="store_true", help="do not skip via sites that shut a BGA's exit lane")
+    ap.add_argument("--no-padcopper", action="store_true", help="do not refuse a cap whose own pads break the "
+                    "clearance to foreign tracks, vias, pads or rule areas (the old behaviour)")
     a = ap.parse_args()
     a.board = P.board_dir_arg(a.board)
     B = P.Board(a.board)
@@ -93,6 +104,7 @@ def main():
     in_nfp = lambda x, y: bool(NFP) and any(     # carries "nfp": true, or route.py check fails it
         q.Contains(RB.pn.VECTOR2I(RB.pn.FromMM(x), RB.pn.FromMM(y))) for _r, polys in NFP["areas"] for q in polys)
     shut_by_hand = 0                             # a pinned via or a stub that shuts a lane: exit 1
+    pad_refused, pad_count = [], {}              # caps whose own pads sit on foreign copper: exit 1
     width = lambda net: class_width(a.board, RB.netclass, net)
     skip = set(a.skip.split(",")) if a.skip else set()
     pin = {}
@@ -104,6 +116,19 @@ def main():
     made_vias, made_tracks = [], []        # what THIS plan has already placed: the
     for ref in a.refs.split(","):          # board does not know about it yet
         f = B.fps.get(ref) or P.die(f"{ref} is not on the board")
+        if not a.no_padcopper:                 # the cap where it stands: do its own pads clear foreign copper?
+            rf = RB.fps[ref]
+            x0, y0, r0 = mm(rf.GetPosition().x), mm(rf.GetPosition().y), rf.GetOrientationDegrees()
+            PC = S.PadCopper(RB, ref)
+            hits = PC.test(S.part_copy(RB, rf, RB.side(rf)), x0, y0, r0)
+            if hits:
+                PC.note(hits)
+                for k_, n_ in PC.count.items():
+                    pad_count[k_] = pad_count.get(k_, 0) + n_
+                pad_refused.append(ref)
+                print(f"   {ref:5s} ({x0:7.2f}, {y0:7.2f}) rot {r0:4.0f}  PADCOPPER: " + S.PadCopper.why(hits)
+                      + " -- refused: no via, no stub")
+                continue
         W_ = S.World(B, ignore={ref})
         W_.lanes = LN
         W_.vias += made_vias
@@ -174,11 +199,17 @@ def main():
     print(f"wrote {a.plan}: {len(tracks)} stubs, {len(vias)} vias, {len(zones)} zone(s)")
     if LN:
         print(LN.summary())
+    print("pad copper: off (--no-padcopper)" if a.no_padcopper else
+          "pad copper (clearance: the stricter class's): refused "
+          + (", ".join(f"over {k} x{n}" for k, n in sorted(pad_count.items(), key=lambda t: (-t[1], t[0])))
+             or "nothing") + f" ({len(pad_refused)} cap(s) whose pads break the clearance to foreign copper)")
+    if pad_refused:
+        print(f"PADCOPPER FAIL: {', '.join(pad_refused)} left out of the plan (its pads sit on foreign copper: "
+              f"move the cap -- sites.py --ref finds a position -- or --no-padcopper for the old behaviour)")
     if shut_by_hand:
         print(f"LANES FAIL: {shut_by_hand} pinned via(s) or stub(s) shut an exit lane (the plan is written; "
               f"move the pin, or --no-lanes to accept it)")
-        return 1
-    return 0
+    return 1 if shut_by_hand or pad_refused else 0
 
 
 if __name__ == "__main__":
