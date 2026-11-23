@@ -444,6 +444,8 @@ def main():
                                w=float(e["width"]), o="the spec's extra_tracks",
                                clr=NETCLR.get(e["net"].rsplit("/", 1)[-1], 0.0)))
     for e in S.get("extra_vias", []):
+        if "pad" not in e or "at" not in e:       # board1 NORTHGAP r2: "size" gave a KeyError, not a refusal
+            sys.exit(f"spec: an extra_vias entry needs 'net', 'at' [x, y] and 'pad' (the via's diameter, mm); got {sorted(e)}")
         bvias.append(dict(net=e["net"].rsplit("/", 1)[-1], x=e["at"][0], y=e["at"][1], r=float(e["pad"]) / 2,
                           o="the spec's extra_vias", clr=NETCLR.get(e["net"].rsplit("/", 1)[-1], 0.0)))
     # a LATER group's copper, reserved: an obstacle here, never written to this plan
