@@ -224,7 +224,21 @@ turn and before a worker is briefed.
    and put three SE_50 vias 1.30-1.60 mm from GND, re-opening RV22.1's
    1.27 mm stitch on the real board).
 4. **Apply** with KiCad closed: `route.py apply` (backup, write with `pcbnew`,
-   read back, UUID manifest). Then **`route.py audit`**: DRC, joints, edge,
+   read back, UUID manifest). **When the real apply is more than one step**
+   (strips, placement moves, a second group, part vias, then the plan), write
+   it as ONE script that runs the same steps in the same order as the scratch
+   job that proved them, never as a prose list in `STATE.md`. The script
+   checks the board's sha first, backs it up, and on any failed step restores
+   the backup, sets aside the `routing/*.applied.json` files the run wrote
+   (the `tools/route` README, `apply` and `rip`), and exits with that step's
+   code. Each step's own exit is read, not a pipe's (`${PIPESTATUS[0]}`).
+   Scratch-only helpers (`assert '/kicad_project/' not in path`) get a
+   read-only check in their place for the real board. TRAP (board1 R_EMMC,
+   2026-11-23): the prose order in a worker's STATE.md applied nwp2 before
+   the strips its check had run on, so a track crossed a cap's old via. The
+   script then failed twice, both times restored cleanly, and the third run
+   applied all of it.
+   Then **`route.py audit`**: DRC, joints, edge,
    shape, via links, ground beside, pour islands, in one `AUDIT PASS|FAIL`
    line. The open count must drop by what the plan claims, and nothing outside
    the group may change. For any pour: `pour.py` — islands, vias the fill
