@@ -393,6 +393,19 @@ each for plan, spec and board, and exit **5** on anything not accepted:
 no record (hand-written, from `fanout.py` / `pour.py` / `stitch.py` / `decap.py`,
 or older than this) gets one `note:` line and is checked as before.
 
+**TRAP: two groups planned on the same board, applied one after the other**
+(board1 R_J1N and R_PMIC, 2026-11-23). Both passed `check` on one board. R_J1N went
+in first with `--accept-stale board`, and its tracks share the strip between U100
+and U1 on In2 / In7 with R_PMIC. R_PMIC's own `--accept-stale` apply then failed
+with 50 new DRC (tracks crossing, shorts). By then its tier-B budget was spent, so
+the re-route became a wall (Q94).
+**WAY AROUND:** `--accept-stale board` is safe only if no group applied since the
+plan put copper on the plan's layers inside its area. When two groups share a
+corridor, plan the second on a copy of the board after the first is applied. Do
+not run them side by side. Apply the group whose budget has rounds left last: it
+is the one that re-routes. **PROOF:** board1 tmpWork/R_PMIC/apply.log (CHECK FAIL,
+50 new DRC on board f73d9bf1); R_J1N's rehearsal was clean on the same board.
+
 *Why a content hash for the board, not time and size:* a copy to a scratch folder, a
 `touch`, a git checkout and a restore from a backup all change the time and keep the
 content — false refusals, which teach the flag — and a save that moves one coordinate
