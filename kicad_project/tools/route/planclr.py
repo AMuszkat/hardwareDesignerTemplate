@@ -27,6 +27,12 @@ and polygon, on every copper layer it is on:
   exitlane   when routing/prelayout.json has "exit_lanes": exitlane.py's judge on the board without
              and with the plan, for each entry the plan touches, as route.py check runs it; a ball the
              plan leaves without a lane is an item.
+  ends       every track end of the plan's nets that touches nothing of its net on its layer (no other
+             track's copper, via, pad, saved zone fill or plan zone outline) -- KiCad's track_dangling --
+             on the board without and with the plan; a NEW one is an item: a ripped stub, a track short
+             of its pad.  A plan that "accept"s track_dangling (route.py's key) has them printed, not
+             counted.  (board1 R_U1W nwp2, 2026-11-23: three rips took GPIO15's ball stub and the new
+             track began where it had ended -- a 0.245 mm end route.py check found after its DRC.)
 
 The condition language is read, not guessed: A/B .NetName .NetClass .Type .Layer, == != (strings
 case-insensitive, '*' and '?' wildcards as KiCad's), && || ! ( ), intersectsCourtyard (Front/Back,
@@ -57,9 +63,12 @@ Exit 0: no item.  1: items (clearance, hole, UNJUDGED or exitlane).  2: --selfte
 that must FAIL with the hand's numbers -- 0.275 < 0.3 (netclass Wide), 0.1 < 0.12 (the last matching
 rule, not an earlier looser one, not an inner-layer one), a hole at 0.36 < 0.4 (a hole_clearance rule),
 a plan via at 0.15 < 0.2 (netclass Default) and one UNJUDGED pair -- and the same plan moved clear,
-which must PASS with no item.  Then the evaluator's own cases (diff-pair suffixes, wildcards).
+which must PASS with no item.  Then the evaluator's own cases (diff-pair suffixes, wildcards), and
+dangling ends: a via-track-track-via chain whose east segment the plan rips while a new track ends in
+free board must report (2.0, 12.5) and (4.0, 13.5); re-laid, ending on a plan via, none.
 """
 import argparse
+from collections import defaultdict
 import json
 import math
 import re
@@ -816,6 +825,83 @@ def lanes(B1, plan, out=print):
     return items
 
 
+def _in_poly(x, y, poly):
+    """Even-odd test of a point in a polygon given as [[x, y], ...] (mm)."""
+    inside = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def dangling_ends(B, nets, plan_zones=()):
+    """Track ends of `nets` that touch nothing else of their net on their layer -- no other track's or
+    arc's copper, no via, no pad, no filled zone (as saved), no plan zone's outline -- what KiCad's DRC
+    calls track_dangling.  Returns a list of (net, layer, x, y), mm rounded to 1 um."""
+    pn, b = B.pn, B.b
+    mm, acc = pn.ToMM, pn.FromMM(0.001)
+    kinds = (pn.PCB_TRACE_T, pn.PCB_ARC_T)
+    tr = [t for t in b.GetTracks() if t.GetNetname() in nets]
+    pads = [p for f in b.GetFootprints() for p in f.Pads() if p.GetNetname() in nets]
+    zones = [z for z in b.Zones() if z.GetNetname() in nets and not z.GetIsRuleArea()]
+    out = []
+    for t in tr:
+        if t.Type() not in kinds:
+            continue
+        net, L = t.GetNetname(), t.GetLayer()
+        lname = b.GetLayerName(L)
+        for e in (t.GetStart(), t.GetEnd()):
+            hit = any(o is not t and o.GetNetname() == net and o.IsOnLayer(L) and o.HitTest(e, acc) for o in tr)
+            hit = hit or any(p.GetNetname() == net and p.IsOnLayer(L) and p.HitTest(e, acc, L) for p in pads)
+            hit = hit or any(z.GetNetname() == net and z.IsOnLayer(L) and z.HitTestFilledArea(L, e, 0)
+                             for z in zones)
+            hit = hit or any(q["net"] == net and q["layer"] == lname and _in_poly(mm(e.x), mm(e.y), q["poly"])
+                             for q in plan_zones)
+            if not hit:
+                out.append((net, lname, round(mm(e.x), 3), round(mm(e.y), 3)))
+    return out
+
+
+def plan_nets(plan):
+    nets = set()
+    for k in ("tracks", "vias", "rips", "ripvias", "zones", "polys", "polyrips"):
+        for x in plan.get(k, []):
+            if x.get("net"):
+                nets.add(x["net"])
+    return nets
+
+
+def ends(B0, B1, plan, out=print):
+    """New dangling track ends of the plan's nets: the board without the plan (B0) against it (B1).
+    A plan that ACCEPTS track_dangling (route.py's own key) has them printed, not counted."""
+    nets = plan_nets(plan)
+    if not nets:
+        return []
+    zs = [z for z in plan.get("zones", []) if isinstance(z.get("poly"), list)]
+    d0, d1 = dangling_ends(B0, nets), dangling_ends(B1, nets, zs)
+    left = defaultdict(int)
+    for k in d0:
+        left[k] += 1
+    new = []
+    for k in d1:
+        if left.get(k):
+            left[k] -= 1
+        else:
+            new.append(k)
+    acc = {a["type"]: a.get("why", "") for a in plan.get("accept", [])}
+    tag = "ACCEPTED by the plan (track_dangling): " if "track_dangling" in acc else ""
+    out(f"ENDS: {len(d0)} dangling track end(s) on the plan's {len(nets)} net(s) before, {len(d1)} with the "
+        f"plan ({len(new)} new{'; ' + tag.rstrip(': ') if tag and new else ''})")
+    for net, L, x, y in new:
+        out(f"  {tag}{short_net(net)} {L} track end at ({x:.3f}, {y:.3f}) touches nothing of its net "
+            "(a ripped stub, a track short of its pad or via)")
+    return [] if tag else new
+
+
+def short_net(n):
+    return n.rsplit("/", 1)[-1]
+
+
 def run(board_dir, plan, plan_name="plan", show_all=False, with_lanes=True, out=print):
     """Judge `plan` on the board in board_dir.  Returns (exit code, result)."""
     B = R.RBoard(Path(board_dir))
@@ -836,11 +922,12 @@ def run(board_dir, plan, plan_name="plan", show_all=False, with_lanes=True, out=
         out(f"NOTE {len(plan['zones'])} zone(s) in the plan: not judged (route.py check fills and judges them)")
     n = report(res, out=out, show_all=show_all)
     lane_items = lanes(B, plan, out=out) if with_lanes else []
-    total = n["clearance"] + n["hole_clearance"] + n["unjudged"] + len(lane_items)
+    end_items = ends(R.RBoard(Path(board_dir)), B, plan, out=out)
+    total = n["clearance"] + n["hole_clearance"] + n["unjudged"] + len(lane_items) + len(end_items)
     out(f"PLANCLR {'PASS' if total == 0 else 'FAIL'}: {n['clearance']} clearance + {n['hole_clearance']} hole + "
         f"{n['unjudged']} UNJUDGED (per plan item and layer; {len(res['pairs'])} distinct pair(s)) + "
-        f"{len(lane_items)} exitlane item(s) (a design aid: route.py check still runs)")
-    return (0 if total == 0 else 1), {"res": res, "n": n, "lanes": lane_items}
+        f"{len(lane_items)} exitlane + {len(end_items)} dangling-end item(s) (a design aid: route.py check still runs)")
+    return (0 if total == 0 else 1), {"res": res, "n": n, "lanes": lane_items, "ends": end_items}
 
 
 def stage(board_dir, pcb):
@@ -906,7 +993,7 @@ def _fixture(d):
         s.SetLayer(pn.Edge_Cuts)
         s.SetWidth(FM(0.05))
         b.Add(s)
-    for n in ("ND", "NC", "NH", "ND2", "NE", "NR", "W1", "NA", "NX", "NU", "NV", "NQ"):
+    for n in ("ND", "NC", "NH", "ND2", "NE", "NR", "W1", "NA", "NX", "NU", "NV", "NQ", "NS"):
         b.Add(pn.NETINFO_ITEM(b, n))
 
     def track(net, y, x0=0.0, x1=4.0, w=0.2):
@@ -935,6 +1022,10 @@ def _fixture(d):
         b.Add(v)
     via("NH", 2.0, 10.0)
     via("NR", 6.0, 3.0)
+    track("NS", 12.5, 0.0, 2.0)          # NS: a chain via - track - track - via, no end dangling
+    track("NS", 12.5, 2.0, 4.0)
+    via("NS", 0.0, 12.5)
+    via("NS", 4.0, 12.5)
     ds = b.GetDesignSettings()
     ds.m_HoleClearance = FM(0.25)
     ds.m_MinClearance = FM(0.05)
@@ -959,7 +1050,9 @@ def _st_plan(clear, rips=True):
         return {"net": net, "layer": "F.Cu", "width": 0.2, "pts": [[0.0, y], [x1, y]]}
     rip = {"rips": [{"net": "NR", "layer": "F.Cu", "pts": [[0.0, 3.0], [4.0, 3.0]], "width": 0.2}],
            "ripvias": [{"net": "NR", "at": [6.0, 3.0]}]} if rips else {}
-    return {"group": "selftest", **rip, "tracks": [tr("NQ", 3.1, 7.0),
+    return {"group": "selftest", **rip,
+        "accept": [{"type": "track_dangling", "why": "selftest: the clearance cases end in free board"}],
+        "tracks": [tr("NQ", 3.1, 7.0),
         tr("W1", 0.52 if clear else 0.475),    # vs ND at y 0:  gap 0.32 / 0.275, netclass Wide 0.3
         tr("NA", 5.35 if clear else 5.30),     # vs NC at y 5:  gap 0.15 / 0.10, rule "A to C" 0.12
         tr("NX", 10.70 if clear else 10.61),   # NH via at y 10: pad gap 0.30 / 0.21 (0.2), hole 0.45 / 0.36 (0.4)
@@ -1026,6 +1119,26 @@ def selftest():
         want = [("NQ", "clearance", "track NR"), ("NQ", "clearance", "via NR"), ("NQ", "hole_clearance", "via NR")]
         if got != want or code != 1:
             errs.append(f"rips dropped: got {got} exit {code}, want {want} exit 1")
+        # dangling ends: rip the chain's east segment and leave its west one short; a new track from the
+        # east via ends in free board.  Hand count: (2.0, 12.5) and (4.0, 13.5), exit 1.  Re-laid, and the
+        # new track ending on a plan via: none, exit 0.
+        for fixed in (False, True):
+            print(f"-- selftest dangling ends ({'re-laid (must PASS)' if fixed else 'hand-counted (must FAIL)'})")
+            ns = "NS"
+            pl = {"group": "selftest", "rips": [{"net": ns, "layer": "F.Cu", "pts": [[2.0, 12.5], [4.0, 12.5]]}],
+                  "tracks": [{"net": ns, "layer": "F.Cu", "width": 0.2, "pts": [[4.0, 12.5], [4.0, 13.5]]}]}
+            if fixed:
+                pl["tracks"].append({"net": ns, "layer": "F.Cu", "width": 0.2, "pts": [[2.0, 12.5], [4.0, 12.5]]})
+                pl["vias"] = [{"net": ns, "at": [4.0, 13.5], "pad": 0.6, "drill": 0.3}]
+            try:
+                code, r = run(td, pl, plan_name="selftest", with_lanes=False)
+            except SystemExit as ex:
+                errs.append(f"ends {'fixed' if fixed else 'hand'}: died ({ex.code})")
+                continue
+            got = sorted((x[0], x[1], x[2], x[3]) for x in r["ends"])
+            want = [] if fixed else [("NS", "F.Cu", 2.0, 12.5), ("NS", "F.Cu", 4.0, 13.5)]
+            if got != want or code != (0 if fixed else 1):
+                errs.append(f"ends {'fixed' if fixed else 'hand'}: got {got} exit {code}, want {want} exit {0 if fixed else 1}")
     finally:
         shutil.rmtree(td, ignore_errors=True)
     for e in errs:

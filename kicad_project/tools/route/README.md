@@ -211,6 +211,17 @@ breach, a pair broken and opened at the edge, a pair broken and not opened, pair
   last rule over a looser and an inner one, a hole 0.36 < 0.4, a plan via, one UNJUDGED, a ripped
   track and via never reported; moved clear, PASS) and r172c: all 9 DRC items at the DRC's gaps
   (+-0.0003), 15 pairs in all (DRC names the first per track), exitlane U1 A26, 8 s.
+  It also lists every NEW dangling track end of the plan's nets (KiCad's `track_dangling`): a
+  plan whose rips take a stub it does not re-lay. TRAP (board1 R_U1W nwp2, 2026-11-23): three
+  GPIO15 rips took the ball stub and the new track began where it had ended; planclr passed,
+  `check` failed 5 min in on a 0.245 mm end. Proof: the selftest's ripped chain (2 ends,
+  hand-counted; re-laid, none) and nwp2 before/after the fix (1 end at (21.705, 22.58); 0).
+- **A capped DRC type reads as "new" when a plan moves items.** KiCad lists at most 199
+  violations of a test (`via_dangling` on a fanout-heavy board), so ripping and re-adding vias
+  changes which 199 are shown, and `check` calls the newly shown ones new. TRAP (board1 nwp2,
+  2026-11-23): 5 pre-existing escape vias of other nets appeared. Prove the claim before
+  accepting it: a masked before/after DRC with only the plan's nets and the named ones kept
+  (far under the cap), `new` = the plan's own vias only.
 
 That indirection is the whole point. A hand-written clearance test that uses
 *the track's own* net class misses that KiCad enforces the **stricter of the two
