@@ -1216,7 +1216,7 @@ class Grid:
         return res
 
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
-                  log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4,
+                  log=print, seed=1, on_iter=None, pres_max=1e12, hist_decay=1.0, rip="conflict", stall=4,
                   corridor=None, jacobi=False, stuck=20, plateau=0, plateau_pct=2.0, **kw):
         """jobs: [dict(net, src, src_layer, goals, goal_layer, allowed)].
         Returns {net: (runs, vias)} with no overlaps, or None.  on_iter(it, paths, bad) runs
@@ -1404,5 +1404,7 @@ class Grid:
             for v in bad.values():
                 for k, c in v:
                     self.hist[k][c] += hist_inc
-            pres = min(pres * pres_mul, pres_max)   # past this, history has to do the work
+            # past pres_max, history has to do the work. The search's INF is 1e18 (here and in _maze.c):
+            # a present cost near it makes every shared cell read unreachable, so cap it 1e6 below.
+            pres = min(pres * pres_mul, pres_max, 1e12)
         return None

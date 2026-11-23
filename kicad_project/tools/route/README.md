@@ -1133,6 +1133,14 @@ its docstring. What the spec has to be told:
   through which the only exits need a 90-degree turn (board2's R5: a
   pre-routed lane hard against the via row). Draw the fixed copper with
   `view.py` and free the lane; more `--limit` does not help.
+- **"walled in" late in a long negotiation, with pres near 1e17, was the cost overflowing.**
+  The search's INF is 1e18 (`maze.py`, `_maze.c`); `negotiate()` let the present cost grow to
+  `pres_max=1e30`, so once pres times a shared cell passed INF every contested cell read
+  unreachable and a congested net was reported "no route exists as the ends stand". The present
+  cost is now capped at 1e12 whatever `pres_max` says; past it, history does the work. Proof:
+  `python3 tools/route/test_maze_pres.py` (two nets whose ends overlap, pres_mul 10: the old
+  code walled A at iteration 19, now PASS). A run walled after many iterations at a high
+  `--pres-mul` before 2026-11-23 is not proof of a wall: count it again.
 - **The search runs compiled when it can.** `route/_maze.c` is the same A*
   (built by `tools/setup.sh` with the system C compiler into
   `tools/.native/`, loaded through ctypes over the grid's own buffers): the
