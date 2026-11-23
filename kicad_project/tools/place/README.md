@@ -485,3 +485,8 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
   fails -- 0 of 40 and 40 of 40 (board1 `tmpWork/D116_placefix/syn_probe.py`, old against new, in memory).
   Still noisy, on purpose: `auto`'s own tests (noise only makes it stricter than `check`) and the COPPER
   test's `< 0.3` mm box width, its stand-in for "axis-aligned track" (a rule to settle, not rounding).
+
+- **`sites.py --bar` is repeatable** (fixed 2026-11-23, board1 R_EMMC / D126). It used to keep only the last of several
+  `--bar` options, without a warning, so a search with the router window and a keep-out barred ran with the window
+  open. Every `--bar` now counts, and so does `--bar "a;b"`. **PROOF:** the summary line prints `N --bar box(es)`;
+  check that N is the number of boxes you passed.

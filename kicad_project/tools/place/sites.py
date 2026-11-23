@@ -630,7 +630,7 @@ def main():
     ap.add_argument("--no-lanes", action="store_true", help="do not drop sites that shut a BGA's exit lane")
     ap.add_argument("--no-axis", action="store_true", help="the old search: a via at any angle from its pad")
     ap.add_argument("--no-keepouts", action="store_true", help="do not bar placement.json keep-outs")
-    ap.add_argument("--bar", default="", help="x0,y0,x1,y1;... -- more boxes a courtyard may not enter (absolute mm)")
+    ap.add_argument("--bar", action="append", default=[], help="x0,y0,x1,y1;... -- more boxes a courtyard may not enter (absolute mm); repeatable, every box counts")
     ap.add_argument("--extra-via", default="", help="x,y;... -- planned vias (the board's via size) as obstacles")
     ap.add_argument("--json", help="write the listed positions (pads, centres, vias, kinds) to this file")
     a = ap.parse_args()
@@ -639,7 +639,7 @@ def main():
     mm = B.mm
     configure(B, a.via, a.clr, a.own, a.reach, gates=getattr(B, "gates", None), axis=not a.no_axis)
     print(rules_line())
-    a.bars = parse_boxes(a.bar)
+    a.bars = parse_boxes(";".join(b for b in a.bar if b))
     a.xvias = [(x, y, VIA / 2) for x, y in (tuple(float(v) for v in q.split(","))
                                             for q in a.extra_via.split(";") if q.strip())]
     LN = load_lanes(B, a.lanes, a.no_lanes)
