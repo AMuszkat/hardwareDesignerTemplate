@@ -686,6 +686,13 @@ its docstring. What the spec has to be told:
   `CHECK FAIL (0 new DRC, 2 rule)` against 8 new DRC before (the 2 rules: LED1's via-angle at
   U202.1, there before, and a new INT_N notch); R_ETHLED2 and R_J2 identical plans old vs new;
   R_EMMC_t2 c_v3 re-routes D2/D3/D4, its check on T_ngpoly 30 new DRC against 40 old, no new kind.
+- **A .kicad_dru area rule stricter than the class is not in netgroup's stamps** (board1 R_PMIC, 2026-11-23).
+  TRAP: inside U1_FIRST_MM ('fab: U1 first mm', 0.1016) a PMIC_STBY_REQ B.Cu mitre was laid 0.0546 from
+  R102.1, because netgroup stamps a pad at its class clearance, not the area's. WAY AROUND: a `block` on
+  the pad grown to the area's number, or a hand fix of the one segment (edit the plan JSON, keep 0/45).
+  Keep the spec path in the plan's origin ABSOLUTE when the plan was routed on a scratch copy: `origin.py
+  write` stores it relative to the copy, and a check on another copy then reads "spec is gone".
+  PROOF: tmpWork/R_PMIC/fix_gp2.py -- the one DRC gone, CHECK PASS, 9 joins unchanged.
 - **Parallel `--only` runs need a spec copy each** (netgroup, 2026-11-23). TRAP: board1's R_EMMC_t1 ran six
   `--only` subsets of ONE spec side by side; they share its plan and `plan.partial.json.tmp`, and crashed each
   other (`FileNotFoundError` on the partial). WAY AROUND: copy the spec per run (its plan and partial follow it).
@@ -1755,6 +1762,14 @@ has moved. `budget.py`'s docstring is the manual; in short:
   board wherever the copy is kept: inside the board folder by its path, outside `kicad_project/` (a cache
   folder) by the board's own file name in it and the session's `HW_BOARD`. `HW_BUDGET_IN` belongs to `race.py` and
   `prelayout.py`; set by hand it is a skipped gate.
+- **Traps met taking the budget up mid-routing** (board1, 2026-11-23):
+  `route.py wall` takes its `## Qn` title from `--blocks` cut at ~120 characters, so a long `--blocks`
+  (the numbers belong there) leaves a cut title, and the MANIFEST hashes are not written. Retitle the
+  entry in one line and add the hashes to its `Working from:` before you ring.
+  `route.py budget` reads `routing/groups.json` from the real board only, so a draft can't be proven
+  with it on a copy; prove the draft with `prelayout.py --no-count` on the copy, then install it.
+  A `route.py check` refused as stale (exit 5, nothing checked) is still charged a round: refresh the
+  scratch copy and the plan's origin first.
 
 ## Background runs: `tools/bgwait.py` — started and waited on by pid, with a time limit
 
