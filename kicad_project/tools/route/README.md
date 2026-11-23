@@ -2051,3 +2051,12 @@ round each: the "in flight together" rule covers router runs, not jobs.
 inside ONE job (a script that starts them side by side), not as one job each.
 **PROOF:** board1 tmpWork/NORTHGAP/v_*/netgroup.log (all sources BLOCKED at y 14.7 / 14.8);
 mkspec.py Y0 = 14.6.
+
+**TRAP: a granted single round spent on a BLOCKED SOURCE** (board1 R_PMIC, Q94, 2026-11-23). The router
+stopped in 41 s on the first source it could not leave. Two site vias were walled in by copper laid since the
+plan last passed. Nothing was negotiated, the other nets were never tried, and the one round was charged.
+**WAY AROUND:** before the router run of a round that cannot be repeated, look at every source and goal cell
+against the copy's copper on the spec's layers. A cell whose flood reaches no goal is the wall: ask with that,
+and do not spend the run.
+**PROOF:** board1 tmpWork/R_PMIC/netgroup_r161.log (BLOCKED SOURCE, RTC_RESET_B (24.0, 25.0), a 1527-cell
+pocket).
