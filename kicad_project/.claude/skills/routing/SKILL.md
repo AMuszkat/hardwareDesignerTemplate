@@ -320,6 +320,10 @@ turn and before a worker is briefed.
   a path, never as vertical lines at fixed x with no continuity between them
   -- that model passed a row which was short 10, and three rounds in a row
   were lost to the model, not the board (board1 Q105, Q106, Q110).
+  A cut is one x, and a part whose two pads stand either side of it, or a
+  via just off it, reads as room: count each cut at x and 0.4 mm either
+  side and take the least (board1 Q113: F at x 37.05 read 0 short, 1 short
+  at 36.65).
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
