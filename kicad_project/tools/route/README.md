@@ -845,6 +845,14 @@ its docstring. What the spec has to be told:
   A small window at a fine pitch does it too (board1 R3ab: 11.5 x 9.5 mm at
   0.025 mm, every 10-net run "not shut in -- 45-degree rule" at 900000, routed
   at 5000000): raise `--limit` before reading that line as the 45-degree rule.
+  **Since 2026-11-23 the router does this itself**: a net with no path inside `--limit` is searched ONCE more
+  over the whole grid with no limit before it is called walled (`maze.py`, `_search_full`; the log line
+  `had no path inside --limit N ... searched once without it`), and a net that needed it is searched
+  without the limit for the rest of the run. So "not shut in" now always means the 45-degree rule at an
+  end, and `--limit` is a speed setting: set it high enough that the first search succeeds (each failed
+  first search costs its expansions every iteration until the net is on the unlimited list). MISSING
+  (board1 NORTHGAP, Q97): a round closed 0 of 16 with most nets "stopped at the state limit", and the
+  wall asked the user for one more round at 20 M.
   So does adding a layer: the search is per layer, so each one added multiplies the cells it reaches. Board1's
   P_EMMClay (2026-11-23) went from F + In2 to F + In2 + In7 (+ B.Cu) and stopped in 25 s at 900000 with "EMMC_D7
   not shut in"; at `--limit 5000000` it routed. PROOF: `board1_module/tmpWork/P_EMMClay/STATE.md`.
@@ -1304,7 +1312,7 @@ what. Read the block; do not re-run with more `--iters` or another `--seed` firs
 | 0 | `wrote <plan>` | a plan | `route.py check` |
 | 4 | `BLOCKED at this leg: NET` | one END of a net is shut in by what the run cannot move | move or drop the nearest blocker in the list, start the net elsewhere, open a layer to it, widen the window |
 | 3 | `STUCK at this leg` | the nets named need the same channel and none has a way round the others | give one another layer, move the via, widen the window |
-| 1 | `NO SOLUTION at this leg` / `STOPPED at the timeout` | out of `--iters`, the `--timeout`, or a net with no path that is not shut in (the 45° rule at an end, `--limit`) | the contested cells and the `reach` table, as before |
+| 1 | `NO SOLUTION at this leg` / `STOPPED at the timeout` | out of `--iters`, the `--timeout`, or a net with no path that is not shut in (the 45° rule at an end; never `--limit`, which the router lifts once itself) | the contested cells and the `reach` table, as before |
 
 **BLOCKED** is found before anything is negotiated, in milliseconds per net
 (`maze.Grid.blocked_end`): a flood from the net's source and one back from its goal,
@@ -1768,21 +1776,34 @@ has moved. `budget.py`'s docstring is the manual; in short:
   layer -- and prints the ring line. Then the next group. **Declare the wall before the budget is spent
   when a round has shown the cause**: the budget is a ceiling, not a target.
 - **It reopens only when the input changes**: a handoff revision after the wall answers its `Qn`, or one
-  of the group's own parts moves on the board. A second wall of one group is the user's. A group with
+  of the group's own parts moves on the board. A second wall of one group is a design problem: concept
+  answers it alone only when no offered change adds a term to the design, else the user decides. A group with
   every net on copper is finished; later work on it (a review's fix) is a new budget by itself.
 - The ledger is `<board>/routing/ledger.json`, written by the tools under a lock and quoted by the wall:
   never edited, never copied back from a scratch copy. A run on a scratch copy is charged to the real
   board wherever the copy is kept: inside the board folder by its path, outside `kicad_project/` (a cache
   folder) by the board's own file name in it and the session's `HW_BOARD`. `HW_BUDGET_IN` belongs to `race.py` and
   `prelayout.py`; set by hand it is a skipped gate.
+- **A round that measured nothing is not a round** (budget.py, `FREE` = 3 an epoch; the time still counts).
+  A `netgroup.py` run that ends before its first negotiation -- `BLOCKED at this leg` at leg 1, a stop in
+  the set-up -- closes its ledger event with `free`, and `route.py budget <group>` shows it as `[never
+  began]`; a run that started beside others is freed only if it ran alone. A `route.py check` refused as
+  stale (exit 5) inside a `bgwait.py --group` job is recorded the same way, so the job is not charged the
+  round a job with neither run nor check costs. MISSING (board1, 2026-11-23): R_PMIC's one granted round
+  ended in 41 s on two walled-in sources and NORTHGAP's on a spec defect; both were charged, and both
+  groups went back to the user as a second wall with nothing measured.
+- **The wall's `Layers:` line.** Every router run records the copper layers its spec opened and the board's
+  others; `route.py wall` prints both. A layer no round opened needs its reason -- the handoff row that
+  closes it to the group -- or it is a `layer:` change, and the cheapest one to count before the wall goes
+  out (board1 R_PMIC: two walls on three layers, with four more that published terms allowed).
 - **Traps met taking the budget up mid-routing** (board1, 2026-11-23):
   `route.py wall` takes its `## Qn` title from `--blocks` cut at ~120 characters, so a long `--blocks`
   (the numbers belong there) leaves a cut title, and the MANIFEST hashes are not written. Retitle the
   entry in one line and add the hashes to its `Working from:` before you ring.
   `route.py budget` reads `routing/groups.json` from the real board only, so a draft can't be proven
   with it on a copy; prove the draft with `prelayout.py --no-count` on the copy, then install it.
-  A `route.py check` refused as stale (exit 5, nothing checked) is still charged a round: refresh the
-  scratch copy and the plan's origin first.
+  A `route.py check` refused as stale (exit 5, nothing checked) was charged a round inside a job; it is
+  now recorded as `free` (above). Refresh the scratch copy and the plan's origin first all the same.
 
 ## Background runs: `tools/bgwait.py` — started and waited on by pid, with a time limit
 

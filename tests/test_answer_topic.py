@@ -13,7 +13,9 @@ its answers file, driven the way the concept session meets the check:
   2  a NEW answer without a topic does not publish, and the line says what to
      add;
   3  two answers on one topic publish (the topic compares case- and
-     space-insensitively, and may be bold); the second is a lint note;
+     space-insensitively, and may be bold); the second is a lint note. An
+     edit to a published answer inside the amend window amends the revision;
+     a NEW answer never does -- it is its own revision;
   4  a third on that topic does not publish, the line names the protocol
      section and the `Escalated:` line, and the handoff is untouched;
   5  with `Escalated:` it publishes, and `publish.py --check` is fresh;
@@ -105,8 +107,15 @@ def main():
         ans.write_text(head + old + a4)
         rc, out = publish()
         expect(rc == 0 and "answers (Q4" not in out, "3 the first answer on a topic publishes", out)
+        r4 = rev()
+        ans.write_text(head + old + a4.replace("Body of the answer.", "Body of the answer, reworded."))
+        rc, out = publish()
+        expect(rc == 0 and rev() == r4, f"3 an edit to that answer inside the amend window amends rev {r4} ({rev()})", out)
         ans.write_text(head + old + a4 + a5)
         rc, out = publish()
+        expect(rc == 0 and rev() == r4 + 1,
+               f"3 a NEW answer inside the amend window is its own revision ({r4} -> {rev()}): a walled group "
+               f"reopens only on a revision after its wall", out)
         expect(rc == 0 and "topic 'u1 escape' has 2 answers (Q4, Q5)" in out,
                "3 the second publishes, and the note says the next one is the user's", out)
 

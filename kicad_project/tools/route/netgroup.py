@@ -295,6 +295,10 @@ def main():
     if tok and (not a.timeout or tok.remaining < a.timeout):
         a.timeout = max(1.0, tok.remaining)
         print(f"budget: --timeout {a.timeout:.0f} s -- what the group has left")
+    # Until the first negotiation starts, whatever ends this run ended it before anything was
+    # measured: the ledger says so (`free`) and the group's round is not counted (budget.py).
+    budget.note("ended before any negotiation (the set-up stopped it: the run's output says why)", ok=False,
+                free="nothing was negotiated")
     # An older plan at the output path goes aside NOW, before anything can fail or be killed:
     # whatever ends this run, the path holds this run's plan or nothing (origin.py, 3).  Not
     # when the spec's "plane" reads its zone from that very file -- then the file is an input.
@@ -338,6 +342,9 @@ def main():
     EDGE = float(S["edge"]) if "edge" in S else \
         float((gates.get("edge") or {}).get("min", B.edge_clr))
     print(f"layers {', '.join(LAYERS)}; copper kept {EDGE} mm off the edge")
+    # for the ledger, and the wall that may quote it: what this run could use, and the board's rest
+    budget.fact(layers=list(LAYERS),
+                closed=[l for l in (canon(l) for l in B.b.GetEnabledLayers().CuStack()) if l not in LAYERS])
 
     # short name -> full net name
     full, leaves = {}, collections.defaultdict(list)
@@ -1419,7 +1426,13 @@ def main():
             write_partial({}, {}, stage, 0, {}, "blocked", blocked=shut_in)
             print(f"wrote {pp} (the legs that closed, and the diagnosis)")
             no_plan()
+            # at the first leg the whole run measured nothing: the ledger says so and the round is
+            # not counted (budget.py, FREE an epoch); at a later leg the earlier ones were a round
+            budget.note(f"blocked (exit 4) at leg {stage + 1} before its negotiation: "
+                        f"{', '.join(d_['net'] for d_ in shut_in)} shut in", ok=False,
+                        **(dict(free="nothing was negotiated") if stage == 0 else {}))
             return 4
+        budget.note(None)                                 # from here on the run is a round
 
         opts = dict(iters=a.iters, pres0=a.pres0, pres_mul=a.pres_mul, hist_inc=a.hist,
                     hist_decay=a.hist_decay, layer_cost=S.get("layer_cost"), limit=a.limit,
@@ -1522,11 +1535,13 @@ def main():
                     print("\n".join(maze.Grid.blocked_lines(d_)))
                     print(f"BLOCKED at this leg: {G.walled}")
                 else:
-                    print(f"   {G.walled}: not shut in -- its goal is reachable cell by cell, so it is the "
-                          "45-degree rule at one of its ends (\"dir\", \"goal_dirs\", a start hemmed to one "
-                          f"heading) or --limit {a.limit} (A* expansions a route: cells x layers x headings, so a FINE "
-                          "PITCH hits it in a small window too -- board1 R3ab: 11.5 x 9.5 mm at 0.025 routed only at "
-                          "--limit 5000000; raise it before reading this as the 45-degree rule)")
+                    print(f"   {G.walled}: not shut in -- its goal is reachable cell by cell, and the search "
+                          + ("ran once more over the whole grid with no expansion limit"
+                             if G.walled in G.full else f"ended inside --limit {a.limit}")
+                          + " and found no route: it is the 45-degree rule at one of its ends (\"dir\", "
+                          "\"goal_dirs\", a start hemmed to one heading).  A higher --limit changes nothing here: a "
+                          "net that only lacked expansions is searched without the limit before it is called walled "
+                          "(maze.py, _search_full)")
                     print("NO SOLUTION at this leg")
             else:
                 print("NO SOLUTION at this leg")

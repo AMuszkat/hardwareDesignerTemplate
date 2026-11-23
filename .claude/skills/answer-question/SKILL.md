@@ -67,9 +67,21 @@ the group only when a handoff revision after the wall carries that heading
 in `07_answers.md`, or one of the group's parts moves): grant alone the
 rungs the facts decide (a placement the handoff already allows, a fact that
 was missing), take the rest to the user. **A second wall of one group** (its
-title says so) **is the user's whatever it asks** -- two budgets spent on one
-group is a design problem. Never answer a wall with "try again with …": an
-answer that changes no input reopens nothing, by design.
+title says so) is a design problem -- two budgets spent on one group. Answer
+it alone only when no offered change adds a term to the design: more router
+effort, the board's own copper re-laid on terms the handoff already
+carries, an order between groups; no `Decided` row then. A change that adds
+a term (an allowance, a rule, a part, a net, a layer's use, a keep-out
+opened) is the user's, and a ladder that holds one goes to the user whole.
+**Read the wall's `Layers:` line first**: a layer no round opened is either
+closed by a handoff row -- name it in the answer -- or the cheapest rung, and
+the board counts it before anything is granted. Never answer a wall with
+"try again with …": an answer that changes no input reopens nothing, by
+design.
+
+**A new answer is its own revision.** The publisher never amends the head
+revision with a publish that adds a `## Qn`: a board's tools reopen a walled
+group only on a revision after the one its wall was written at.
 
 **A question about a route** (pair order, which side a bus leaves, a
 crossing, an escape) is never answered from pin order alone. Before an

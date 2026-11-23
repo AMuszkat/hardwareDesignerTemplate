@@ -135,7 +135,10 @@ answer its topic when its problem comes back.
   publish that changes no NEW page amends that revision instead of appending a
   near-identical one — so the amended note must describe EVERY change since
   the previous revision. The window does not slide: after 20 minutes the next
-  publish is a new revision.
+  publish is a new revision. **A publish that adds a `## Qn` answer never
+  amends**: a board's tools reopen a walled routing group only on a revision
+  after the one its wall was written at, and an answer amended into that
+  revision left the group shut (board 1's Q97, 2026-11-23).
 - **The CHANGELOG names pages, not sources.** The board session can open
   `14_fab.md`; it cannot open `fabs/<profile>.py`.
 - **Fresh means identical.** `--check` renders the handoff again and compares

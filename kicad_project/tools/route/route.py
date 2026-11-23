@@ -2004,6 +2004,10 @@ def main():
             budget.applied(a.board, a.plan)
         if a.command == "rip" and rc == 0:
             budget.ripped(a.board, a.plan)
+    except SystemExit as ex:
+        if tok and ex.code == 5:                             # the stale gate: nothing was checked (budget.py, Token.void)
+            tok.void("STALE PLAN (exit 5): nothing was checked")
+        raise
     finally:
         # every exit path, die() included: a kicad-cli DRC started in the background and not waited
         # for is ended and its ~<board>.kicad_pro.lck removed (drccache.abort_all); an orphan was

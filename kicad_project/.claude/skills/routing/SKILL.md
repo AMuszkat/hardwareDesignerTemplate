@@ -137,7 +137,14 @@ turn and before a worker is briefed.
   it ended, the changes cheapest first -- and prints the ring. Ring it (or
   tell the user, relay off) and **take the next group**; the tools refuse
   this one until a handoff revision answers that question or its parts move.
-  A second wall of the same group is the user's.
+  A second wall of the same group is a design problem and says so: concept
+  answers it alone only when no change you offer adds a term to the design.
+  **A run that ended before its first negotiation costs no round** (BLOCKED
+  at leg 1, a spec the set-up refused; three an epoch, the time counts), and
+  the router searches once without `--limit` before it calls a net walled --
+  so never offer "one more round" or "a higher limit" as a change: the wall
+  is about the design. Its `Layers:` line lists the layers no round opened:
+  for each, name the handoff row that closes it, or count it first.
 - **A job for a group carries `--group`** (`bgwait.py run --name N --group
   routing/X_spec.json -- …`), a what-if count `--group X --count` (one per
   placement, ended at 30 minutes). A count that does not answer in that

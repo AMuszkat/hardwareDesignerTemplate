@@ -6,7 +6,7 @@
 What happened on a live board (board1's R2, one bus on three layers): one run negotiated 433
 iterations and three minutes over six cells two nets both needed, and one said "no solution"
 about a net shut in at its start by a reserved via.  Neither said which nets, where, or by what.
-maze.Grid now does; this test holds it to that on five fixtures, each with BOTH search cores (the
+maze.Grid now does; this test holds it to that on six fixtures, each with BOTH search cores (the
 compiled one when it is built, and the Python one) and the same answer from each:
 
   channel    two nets, one wall, one gap one track wide.  negotiate() must stop as STUCK within
@@ -21,6 +21,9 @@ compiled one when it is built, and the Python one) and the same answer from each
   blocked    a net whose start is closed in by a labelled via and two labelled pads: blocked_end()
              names the net, the end ("source"), the cells it reaches and the via, nearest first;
              the same with the goal closed in ("goal"); a net that is not shut in gives None.
+  limit      one net whose only way is long, at an expansion limit far too small for it: the router
+             searches once without the limit, lays it, and says so; a shut-in net is walled only
+             after that search (a limit stop was read as a wall: board1 NORTHGAP, 2026-11-23).
   converge   the harness's own router fixture (tests/agentic_test.py, 8 nets through a funnel):
              the same result hash and iteration count with the detector on, off, and at a window
              of ONE iteration -- it reads the grid and never moves a route.
@@ -195,6 +198,8 @@ def t_blocked(tag):
         log = []
         check(G.negotiate([job], iters=3, log=log.append, **NEG) is None and G.walled == "D3",
               f"{tag} blocked {end}: negotiate() routed a net blocked_end() calls shut in")
+        check(G.full.get("D3") is False and any("searched once without it" in ln for ln in log),
+              f"{tag} blocked {end}: walled without the one search past the limit (full {G.full})")
     return out
 
 
@@ -224,9 +229,33 @@ def t_converge(tag):
     return rows[0]
 
 
+def t_limit(tag):
+    """One net whose only way is the long one round the wall, searched with an expansion limit far
+    below what that way needs: negotiate() must search once without the limit, lay the net, say so,
+    and keep the net off the limit for the rest of the run -- serial and jacobi alike.  (A net
+    with no way at all is still walled, and `full` says the unlimited search was the one that
+    failed: t_blocked.)"""
+    out = {}
+    for mode in ("serial", "jacobi"):
+        G = grid(12.0, 40.0)
+        wall(G, 5.65, 6.35, set(range(G.ny - 3, G.ny)))
+        job = dict(net="LONG", src=(4.6, 2.0), src_layer="F.Cu", goals={G.cell(7.4, 2.0)}, goal_layer="F.Cu",
+                   allowed={"F.Cu"})
+        log = []
+        paths = G.negotiate([job], iters=5, log=log.append, jacobi=mode == "jacobi", **dict(NEG, limit=60))
+        said = [ln for ln in log if "had no path inside --limit 60" in ln]
+        check(paths is not None and "LONG" in paths and G.walled is None,
+              f"{tag} limit {mode}: a net with a way round was called walled at --limit 60 (walled {G.walled})")
+        check(G.full.get("LONG") is True and "LONG" in G.unlimited and len(said) == 1,
+              f"{tag} limit {mode}: the unlimited search is not on record once (full {G.full}, {len(said)} line(s))")
+        out[mode] = bool(paths) and sum(len(r) for r in paths["LONG"][0])
+    check(out["serial"] == out["jacobi"], f"{tag} limit: serial and jacobi lay different routes ({out})")
+    return out["serial"]
+
+
 def one_core(tag):
     return dict(channel=t_channel(tag), lanes=t_lanes(tag), detour=t_detour(tag), blocked=t_blocked(tag),
-                converge=t_converge(tag))
+                converge=t_converge(tag), limit=t_limit(tag))
 
 
 def main():

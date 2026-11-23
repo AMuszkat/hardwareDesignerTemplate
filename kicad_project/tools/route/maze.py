@@ -57,6 +57,7 @@ import heapq
 import math
 import random
 import sys
+import time
 from array import array
 from pathlib import Path
 
@@ -203,6 +204,8 @@ class Grid:
         self._tag = None
         self.stuck = None        # negotiate()'s report when it stopped on a held conflict
         self.walled = None
+        self.full = {}           # net -> bool: searched once without the expansion limit, and found?
+        self.unlimited = set()   # nets whose route exists only past the limit: searched without it from then on
 
     # -- geometry -> cells ---------------------------------------------------
     def cell(self, x, y):
@@ -1187,6 +1190,31 @@ class Grid:
                 return res
             m *= 2
 
+    NO_LIMIT = 1 << 60       # an expansion limit no search reaches: it ends when its heap is empty
+
+    def _search_full(self, jb, log, it, **kw):
+        """A net's last word before it is called walled: the same search over the whole grid with
+        no expansion limit.  -> its path, or None -- and None is now CERTAIN: no route exists under
+        the heading rules, whatever --limit says.  A search that finds nothing inside the limit
+        looks exactly like a net with no path (both cores return "none"), and board1's NORTHGAP
+        lost a whole round to that (2026-11-23: 0 of 16 on copper, 'the rest stopped at the
+        router's state limit', a second wall asking for one more round at a higher limit).  A net
+        that needed it is searched without the limit for the rest of the run (self.unlimited);
+        self.full[net] says whether the full search found a path."""
+        lim = kw.get("limit", 900000)
+        if lim >= self.NO_LIMIT:
+            return None
+        n = jb["net"]
+        t0 = time.monotonic()
+        res = self._route_in_corridor(jb, None, None, **dict(kw, limit=self.NO_LIMIT))
+        self.full[n] = res is not None
+        if res is not None:
+            self.unlimited.add(n)
+        log(f"   iteration {it}: {n} had no path inside --limit {lim} (A* expansions); searched once without it, "
+            f"{time.monotonic() - t0:.1f} s: " + ("a path -- it is routed without the limit from here on"
+                                                   if res is not None else "none, so no route exists as the ends stand"))
+        return res
+
     def negotiate(self, jobs, iters=60, pres0=0.5, pres_mul=1.5, hist_inc=0.3,
                   log=print, seed=1, on_iter=None, pres_max=1e30, hist_decay=1.0, rip="conflict", stall=4,
                   corridor=None, jacobi=False, stuck=20, plateau=0, plateau_pct=2.0, **kw):
@@ -1280,14 +1308,22 @@ class Grid:
                     n = jb["net"]
                     old = paths.get(n)
                     self.unroute(n)
-                    res = self._route_in_corridor(jb, old, corridor, pres=pres, hmap=hm, **kw)
+                    res = self._route_in_corridor(jb, old, corridor, pres=pres, hmap=hm,
+                                                  **(dict(kw, limit=self.NO_LIMIT) if n in self.unlimited else kw))
                     self.unroute(n)
                     if old:
                         self.lay(n, *old)          # the next net sees the iteration's starting congestion
                     return res
-                results = par.pmap(one, todo)
-                for jb, res in zip(todo, results):
+                results = list(par.pmap(one, todo))
+                for k, (jb, res) in enumerate(zip(todo, results)):
                     n = jb["net"]
+                    if res is None:                # here, not in the worker: what it learns must stay
+                        old = paths.get(n)
+                        self.unroute(n)
+                        res = results[k] = self._search_full(jb, log, it, pres=pres, hmap=hm, **kw)
+                        self.unroute(n)
+                        if old:
+                            self.lay(n, *old)
                     if res is None:
                         log(f"   iteration {it}: {n} has no path even through the others -- walled in")
                         self.walled = n
@@ -1300,7 +1336,10 @@ class Grid:
             for jb in ([] if jacobi else todo):
                 n = jb["net"]
                 self.unroute(n)
-                res = self._route_in_corridor(jb, paths.get(n), corridor, pres=pres, hmap=hm, **kw)
+                res = self._route_in_corridor(jb, paths.get(n), corridor, pres=pres, hmap=hm,
+                                              **(dict(kw, limit=self.NO_LIMIT) if n in self.unlimited else kw))
+                if res is None:
+                    res = self._search_full(jb, log, it, pres=pres, hmap=hm, **kw)
                 if res is None:
                     log(f"   iteration {it}: {n} has no path even through the others -- walled in")
                     self.walled = n

@@ -185,10 +185,26 @@ group until a handoff revision after the wall carries that `## Qn` in
 `07_answers.md`, or one of the group's parts has moved. Concept answers a
 wall as a ladder, in ONE revision: the rungs it may grant alone (a placement
 the handoff already allows, a fact that was missing), and the user's
-decision for the rest. **A group's second wall** (its title says so) **is
-the user's**, whatever it asks: two budgets spent on one group is a design
-problem, and the answer owes a `Decided` row. An answer never restores a
-budget by saying so; only the changed input does.
+decision for the rest. **A group's second wall** (its title says so) **is a
+design problem**: two budgets spent on one group. Concept answers it alone
+only when NO offered change adds a term to the design -- more router effort
+(a round, a search limit, an order between groups), the board's own copper
+re-laid on terms the handoff already carries -- and that answer owes no
+`Decided` row. A change that adds a term (an allowance, a rule, a part, a
+net, a layer's use, a keep-out opened) is the user's, as a ladder, and owes
+the row; when the offered changes are of both kinds the whole ladder goes
+to the user once. An answer never restores a budget by saying so; only the
+changed input does.
+
+**A round that measured nothing is not a round.** A router run that ends
+before its first negotiation (an end shut in by copper it cannot move, a
+spec its set-up refused), and a check refused as stale inside a job, are on
+the ledger with their time and cost no round -- three an epoch, then they
+count. And a net is called walled only after one search without the
+router's expansion limit: "raise the limit and run again" is no longer a
+change a wall can ask for. The wall lists the layers its rounds could use
+and the board's others; a layer no round opened is answered with the
+handoff row that closes it, or counted before the question is.
 
 Escalation is four steps, then **stop**: tell the board session
 `boardN Qn waits on the user`; send the user a `PushNotification` with the

@@ -39,6 +39,7 @@ The engine is board-blind. Everything board-specific lives in
 `answers/boardN.md` (answers) and the fab profile the board names in
 `fabs/`. The registry of boards IS the `boards/` directory.
 """
+import collections
 import datetime
 import hashlib
 import argparse
@@ -1386,13 +1387,32 @@ class Board:
         return "\n".join(L)
 
     # -- the changelog ------------------------------------------------------
+    def new_answers(self):
+        """The `## Qn` headings the answers file holds and the published
+        07_answers.md does not (counted: a second answer under one Qn is new).
+        A NEW ANSWER IS ITS OWN REVISION, never an amend of the head one: a
+        board's tools reopen a walled routing group only on a revision AFTER
+        the one its wall was written at, and a board that asked while working
+        from the head revision would be answered under that same number (board
+        1's Q97, 2026-11-23: written at rev 162, answered 12 minutes after rev
+        162's first publish, amended into rev 162 -- the group stayed shut)."""
+        p = os.path.join(ROOT, self.answers_rel)
+        if not os.path.exists(p):
+            return []
+        qn = lambda text: collections.Counter(                       # noqa: E731
+            m.group(0) for a in answer_topics(text) for m in [re.match(r"Q\d+", a["heading"])] if m)
+        old = os.path.join(self.handoff, "07_answers.md")
+        new, had = qn(open(p).read()), qn(open(old).read()) if os.path.exists(old) else collections.Counter()
+        return sorted((new - had), key=lambda q: int(q[1:]))
+
     def changelog(self, pages):
         """Append-only publish log -- THE HANDOFF'S ONLY PUSH CHANNEL. It names
         the PAGES that changed (the board session can open those; it cannot
         open our sources). State lives in a JSON comment, never in the prose:
         `pages` (name -> hash), `note` (hash of the last RELEASE_NOTE), `moved`
         and `gone` (what the head revision lists) and `first` (when the head
-        revision was FIRST published -- the amend window runs from there)."""
+        revision was FIRST published -- the amend window runs from there).
+        A publish that carries a new answer is never an amend (new_answers)."""
         p = os.path.join(self.handoff, "CHANGELOG.md")
         prev, old = "", {}
         if os.path.exists(p):
@@ -1417,7 +1437,7 @@ class Board:
         if m and old.get("first") and "moved" in old:
             age = (now - datetime.datetime.strptime(old["first"], "%Y-%m-%d %H:%M")).total_seconds()
             prior = set(old["moved"]) | set(old.get("gone", []))
-            if age < AMEND_MIN * 60 and set(changed) | set(gone) <= prior:
+            if age < AMEND_MIN * 60 and set(changed) | set(gone) <= prior and not self.new_answers():
                 rev = int(m.group(1))
                 rest = prev.split("-->\n", 1)[1].split("\n## rev ", 1)
                 # the replaced entry's own note: kept below unless the new note

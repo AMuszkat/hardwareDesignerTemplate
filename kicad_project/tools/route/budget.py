@@ -65,12 +65,24 @@ cause: the budget is a ceiling, not a target.
 THE BUDGET REOPENS ONLY WHEN THE INPUT CHANGES: the handoff answers the wall's question in a
 later revision (handoff/07_answers.md carries its `## Qn`), or one of the group's own parts
 has moved on the board.  Not by a new name, a new seed or a new day.  A group that reaches a
-SECOND wall goes to the user: its question says so, and concept does not answer it alone
-(RELAY_PROTOCOL.md section 5).  And a group whose nets are ALL on copper is finished: work on
-it after that (a review's fix, a neighbour that needs room) starts a new budget by itself.
+SECOND wall is a design problem and its question says so: concept answers it alone only when
+no offered change adds a term to the design -- more router effort, the board's own copper
+re-laid on terms already published, an order between groups -- and takes every other one to
+the user (RELAY_PROTOCOL.md section 5).  And a group whose nets are ALL on copper is
+finished: work on it after that (a review's fix, a neighbour that needs room) starts a new
+budget by itself.
+
+A ROUND THAT MEASURED NOTHING IS NOT A ROUND.  A router run that ends before its first
+negotiation -- an end shut in by copper the run cannot move (BLOCKED before leg 1), a spec the
+set-up refused -- says so in its event (`free`), and the tally leaves its round out: the time
+is counted, the round is not.  FREE of them an epoch; the next one is a round like any other
+(a group that keeps starting runs which cannot begin is spending its budget).  Runs started
+together are freed only when each of them ended that way.  (board1, 2026-11-23: R_PMIC's one
+granted round ended in 41 s on two walled-in sources, and NORTHGAP's on a spec defect; each
+went back to the user as a second wall with nothing measured.)
 
 NOT COUNTED, NEVER REFUSED: `route.py apply` (copper is the point), `rip`, `audit`, `status`,
-`render`; a check that ends in a usage error.  HW_BUDGET_IN is set by race.py and prelayout.py
+`render`; a check that ends in a usage error; the round of a run that never negotiated (above).  HW_BUDGET_IN is set by race.py and prelayout.py
 for the processes THEY start, whose cost they log themselves; setting it by hand is skipping
 a gate.
 
@@ -95,6 +107,7 @@ COUNT_S = 30 * 60            # the feasibility count
 CHECKS = 3                   # checks a round carries: its first, and two after a hand fix
 RACE = 6                     # variants, or runs in flight together, that are one round
 DEAD_S = 600                 # charged for a run that died without a word (killed -9)
+FREE = 3                     # runs an epoch that ended before any negotiation and cost no round
 UNGROUPED_S = 60             # a background job of no group shorter than this is not worth a line
 EXIT = 76                    # BUDGET SPENT
 ENV_IN = "HW_BUDGET_IN"      # set by a tool that logs its children's cost itself
@@ -317,14 +330,17 @@ def tally(g, now=None):
     now = now or time.time()
     ep = g.get("epoch", 1)
     ev = [e for e in g.get("events", []) if e.get("epoch", 1) == ep]
-    in_runs, in_checks = {}, {}                          # what the route tools did inside a bgwait --group job
+    in_runs, in_checks, in_free, in_void = {}, {}, {}, {}    # what the route tools did inside a bgwait --group job
     for e in ev:
         j = e.get("job")
         if j and e["kind"] in ("run", "race"):
             in_runs[j] = in_runs.get(j, 0) + int(e.get("variants", 1))
+            if e.get("free") and e["kind"] == "run":
+                in_free[j] = in_free.get(j, 0) + 1
         elif j and e["kind"] == "check":
-            in_checks[j] = in_checks.get(j, 0) + 1
-    rounds = checks = 0
+            d_ = in_void if e.get("free") else in_checks  # a check refused as stale checked nothing
+            d_[j] = d_.get(j, 0) + 1
+    rounds = checks = free = 0                           # free: runs that never negotiated, their round left out
     secs = count_s = last = 0.0
     counts, on_copper, t_apply = [], {}, 0.0
     for e in g.get("events", []):                        # copper is a fact of the board, whatever the epoch
@@ -343,21 +359,32 @@ def tally(g, now=None):
         elif k == "job":                                 # the job owns its time; what ran inside it says what it was
             secs, last = secs + s, e["t"]
             n = in_runs.get(e.get("jid"), 0)
-            if n:
-                rounds, checks = rounds + math.ceil(n / RACE), 0
+            f = max(0, min(in_free.get(e.get("jid"), 0), FREE - free))
+            free += f
+            v = max(0, min(in_void.get(e.get("jid"), 0), FREE - free)) if n - f <= 0 and not in_checks.get(e.get("jid")) else 0
+            free += v
+            if n - f > 0:
+                rounds, checks = rounds + math.ceil((n - f) / RACE), 0
+            elif f or v:
+                pass                                     # all it did ended before it began: no round
             elif not in_checks.get(e.get("jid")):
                 rounds, checks = rounds + 1, 0
         else:
             last = e["t"]
             if not e.get("job"):
                 secs += s
-            if k == "check":
+            if k == "check" and e.get("free"):
+                pass                                     # refused as stale inside a job: on the record, no check
+            elif k == "check":
                 if rounds == 0 or checks >= CHECKS:
                     rounds, checks = rounds + 1, 1
                 else:
                     checks += 1
             elif e.get("round") and not e.get("job"):
-                rounds, checks = rounds + int(e.get("rounds", 1)), 0
+                if e.get("free") and e.get("members", 1) == 1 and free < FREE:
+                    free += 1                            # it measured nothing: its time counts, its round does not
+                else:
+                    rounds, checks = rounds + int(e.get("rounds", 1)), 0
     T = TIERS[g.get("tier", "A")]
     wall = next((w for w in reversed(g.get("walls", [])) if w.get("epoch", 1) == ep), None)
     left_r, left_s = T["rounds"] - rounds, T["seconds"] - secs
@@ -366,7 +393,7 @@ def tally(g, now=None):
     complete = bool(copper) and set(g.get("nets", [])) <= copper
     no_more = left_s <= 0 or left_r < 0 or (left_r <= 0 and checks >= CHECKS)
     state = ("wall" if wall else "applied" if copper and t_apply >= last else "spent" if no_more else "open")
-    return dict(rounds=rounds, seconds=secs, checks=checks, counts=counts, count_s=count_s, complete=complete,
+    return dict(rounds=rounds, seconds=secs, checks=checks, free=free, counts=counts, count_s=count_s, complete=complete,
                 nets_applied=nets_applied, left_rounds=left_r, left_seconds=left_s, state=state, wall=wall,
                 no_more=no_more, allow_rounds=T["rounds"], allow_seconds=T["seconds"])
 
@@ -446,12 +473,27 @@ class Token:
     def __init__(self, hb=None, key=None, eid=None, remaining=None, t0=None, pending=None):
         self.home, self.key, self.id, self.remaining = hb, key, eid, remaining
         self.t0, self.pending, self.result, self.ok, self.pid, self.done = t0 or time.time(), pending, None, None, os.getpid(), False
+        self.facts, self.keep = {}, {}                    # of the result as it stands / of the run whatever its result
 
     def __bool__(self):
         return self.home is not None
 
-    def note(self, result, ok=None):
-        self.result, self.ok = result, ok
+    def note(self, result, ok=None, **facts):
+        """The result as it stands, and its facts (`free`: it ended before any negotiation).  The
+        next note replaces both."""
+        self.result, self.ok, self.facts = result, ok, facts
+
+    def fact(self, **facts):
+        """A fact of the run itself, kept whatever its result (the layers it opened)."""
+        self.keep.update(facts)
+
+    def void(self, result):
+        """A check that checked nothing (its plan refused as stale).  Alone it leaves no record, as
+        before; inside a bgwait --group job it is recorded as `free`, so the job that held nothing
+        else is not charged a round for it (board1, 2026-11-23: a stale check in a job was)."""
+        if self.pending is not None and self.pending.get("job"):
+            self.end(result, ok=False, free="nothing was checked")
+        self.done = True
 
     def detach(self):
         """Somebody else ends it (bgwait's wrapper): -> what that process needs."""
@@ -462,16 +504,25 @@ class Token:
         if self.done or not self.home or os.getpid() != self.pid:
             return
         self.done = True
-        close(self.home, self.key, self.id, time.time() - self.t0, result if result is not None else self.result,
-              ok if ok is not None else self.ok, pending=self.pending, **facts)
+        if result is None:                                # the noted result, with the facts noted beside it
+            result, facts = self.result, {**self.facts, **facts}
+        close(self.home, self.key, self.id, time.time() - self.t0, result,
+              ok if ok is not None else self.ok, pending=self.pending, **{**self.keep, **facts})
 
 
 CURRENT = Token()
 
 
-def note(result, ok=None):
-    """The running tool's result line, for the ledger (netgroup.py's end states)."""
-    CURRENT.note(result, ok)
+def note(result, ok=None, **facts):
+    """The running tool's result line, for the ledger (netgroup.py's end states).  `free="<why>"`
+    says the run ended before any negotiation: its round is not counted (FREE an epoch)."""
+    CURRENT.note(result, ok, **facts)
+
+
+def fact(**facts):
+    """A fact of the running tool's run for its ledger event, whatever its result: `layers` (the
+    copper layers the run could use) and `closed` (the board's others) -- the wall quotes them."""
+    CURRENT.fact(**facts)
 
 
 def close(hb, key, eid, seconds, result=None, ok=None, pending=None, **facts):
@@ -491,6 +542,13 @@ def close(hb, key, eid, seconds, result=None, ok=None, pending=None, **facts):
         if ok is not None:
             e["ok"] = bool(ok)
         L.dirty = True
+        if e.get("free") and e["kind"] == "check":
+            print(f"budget: {key} -- this check was refused as stale and checked nothing: on the record, no round for it")
+        elif e.get("free"):
+            t = tally(g)
+            print(f"budget: {key} -- this run ended before any negotiation: {t['free']} such end(s) this epoch "
+                  f"cost no round (at most {FREE}; one that ran beside others is counted with them). "
+                  f"Round {t['rounds']} of {t['allow_rounds']}.")
 
 
 def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, label="", variants=1, jid=None):
@@ -760,7 +818,8 @@ def print_group(hb, key):
 
 def event_line(e):
     when = time.strftime("%m-%d %H:%M", time.localtime(e["t"]))
-    what = e["kind"] + (f" x{e['variants']}" if e.get("variants") else "") + (" [round]" if e.get("round") else "")
+    what = e["kind"] + (f" x{e['variants']}" if e.get("variants") else "") + (
+        " [never began]" if e.get("free") else " [round]" if e.get("round") else "")
     return (f"{when}  {what:16s} {dur(e['s']) if e.get('s') is not None else 'running':>7s}  "
             f"{e.get('label') or e.get('name', '')}: {e.get('result', '')}")
 
@@ -856,8 +915,12 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
         rev = handoff_rev(hb)
         head = blocks.strip().splitlines()[0][:110]
         second = n_wall >= 2
-        title = (f"WALL {key}" + (f", the {['', '', 'SECOND', 'THIRD'][min(n_wall, 3)]} -- for the user" if second else "")
-                 + f": {head}")
+        title = (f"WALL {key}" + (f", the {['', '', 'SECOND', 'THIRD'][min(n_wall, 3)]}" if second else "") + f": {head}")
+        # the layers the epoch's rounds could use, and the board's others: a layer no round opened
+        # is the change nobody priced (board1 R_PMIC, 2026-11-23: two walls on three layers, with
+        # four more the handoff's own terms allowed)
+        opened = sorted({l for e in ev for l in e.get("layers", [])})
+        shut = sorted({l for e in ev for l in e.get("closed", [])} - set(opened))
         out = [f"## Q{qn} — {title}",
                f"**Status:** open · {'BLOCKING' if blocking else 'not blocking'}",
                f"**Need:** a change to the design. {key} (tier {g['tier']}: {g.get('basis', '')}) "
@@ -867,13 +930,21 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
                   f"{dur(t['allow_seconds'])}: the cause is known and more runs would not move it")
                + f"; {t['nets_applied']} of its {len(g.get('nets', []))} net(s) are on copper. The tools refuse the "
                f"group until a handoff revision after rev {rev} answers this, or its parts move."
-               + (" **This is the group's wall number " + str(n_wall) + ": it goes to the user "
-                  "(RELAY_PROTOCOL.md section 5), with the earlier wall's answer beside it.**" if second else ""),
+               + (" **This is the group's wall number " + str(n_wall) + ", a design problem: a change below that "
+                  "adds a term to the design (an allowance, a rule, a part, a net, a layer's use) is the user's; one "
+                  "that adds none (more router effort, your own copper re-laid on terms already published, an order "
+                  "between groups) concept answers alone (RELAY_PROTOCOL.md section 5), with the earlier wall's "
+                  "answer beside it.**" if second else ""),
                f"**What blocks:** {blocks.strip()}",
+               *([f"**Layers:** the rounds could use {', '.join(opened)}; no round opened "
+                  f"{', '.join(shut) or 'none -- every copper layer was open'}."
+                  + (" For each layer not opened: the handoff row that closes it to this group -- or it is a change "
+                     "below, and the cheapest one to count." if shut else "")] if opened else []),
                "**The rounds** (`routing/ledger.json`, written by the tools):", "",
                "| when | what | time | how it ended |", "|---|---|---|---|"]
         for e in ev:
-            what = e["kind"] + (f" x{e['variants']}" if e.get("variants") else "") + (", round" if e.get("round") else "")
+            what = e["kind"] + (f" x{e['variants']}" if e.get("variants") else "") + (
+                ", ended before negotiating" if e.get("free") else ", round" if e.get("round") else "")
             res = str(e.get("result", "")).replace("|", "\\|")
             out.append(f"| {time.strftime('%m-%d %H:%M', time.localtime(e['t']))} | {what}: "
                        f"{str(e.get('label') or e.get('name', '')).replace('|', chr(92) + '|')} | "

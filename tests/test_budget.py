@@ -107,10 +107,18 @@ def main():
         led = lambda: json.loads((b / "routing" / "ledger.json").read_text())          # noqa: E731
         P = lambda *i: [f"P{k}" for k in i]                                            # noqa: E731
 
-        def run(name, nets, **kw):
+        def run(name, nets, facts=None, **kw):
             tok = B.gate(b, name, nets, kind="run", limit=60, **kw)
+            tok.fact(**(facts or {}))
             tok.end("did not converge", ok=False)
             return tok
+
+        def never(name, nets):
+            """A router run that ends before its first negotiation, as netgroup.py notes it."""
+            tok = B.gate(b, name, nets, kind="run", limit=60)
+            tok.note("ended before any negotiation", ok=False, free="nothing was negotiated")
+            tok.fact(layers=["F.Cu", "In2.Cu"], closed=["In5.Cu"])
+            tok.end()
 
         def check(name, nets, board=b):
             tok = B.gate(board, name, nets, kind="check")
@@ -238,12 +246,17 @@ def main():
         rc = refused(lambda: check("gA", nA))
         expect(rc == 76, "an answer with no new revision does not reopen it")
         (b / "handoff" / "MANIFEST.json").write_text(json.dumps({"rev": 8}))
-        run("gA", nA)
+        run("gA", nA, facts=dict(layers=["F.Cu", "In2.Cu"], closed=["In5.Cu", "In2.Cu", "B.Cu"]))
         g = led()["groups"]["gA"]
         expect(g["epoch"] == 2 and B.tally(g)["rounds"] == 1, "rev 8 answering Q4 reopens it: a new budget, round 1")
         rc = B.cmd_wall(b, "gA", "still four sites", ["swap: J1 pins 3 and 7"])
         q = (b / "QUESTIONS.md").read_text()
-        expect(rc == 0 and "## Q5 — WALL gA, the SECOND -- for the user" in q, "its second wall is addressed to the user", q[-900:])
+        body = q[q.find("## Q5"):]
+        expect(rc == 0 and "## Q5 — WALL gA, the SECOND: still four sites" in q and "for the user" not in body.splitlines()[0]
+               and "adds a term to the design" in body and "concept answers alone" in body,
+               "its second wall says which changes are the user's and which concept answers alone", q[-1500:])
+        expect("**Layers:** the rounds could use F.Cu, In2.Cu; no round opened B.Cu, In5.Cu." in body,
+               "the wall lists the layers its rounds could use and the ones no round opened", body)
         (b / "board9.kicad_pcb").write_text(pcb_text(x=10.8))            # J1 moves: gA's part
         run("gA", nA)
         expect(led()["groups"]["gA"]["epoch"] == 3, "one of its parts moved: it reopens")
@@ -321,6 +334,65 @@ def main():
         tok = B.gate(b, "hand", nH, kind="check")
         os.environ.pop("HW_BUDGET_IN")
         expect(not tok and json.dumps(led(), sort_keys=True) == before, "a tool's own children are not counted and not refused")
+
+        print("13. a round that measured nothing")
+        nN = P(32, 33)
+        never("nil", nN)
+        g = led()["groups"]["nil"]
+        t, e = B.tally(g), g["events"][-1]
+        expect(t["rounds"] == 0 and t["free"] == 1 and e.get("free") and e["s"] is not None and e["ok"] is False
+               and e["layers"] == ["F.Cu", "In2.Cu"] and e["closed"] == ["In5.Cu"],
+               f"a run that ended before any negotiation is on the ledger with its time and layers, and costs no round "
+               f"({t['rounds']} rounds, {t['free']} free)", json.dumps(g, indent=1))
+        never("nil", nN)
+        never("nil", nN)
+        t3 = B.tally(led()["groups"]["nil"])
+        never("nil", nN)
+        t4 = B.tally(led()["groups"]["nil"])
+        expect(t3["rounds"] == 0 and t3["free"] == 3 and t4["rounds"] == 1 and t4["free"] == 3,
+               f"three such ends an epoch are free, the fourth is a round ({t3['rounds']}/{t3['free']}, then {t4['rounds']}/{t4['free']})")
+        run("nil", nN)
+        rc = refused(lambda: run("nil", nN))
+        expect(rc == 76, f"and the budget still ends: the run after round 2 is refused (exit {rc})")
+        tok = B.gate(b, "nil2", P(34, 35), kind="run", limit=60)
+        tok.note("ended before any negotiation", ok=False, free="nothing was negotiated")
+        tok.note(None)                                                  # the first negotiation began
+        tok.end("did not converge", ok=False)
+        g = led()["groups"]["nil2"]
+        expect(B.tally(g)["rounds"] == 1 and not g["events"][-1].get("free"), "a run that reached its negotiation is a round")
+        never("nil3", P(36, 37))
+        L = led()
+        L["groups"]["nil3"]["events"][-1]["members"] = 2
+        (b / "routing" / "ledger.json").write_text(json.dumps(L))
+        expect(B.tally(led()["groups"]["nil3"])["rounds"] == 1, "one that held a round other runs joined is counted with them")
+        fspec = b / "routing" / "nil4_spec.json"
+        fspec.write_text(json.dumps({"window": [0, 0, 1, 1], "nets": {"P38": [], "P39": []}}))
+        inner = ("import sys; sys.path.insert(0, sys.argv[1]); import budget; "
+                 "budget.gate(sys.argv[2], 'nil4_spec', ['P38', 'P39'], kind='run', limit=60); "
+                 "budget.note('ended before any negotiation', False, free='nothing was negotiated')")
+        r = bg("run", "--name", "f1", "--group", str(fspec), "--", sys.executable, "-c", inner, str(kp / "tools" / "route"), str(b))
+        bg("wait", "f1", "--timeout", "30")
+        g = led()["groups"].get("nil4_spec", {"events": []})
+        t = B.tally(g) if g["events"] else {}
+        expect(r.returncode == 0 and sorted(x["kind"] for x in g["events"]) == ["job", "run"] and t.get("rounds") == 0
+               and t.get("free") == 1, f"a job whose only run never negotiated is no round ({t.get('rounds')}, {t.get('free')} free)",
+               r.stdout + r.stderr + json.dumps(g, indent=1))
+        sspec = b / "routing" / "nil5_spec.json"
+        sspec.write_text(json.dumps({"window": [0, 0, 1, 1], "nets": {"P23": [], "P24": []}}))
+        inner = ("import sys; sys.path.insert(0, sys.argv[1]); import budget; "
+                 "tok = budget.gate(sys.argv[2], 'nil5_spec', ['P23', 'P24'], kind='check'); "
+                 "tok.void('STALE PLAN (exit 5): nothing was checked')")
+        r = bg("run", "--name", "s1", "--group", str(sspec), "--", sys.executable, "-c", inner, str(kp / "tools" / "route"), str(b))
+        bg("wait", "s1", "--timeout", "30")
+        g = led()["groups"].get("nil5_spec", {"events": []})
+        t = B.tally(g) if g["events"] else {}
+        chk = next((x for x in g["events"] if x["kind"] == "check"), {})
+        expect(r.returncode == 0 and chk.get("free") and t.get("rounds") == 0,
+               f"a check refused as stale inside a job is on the record and the job is no round ({t.get('rounds')})",
+               r.stdout + r.stderr + json.dumps(g, indent=1))
+        n0 = len(led()["groups"]["nil2"]["events"])
+        B.gate(b, "nil2", P(34, 35), kind="check").void("STALE PLAN (exit 5): nothing was checked")
+        expect(len(led()["groups"]["nil2"]["events"]) == n0, "outside a job a stale check leaves no record, as before")
 
         import contextlib
         import io
