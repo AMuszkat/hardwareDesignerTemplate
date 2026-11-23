@@ -264,6 +264,17 @@ given as data). Two uses:
   handoff does not list). (3) `draw`; its handoff parity proves the rest.
   Proven on a copy of board1 (2026-11-23): A1 on EMMC_D3 passes, the same with
   EMMC_D3 dropped from the list, A1 dropped from `pins`, or the key removed fails.
+  **TRAP in step (2) when symgen redraws the body**: symgen sizes a unit from
+  its pin names, so a symbol drawn by hand or by an older tool can come back
+  narrower (board1 U300 unit 1: 17.78 -> 15.24 mm, 21 right-side pins 2.54 mm
+  in). A sheet refreshed from that library has those pins off their wires, and
+  `--from-sch` then reads them unconnected. A board whose schematic.json has no
+  "sheets"/"symbols" (`--handoff` refused) takes the nets from the drawing with
+  the symbol it was drawn with and lays the part out from the library instead:
+  board1 `tmpWork/sch_nct/plan_relib.py --relib LIB:NAME --move REF.PIN=NET`
+  (the prototype of a `plan --relib` option). PROOF (board1 RV70, 2026-11-23):
+  PLAN PASSES, parity IDENTICAL, DRAW OK, HANDOFF PARITY OK with
+  "3 nc_through pin(s) routed through"; schupdate sets the 3 pad nets.
 - **`plan --handoff`**, a new board, once the handoff marks the netlist
   `complete`: the layout comes from it directly. What is the board's own —
   the sheets, and per refdes (a glob is fine) the symbol, footprint, units
