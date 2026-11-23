@@ -165,3 +165,12 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   Board1 (R1, RV5.6) ended such laid exits 0.03 mm past the courtyard edge;
   the false positive disappears anyway once the route continues. Read the
   piece's extent in the report before "fixing" a nub at a field's edge.
+
+- **`guardblock.py`: a guarded block holds no other net's copper.** A rule like "no other net's copper inside the
+  crystal block on F.Cu or the inner layers", where the block is pads plus tracks grown by a clearance, is checked by
+  neither KiCad's DRC nor `route.py audit`. TRAP (board1 #15, 2026-11-23): R_J1N's PDM_DATA3 In2 run went through the
+  PMIC crystal block. Every gate passed, and a worker found it only while reading a router's contested cells.
+  Run it after every group near a guarded block and before the fab release:
+  `tools/kpy tools/copper/guardblock.py BOARD --parts Y100,C122,C123 --nets PMIC_XTAL_IN,PMIC_XTAL_OUT --layers
+  F.Cu,In1.Cu,...,In6.Cu --own GND --clr 0.1016 [--zones]`. It exits 1 and prints a line per intrusion. Zones are
+  tested only with `--zones`, because a whole plane under the block may be what the rule asks for.
