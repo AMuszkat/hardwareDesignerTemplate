@@ -1790,6 +1790,15 @@ has moved. `budget.py`'s docstring is the manual; in short:
   another group's diagonal set it. WAY AROUND: a no-cost probe (netgroup set-up only, or sites.py) on a copy with
   the part moved, its site map diffed against the unmoved one; name a part in a wall only when the diff opens a cell.
   PROOF: `diff probe_before/map.txt probe_after/map.txt` lists the cells the move opens.
+- **Gate a plan on a copy of TODAY's board, not the copy it was routed on.** TRAP (board1 R1 round 8,
+  2026-11-23): the row passed every gate on its round's base copy, made hours before; the real board had since
+  taken 304 tracks of other groups and moved 5 parts, none of which that gate had seen. WAY AROUND: diff the base
+  copy against the real board (footprint positions, tracks by net, zones) before the apply; when they differ, cp -r
+  the real board, redo the copy's own terms on it (a redrawn rule area), and run the gate again there. PROOF: the
+  re-gate's DRC counts equal the real board's pre-apply baseline.
+- **A placement made on a scratch copy never earns a new `--count`.** The count's signature is the handoff
+  revision plus the REAL board's part positions (budget.py), so moving parts on a copy keeps the old one used; a new
+  revision does earn one. Plan the counts a revision allows before spending one on a what-if.
 - **A round that measured nothing is not a round** (budget.py, `FREE` = 3 an epoch; the time still counts).
   A `netgroup.py` run that ends before its first negotiation -- `BLOCKED at this leg` at leg 1, a stop in
   the set-up -- closes its ledger event with `free`, and `route.py budget <group>` shows it as `[never
