@@ -487,6 +487,24 @@ Each writes a backup first; `place.py drc` and `place.py sync` must pass after.
   Still noisy, on purpose: `auto`'s own tests (noise only makes it stricter than `check`) and the COPPER
   test's `< 0.3` mm box width, its stand-in for "axis-aligned track" (a rule to settle, not rounding).
 
+- **`sites.py` judges the part's own pad copper, not only its courtyard and via sites** (fixed 2026-11-23,
+  board1 R_U1W / D126-6). TRAP: it offered C17 at (22.50, 12.00) r180 B and C57 at (36.30, 29.20) r0 B as
+  legal while C17's pads sat on a VDD_SOC via (gap 0) and C57's GND pad 0.045 mm from a +1V8 via: the
+  search tested courtyards and the via sites it picks, never each pad against the tracks and vias already
+  laid, and `place.py check` does not know tracks either. WAY AROUND: every position that passes the rest
+  is now tested pad by pad (`PadCopper`: pcbnew's real pad shape per flashed copper layer against every
+  foreign track, arc, via, pad and no-pads rule area, at the stricter of the two nets' class clearances,
+  never below Board Setup's minimum; an area rule that relaxes clearance is not applied, so it errs strict).
+  A refused position says why (`refused (36.30, 29.20) rot 0  PADCOPPER: pad 2/GND over +1V8 via
+  (36.420,29.638) on B.Cu, gap 0.045 < 0.1016`; `--plan`: a `PADCOPPER:` line and `SITES FAIL`), and a
+  summary counts them by obstacle; `--no-padcopper` gives the old test. With it: `--side F|B|both` searches
+  the other side with the footprint flipped as `place.py apply` flips it (no flipped board copy), `--plan`
+  judges a part the plan flips instead of refusing it, and `--lift NAME` (repeatable) ignores one
+  placement.json keep-out for the run (no per-term placement.json copies). PROOF (board1
+  `tmpWork/sitesfix/`): both sites refused with those reasons; the full C17/C57 searches keep every site
+  the old one listed but 15 / 11, in the same order, and still offer C57 B (42.75, 29.25) r0 and C17 B
+  (37.75, 37.00) r90; `--side F --no-padcopper` on the unflipped board is identical (positions, vias,
+  order) to the old tool on a copy with the part flipped, 144/144 and 217/217.
 - **`sites.py --bar` is repeatable** (fixed 2026-11-23, board1 R_EMMC / D126). It used to keep only the last of several
   `--bar` options, without a warning, so a search with the router window and a keep-out barred ran with the window
   open. Every `--bar` now counts, and so does `--bar "a;b"`. **PROOF:** the summary line prints `N --bar box(es)`;

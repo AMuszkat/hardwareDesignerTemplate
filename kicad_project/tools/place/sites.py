@@ -54,6 +54,20 @@ distance to the NEAREST of REF's pads on that net -- "the ring site nearest its 
 (to 0.01 mm), the links after.  `--box` takes several boxes, ';' separated (a ring band in one run).
 `--json OUT` writes every listed position's pads, centres and vias (and their kind) for a gate to read.
 
+PAD COPPER.  A legal courtyard and legal via sites do not make a legal position: the part's own pads can
+sit on a foreign via or track (board1 R_U1W D126-6: C17 at (22.50, 12.00) r180 B over a VDD_SOC via at
+gap 0, C57 at (36.30, 29.20) r0 B over a +1V8 via at 0.039 mm, both offered as sites).  So every position
+that passes the rest is also judged pad by pad, each pad's real shape on each copper layer it is flashed
+on, against every foreign track, via and pad and every rule area that forbids pads, at the stricter of the
+two nets' class clearances (never below Board Setup's minimum) -- PadCopper.  A refused position names
+its pad, the obstacle, the layer and the gap; those that would have ranked ahead of the winner are printed
+as `refused (...)  PADCOPPER: ...`, and a summary counts them by obstacle.  `--no-padcopper`: the old test.
+
+SIDES AND LIFTS.  `--side B|F|both` searches that side too, the footprint flipped as `place.py apply`
+flips it (default: the part's own side, the old output); `--plan` judges a part the plan flips the same
+way.  `--lift NAME` (repeatable) ignores one placement.json keep-out for the run -- a what-if that once
+took a placement.json copy per term.
+
 It does not move anything: it prints positions to put in a plan for
 `place.py check`, which is still what judges courtyards, silk and the rest.
 """
@@ -452,6 +466,140 @@ class World:
         return None
 
 
+class PadCopper:
+    """The part's OWN PAD COPPER at a candidate position, against every foreign track, arc, via and pad on
+    the board and every rule area that forbids pads, judged as KiCad's DRC judges copper: each pad's real
+    shape on each copper layer it is flashed on (pcbnew's GetEffectiveShape), at the STRICTER of the two
+    nets' class clearances and never below Board Setup's minimum (a rule area: 0, it may not be entered).
+    A via site and a courtyard can both be legal while the pad itself sits on a foreign via (board1 R_U1W
+    D126-6: C17 at (22.50, 12.00) over a VDD_SOC via at gap 0, C57 at (36.30, 29.20) over a +1V8 via at
+    0.039 mm) -- `place.py check` judges courtyards and pads of parts, never tracks and vias.
+    The board's custom rules that RELAX a clearance over an area are not applied: the class clearance is
+    the stricter, so this refuses a site the DRC would pass there, never the other way round.
+    test(fp, x, y, rot) -> [] or one hit per pad, worst gap first: (pad, net, what, other net, layer,
+    gap, need).  `fp` is a copy of the part (a flipped one for the other side); it is moved, never the
+    board's own."""
+
+    CELL = 1.0
+
+    def __init__(self, B, ref):
+        import collections
+        pn, mm = B.pn, B.mm
+        self.B, self.pn, self.mm, self.ref = B, pn, mm, ref
+        self.minclr = mm(B.b.GetDesignSettings().m_MinClearance)
+        self._clr, self._grid = {}, collections.defaultdict(list)
+        self.count = {}
+        items = []
+        for t in B.b.GetTracks():
+            kind = "via" if t.Type() == pn.PCB_VIA_T else "track"
+            items.append((t, kind, t.GetNetCode(), t.GetNetname()))
+        for r, f in B.fps.items():
+            if r == ref:
+                continue
+            for p in f.Pads():
+                if p.IsOnCopperLayer():
+                    items.append((p, f"pad {r}.{p.GetNumber()}", p.GetNetCode(), p.GetNetname()))
+        for z in B.b.Zones():
+            if z.GetIsRuleArea() and z.GetDoNotAllowPads():
+                items.append((z, f"rule area '{z.GetZoneName()}'", None, None))
+        self.maxclr = max([self.minclr] + [c for c in (self.clr_of(n) for *_x, n in items if n) if c])
+        c = self.CELL
+        for it in items:
+            bb = it[0].GetBoundingBox()
+            x0, y0, x1, y1 = mm(bb.GetLeft()), mm(bb.GetTop()), mm(bb.GetRight()), mm(bb.GetBottom())
+            for i in range(int(math.floor(x0 / c)), int(math.floor(x1 / c)) + 1):
+                for j in range(int(math.floor(y0 / c)), int(math.floor(y1 / c)) + 1):
+                    self._grid[(i, j)].append(it)
+
+    def clr_of(self, net):
+        if net not in self._clr:
+            f = getattr(self.B, "class_clearance", None)
+            self._clr[net] = (f(net) if f else None) or CLR
+        return self._clr[net]
+
+    def need(self, a, b):
+        if b is None:                                          # a rule area: the pad may not enter it
+            return 0.0
+        return max(self.clr_of(a), self.clr_of(b), self.minclr)
+
+    @staticmethod
+    def place(fp, pn, x, y, rot):
+        fp.SetOrientationDegrees(rot)
+        fp.SetPosition(pn.VECTOR2I(pn.FromMM(x), pn.FromMM(y)))
+
+    def test(self, fp, x, y, rot):
+        pn, mm, b = self.pn, self.mm, self.B.b
+        self.place(fp, pn, x, y, rot)
+        hits = []
+        for p in fp.Pads():
+            if not p.IsOnCopperLayer():
+                continue
+            bb = p.GetBoundingBox()
+            m = self.maxclr + 1e-6
+            x0, y0, x1, y1 = mm(bb.GetLeft()) - m, mm(bb.GetTop()) - m, mm(bb.GetRight()) + m, mm(bb.GetBottom()) + m
+            near, seen = [], set()
+            c = self.CELL
+            for i in range(int(math.floor(x0 / c)), int(math.floor(x1 / c)) + 1):
+                for j in range(int(math.floor(y0 / c)), int(math.floor(y1 / c)) + 1):
+                    for it in self._grid.get((i, j), ()):
+                        if id(it) not in seen:
+                            seen.add(id(it))
+                            near.append(it)
+            if not near:
+                continue
+            nc, net = p.GetNetCode(), p.GetNetname()
+            worst = None
+            for L in p.GetLayerSet().CuStack():
+                if not b.IsLayerEnabled(L) or not p.FlashLayer(L):
+                    continue
+                s = None
+                for o, kind, onc, onet in near:
+                    if onc is not None and onc == nc and nc > 0:
+                        continue                               # its own net: not foreign copper
+                    if not o.IsOnLayer(L) or (kind != "track" and onc is not None and not o.FlashLayer(L)):
+                        continue
+                    need = self.need(net, onet)
+                    if s is None:
+                        s = p.GetEffectiveShape(L)
+                    g = mm(s.GetClearance(o.GetEffectiveShape(L)))
+                    if g < need - 1e-6 and (worst is None or g < worst[5]):
+                        at = o.GetPosition()
+                        what = kind if kind.startswith(("pad", "rule")) else f"{kind} ({mm(at.x):.3f},{mm(at.y):.3f})"
+                        worst = (p.GetNumber(), net.split("/")[-1], what, (onet or "").split("/")[-1],
+                                 b.GetLayerName(L), g, need)
+            if worst:
+                hits.append(worst)
+        hits.sort(key=lambda h: h[5])
+        return hits
+
+    def note(self, hits):
+        """count one refused position under each kind of obstacle it hit (a net's via, track, pad)"""
+        for k in {f"{h[3]} {h[2].split(' ')[0]}" if h[3] else h[2] for h in hits}:
+            self.count[k] = self.count.get(k, 0) + 1
+
+    @staticmethod
+    def why(hits):
+        return "; ".join(f"pad {h[0]}/{h[1]} over {h[3] + ' ' if h[3] else ''}{h[2]} on {h[4]}, gap {h[5]:.3f} < {h[6]:g}"
+                         for h in hits)
+
+    @staticmethod
+    def sig(hits):
+        return tuple(sorted({(h[3], h[2].split(' (')[0]) for h in hits}))
+
+    def summary(self):
+        return (f"pad copper (clearance: the stricter class's, min {self.minclr:g}): refused "
+                + (", ".join(f"over {k} x{n}" for k, n in sorted(self.count.items(), key=lambda t: (-t[1], t[0])))
+                   or "nothing") + " (positions whose pads break the clearance to foreign copper)")
+
+
+def part_copy(B, f, side):
+    """a copy of the footprint on `side` (flipped as place.py apply flips it), never added to the board"""
+    g = B.pn.FOOTPRINT(f)
+    if B.side(g) != side:
+        g.Flip(g.GetPosition(), B.pn.FLIP_DIRECTION_LEFT_RIGHT)
+    return g
+
+
 def on_axis(rect, x, y, tol=1e-4):
     """'axis', '45' or None: where (x, y) lies seen from the pad's centre"""
     cx, cy = (rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2
@@ -487,15 +635,21 @@ class Bars:
     exactly as `place.py check` judges them; off with --no-keepouts) and the search's own --bar boxes
     (absolute board mm).  hits(rects) -> the names a courtyard enters; counts them for the summary."""
 
-    def __init__(self, B, ref, side, keepouts=True, bars=()):
+    def __init__(self, B, ref, side, keepouts=True, bars=(), lift=()):
         self.B, self.ref, self.side, self.on, self.bars = B, ref, side, keepouts, list(bars)
+        self.lift = set(lift)
+        names = {k.get("name") for k in B.cfg.get("keepouts", [])}
+        bad = sorted(self.lift - names)
+        if bad:
+            P.die(f"--lift {', '.join(map(repr, bad))}: no such keep-out in placement.json (it has: "
+                  + ", ".join(repr(n) for n in sorted(names)) + ")")
         self.count = {}
 
     def hits(self, rects):
         out = set()
         for r in rects:
             if self.on:
-                out.update(P.keepout_hits(self.B, r[:4], self.side, self.ref))
+                out.update(h for h in P.keepout_hits(self.B, r[:4], self.side, self.ref) if h not in self.lift)
             for i, (x0, y0, x1, y1) in enumerate(self.bars):
                 if r[0] < x1 and x0 < r[2] and r[1] < y1 and y0 < r[3]:
                     out.add(f"--bar {i + 1}")
@@ -508,7 +662,9 @@ class Bars:
         if not self.on and not self.bars:
             return "keep-outs: off (--no-keepouts)"
         return (f"keep-outs ({'placement.json, side ' + self.side if self.on else 'off (--no-keepouts)'}"
-                + (f", {len(self.bars)} --bar box(es)" if self.bars else "") + "): barred "
+                + (f", {len(self.bars)} --bar box(es)" if self.bars else "")
+                + (f", lifted {', '.join(repr(n) for n in sorted(self.lift))}" if self.lift and self.on else "")
+                + "): barred "
                 + (", ".join(f"'{k}' x{n}" for k, n in sorted(self.count.items(), key=lambda t: (-t[1], t[0])))
                    or "nothing") + " (positions whose courtyard enters it)")
 
@@ -530,7 +686,7 @@ def report_plan(B, a, LN=None):
     import json
     mm = B.mm
     plan = P.load_moves(boardsel_path(B, a.plan))     # as place.py reads it: _notes skipped
-    bad = lanebad = kobad = 0
+    bad = lanebad = kobad = padbad = 0
     recs = []
     for ref, entry in plan.items():
         x, y, rot = entry[:3]
@@ -541,11 +697,10 @@ def report_plan(B, a, LN=None):
         W = World(B, ignore={ref})
         W.lanes = LN
         W.vias += a.xvias
-        f = B.fps.get(ref) or P.die(f"{ref} is not on the board")
-        if want_back != f.IsFlipped():
-            P.die(f"{ref}: the plan puts it on the {'back' if want_back else 'front'} and the board "
-                  "has it on the other side. Via sites are judged for parts where they ARE: "
-                  "apply the plan first (place.py apply), then run this report.")
+        f0 = B.fps.get(ref) or P.die(f"{ref} is not on the board")
+        side = "B" if want_back else "F"
+        cp = part_copy(B, f0, side)                  # the part as the plan puts it (flipped when it says so)
+        f = f0 if B.side(f0) == side else cp
         pos = (mm(f.GetPosition().x), mm(f.GetPosition().y))
         dt = (rot - f.GetOrientationDegrees()) % 360
         rects, nums = [], []
@@ -558,8 +713,11 @@ def report_plan(B, a, LN=None):
             rects.append((r[0] + x, r[1] + y, r[2] + x, r[3] + y))
             nums.append((p.GetNumber(), W.short(p.GetNetname()), p.GetNetname()))
         vs, held, why = [], {}, {}
-        side = "B" if want_back else "F"
-        BR = Bars(B, ref, side, not a.no_keepouts, a.bars)
+        BR = Bars(B, ref, side, not a.no_keepouts, a.bars, a.lift)
+        hits = [] if a.no_padcopper else PadCopper(B, ref).test(cp, x, y, rot)
+        if hits:
+            padbad += 1
+            print(f"   {ref:5s} ({x:7.2f}, {y:7.2f}) rot {rot:4.0f}  PADCOPPER: " + PadCopper.why(hits))
         crt = [turn_rect((q[0] - pos[0], q[1] - pos[1], q[2] - pos[0], q[3] - pos[1]), dt)
                for q in B.courtyard_rects(f)]
         ko = BR.hits([(q[0] + x, q[1] + y, q[2] + x, q[3] + y) for q in crt])
@@ -593,16 +751,19 @@ def report_plan(B, a, LN=None):
                         for k in range(len(rects))))
         recs.append(json_rec(ref, x, y, rot, side, [(nums[k][0], nums[k][1], nums[k][3],
                                                      ((rects[k][0] + rects[k][2]) / 2, (rects[k][1] + rects[k][3]) / 2))
-                                                    for k in range(len(rects))], keepouts=ko))
+                                                    for k in range(len(rects))], keepouts=ko,
+                             **({"padcopper": PadCopper.why(hits)} if hits else {})))
     if LN:
         print(LN.summary())
+    print("pad copper: off (--no-padcopper)" if a.no_padcopper else
+          f"pad copper: {padbad} part(s) whose pads break the clearance to foreign tracks, vias, pads or rule areas")
     if a.json:
         Path(a.json).write_text(json.dumps(dict(rules=rules_line(), positions=recs), indent=1) + "\n")
         print(f"wrote {a.json}: {len(recs)} part(s)")
-    print("SITES", "PASS" if not bad and not lanebad and not kobad else
+    print("SITES", "PASS" if not bad and not lanebad and not kobad and not padbad else
           f"FAIL ({bad} pad(s) with no via site, {lanebad} part(s) whose pads shut an exit lane, "
-          f"{kobad} part(s) in a keep-out)")
-    return 1 if bad or lanebad or kobad else 0
+          f"{kobad} part(s) in a keep-out, {padbad} part(s) whose pad copper breaks a clearance)")
+    return 1 if bad or lanebad or kobad or padbad else 0
 
 
 def main():
@@ -631,6 +792,13 @@ def main():
     ap.add_argument("--no-axis", action="store_true", help="the old search: a via at any angle from its pad")
     ap.add_argument("--no-keepouts", action="store_true", help="do not bar placement.json keep-outs")
     ap.add_argument("--bar", action="append", default=[], help="x0,y0,x1,y1;... -- more boxes a courtyard may not enter (absolute mm); repeatable, every box counts")
+    ap.add_argument("--lift", action="append", default=[], help="a placement.json keep-out (by name) to ignore in "
+                    "this run, for a what-if; repeatable")
+    ap.add_argument("--side", type=str.upper, choices=("F", "B", "BOTH"), default=None,
+                    help="search this side (the other one with the footprint flipped, as place.py apply flips "
+                    "it), or both; default: the side the part is on, and the old output")
+    ap.add_argument("--no-padcopper", action="store_true", help="do not test the part's own pad copper against "
+                    "foreign tracks, vias, pads and rule areas (the old legality: courtyards and via sites only)")
     ap.add_argument("--extra-via", default="", help="x,y;... -- planned vias (the board's via size) as obstacles")
     ap.add_argument("--json", help="write the listed positions (pads, centres, vias, kinds) to this file")
     a = ap.parse_args()
@@ -654,22 +822,32 @@ def main():
     W = World(B, ignore={a.ref})
     W.lanes = LN
     W.vias += a.xvias
-    side = W.side[a.ref]
-    court = W.court[a.ref]
-    BR = Bars(B, a.ref, side, not a.no_keepouts, a.bars)
+    side0 = W.side[a.ref]
+    sides = [side0] if a.side is None else (
+        [side0, "B" if side0 == "F" else "F"] if a.side == "BOTH" else [a.side])
+    show_side = a.side is not None
     pos = (mm(f.GetPosition().x), mm(f.GetPosition().y))
     rot0 = f.GetOrientationDegrees()
-    # the part's pads and courtyard, in local coordinates at its current rotation
-    local = []
-    for p in f.Pads():
-        if not p.IsOnCopperLayer():
-            continue                                 # a paste aperture needs no via
-        bb = p.GetBoundingBox()
-        local.append((mm(bb.GetLeft()) - pos[0], mm(bb.GetTop()) - pos[1],
-                      mm(bb.GetRight()) - pos[0], mm(bb.GetBottom()) - pos[1], p.GetNumber(),
-                      W.short(p.GetNetname()), p.GetNetname()))
-    lc = (court[0] - pos[0], court[1] - pos[1], court[2] - pos[0], court[3] - pos[1])
-    lcr = [(q[0] - pos[0], q[1] - pos[1], q[2] - pos[0], q[3] - pos[1]) for q in B.courtyard_rects(f)]
+    PC = None if a.no_padcopper else PadCopper(B, a.ref)
+
+    def geom(sd):
+        """the part on side `sd`: its pads and courtyard in local coordinates at its rotation there, the
+        rotation, and a copy to move for the pad-copper test (flipped as place.py apply flips it)"""
+        cp = part_copy(B, f, sd)
+        g = f if sd == side0 else cp
+        r0 = g.GetOrientationDegrees()
+        local = []
+        for p in g.Pads():
+            if not p.IsOnCopperLayer():
+                continue                             # a paste aperture needs no via
+            bb = p.GetBoundingBox()
+            local.append((mm(bb.GetLeft()) - pos[0], mm(bb.GetTop()) - pos[1],
+                          mm(bb.GetRight()) - pos[0], mm(bb.GetBottom()) - pos[1], p.GetNumber(),
+                          W.short(p.GetNetname()), p.GetNetname()))
+        court = W.court[a.ref] if sd == side0 else B.courtyard(g)[:4]
+        lc = (court[0] - pos[0], court[1] - pos[1], court[2] - pos[0], court[3] - pos[1])
+        lcr = [(q[0] - pos[0], q[1] - pos[1], q[2] - pos[0], q[3] - pos[1]) for q in B.courtyard_rects(g)]
+        return local, lc, lcr, r0, cp
 
     targets = []
     if a.near:
@@ -689,12 +867,10 @@ def main():
         n45 = sum(1 for v in vs if v[2][3] == "45") if DIAG == "last resort" else 0
         return (n45,) + ((round(d, 2), round(links, 4)) if a.rank == "near" else (round(d + links, 6),))
 
-    # only courtyards on the part's OWN side are in its way
-    others = [(r, c) for r, c in W.court.items() if r != a.ref and W.side[r] == W.side[a.ref]]
     ol = B.outline if a.ref not in set(B.cfg.get("overhang", [])) | set(B.cfg.get("fixed", [])) \
         else (-1e9, -1e9, 1e9, 1e9)
 
-    def evaluate(x, y, pads, rects):
+    def evaluate(x, y, pads, rects, side):
         """[(pad, net, via, centre)] for every pad, or None"""
         held = {}
         if LN:
@@ -712,76 +888,111 @@ def main():
             vs.append((pads[k][4], pads[k][5], v, ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)))
         return vs
 
-    out, barred = [], []
-    for rot in (float(v) for v in a.rot.split(",")):
-        dt = (rot - rot0) % 360
-        pads = [turn_rect(r, dt) for r in local]
-        c = turn_rect(lc, dt)[:4]
-        crs = [turn_rect(q, dt)[:4] for q in lcr]
-        for x0, y0, x1, y1 in parse_boxes(a.box):
-            nx = int(round((x1 - x0) / a.step)) + 1
-            ny = int(round((y1 - y0) / a.step)) + 1
-            for i in range(nx):
-                for j in range(ny):
-                    x, y = round(x0 + i * a.step, 3), round(y0 + j * a.step, 3)
-                    cc = (c[0] + x, c[1] + y, c[2] + x, c[3] + y)
-                    if cc[0] < ol[0] or cc[1] < ol[1] or cc[2] > ol[2] or cc[3] > ol[3]:
-                        continue                                 # courtyard off the board
-                    if any(cc[0] < o[2] + gap and o[0] < cc[2] + gap and cc[1] < o[3] + gap and o[1] < cc[3] + gap
-                           for _r, o in others):
-                        continue
-                    rects = [(p[0] + x, p[1] + y, p[2] + x, p[3] + y) for p in pads]
-                    ko = BR.hits([(q[0] + x, q[1] + y, q[2] + x, q[3] + y) for q in crs])
-                    if ko:
-                        barred.append((near_d(x, y), x, y, rot, pads, rects, ko))
-                        continue
-                    vs = evaluate(x, y, pads, rects)
-                    if vs is None:
-                        continue
-                    d = near_d(x, y)
-                    out.append((key(d, vs), x, y, rot, d, vs))
+    out, barred, refused, BRs, copies = [], [], [], [], {}
+    for sd in sides:
+        local, lc, lcr, r0, cp = geom(sd)
+        copies[sd] = cp
+        BR = Bars(B, a.ref, sd, not a.no_keepouts, a.bars, a.lift)
+        BRs.append(BR)
+        # only courtyards on the part's OWN side are in its way
+        others = [(r, c) for r, c in W.court.items() if r != a.ref and W.side[r] == sd]
+        for rot in (float(v) for v in a.rot.split(",")):
+            dt = (rot - r0) % 360
+            pads = [turn_rect(r, dt) for r in local]
+            c = turn_rect(lc, dt)[:4]
+            crs = [turn_rect(q, dt)[:4] for q in lcr]
+            for x0, y0, x1, y1 in parse_boxes(a.box):
+                nx = int(round((x1 - x0) / a.step)) + 1
+                ny = int(round((y1 - y0) / a.step)) + 1
+                for i in range(nx):
+                    for j in range(ny):
+                        x, y = round(x0 + i * a.step, 3), round(y0 + j * a.step, 3)
+                        cc = (c[0] + x, c[1] + y, c[2] + x, c[3] + y)
+                        if cc[0] < ol[0] or cc[1] < ol[1] or cc[2] > ol[2] or cc[3] > ol[3]:
+                            continue                                 # courtyard off the board
+                        if any(cc[0] < o[2] + gap and o[0] < cc[2] + gap and cc[1] < o[3] + gap and o[1] < cc[3] + gap
+                               for _r, o in others):
+                            continue
+                        rects = [(p[0] + x, p[1] + y, p[2] + x, p[3] + y) for p in pads]
+                        ko = BR.hits([(q[0] + x, q[1] + y, q[2] + x, q[3] + y) for q in crs])
+                        if ko:
+                            barred.append((near_d(x, y), x, y, rot, pads, rects, ko, sd))
+                            continue
+                        vs = evaluate(x, y, pads, rects, sd)
+                        if vs is None:
+                            continue
+                        d = near_d(x, y)
+                        hits = PC.test(cp, x, y, rot) if PC else []
+                        if hits:                               # every other test passed: the pads do not
+                            PC.note(hits)
+                            refused.append((key(d, vs), x, y, rot, d, vs, sd, hits))
+                            continue
+                        out.append((key(d, vs), x, y, rot, d, vs, sd))
     out.sort(key=lambda t: t[:4])
+    refused.sort(key=lambda t: t[:4])
     # the barred positions that would have ranked ahead of the winner: evaluated nearest first, and only
     # while they can still beat it (a key's first term is never below its distance)
     # (the best one per keep-out, or set of them, so each reservation that cost a nearer site is named)
     nearer, seen = [], set()
     if out and barred:
         wk = out[0][0]
-        for d, x, y, rot, pads, rects, ko in sorted(barred, key=lambda t: t[:4]):
+        for d, x, y, rot, pads, rects, ko, sd in sorted(barred, key=lambda t: t[:4]):
             if (round(d, 2) if a.rank == "near" else d) > wk[1]:
                 break
             if tuple(ko) in seen:
                 continue
-            vs = evaluate(x, y, pads, rects)
-            if vs is not None and key(d, vs) < wk:
+            vs = evaluate(x, y, pads, rects, sd)
+            if vs is not None and key(d, vs) < wk and not (PC and PC.test(copies[sd], x, y, rot)):
                 seen.add(tuple(ko))
-                nearer.append((key(d, vs), x, y, rot, d, vs, ko))
+                nearer.append((key(d, vs), x, y, rot, d, vs, ko, sd))
                 if len(nearer) >= a.top:
                     break
         nearer.sort(key=lambda t: t[:4])
+    # the positions the pad-copper test refused that would have ranked ahead of the winner (all of them
+    # when nothing won): the best one per obstacle, so each foreign via or track that cost a site is named
+    shown, seen = [], set()
+    for t in refused:
+        if out and not t[0] < out[0][0]:
+            break
+        s = PadCopper.sig(t[7])
+        if s in seen:
+            continue
+        seen.add(s)
+        shown.append(t)
+        if len(shown) >= a.top:
+            break
+    sl = lambda sd: f" {sd}" if show_side else ""
     print(f"{a.ref} ({f.GetValue()}), now at ({pos[0]:.2f}, {pos[1]:.2f}) rot {rot0:.0f}; "
           f"{len(out)} positions in the box where every pad reaches a via"
+          + (f" (side {'/'.join(sides)}; the board has it on {side0})" if show_side else "")
           + (f"; ranked by distance to {a.near}" + (" first" if a.rank == "near" else " + links") if a.near else ""))
     if LN:
         print(LN.summary())
-    print(BR.summary())
+    for BR in BRs:
+        print(BR.summary())
+    print(PC.summary() if PC else "pad copper: off (--no-padcopper)")
     if not AXIS:
         print("links: any angle (--no-axis) -- a site off the pad's axis fails the guide's via-link rule")
     else:
         n45 = sum(1 for t in out[:a.top] for q in t[5] if q[2][3] == "45")
         print(f"links: every via on its pad's axis" + (f", {n45} on a 45-degree diagonal (no axis site: list "
                                                        "them in the group's report)" if n45 else ""))
-    for _k, x, y, rot, d, vs, ko in nearer:
-        print(f"   barred ({x:7.2f}, {y:7.2f}) rot {rot:5.0f}" + (f"  {d:5.2f} mm from {a.near}" if targets else "")
+    for _k, x, y, rot, d, vs, ko, sd in nearer:
+        print(f"   barred ({x:7.2f}, {y:7.2f}) rot {rot:5.0f}{sl(sd)}" + (f"  {d:5.2f} mm from {a.near}" if targets else "")
               + f"   in {', '.join(repr(h) for h in ko)}   " + fmt_vias(vs) + "   (the nearest it barred)")
-    for _k, x, y, rot, d, vs in out[:a.top]:
-        print(f"   ({x:7.2f}, {y:7.2f}) rot {rot:5.0f}" + (f"  {d:5.2f} mm from {a.near}" if targets else "")
+    for _k, x, y, rot, d, vs, sd, hits in shown:
+        print(f"   refused ({x:7.2f}, {y:7.2f}) rot {rot:5.0f}{sl(sd)}" + (f"  {d:5.2f} mm from {a.near}" if targets else "")
+              + "   PADCOPPER: " + PadCopper.why(hits))
+    for _k, x, y, rot, d, vs, sd in out[:a.top]:
+        print(f"   ({x:7.2f}, {y:7.2f}) rot {rot:5.0f}{sl(sd)}" + (f"  {d:5.2f} mm from {a.near}" if targets else "")
               + "   " + fmt_vias(vs))
     if a.json:
         import json
-        recs = [json_rec(a.ref, x, y, rot, side, vs, dist_near=round(d, 4)) for _k, x, y, rot, d, vs in out[:a.top]]
-        recs += [json_rec(a.ref, x, y, rot, side, vs, dist_near=round(d, 4), barred=ko)
-                 for _k, x, y, rot, d, vs, ko in nearer]
+        recs = [json_rec(a.ref, x, y, rot, sd, vs, dist_near=round(d, 4)) for _k, x, y, rot, d, vs, sd in out[:a.top]]
+        recs += [json_rec(a.ref, x, y, rot, sd, vs, dist_near=round(d, 4), barred=ko)
+                 for _k, x, y, rot, d, vs, ko, sd in nearer]
+        recs += [json_rec(a.ref, x, y, rot, sd, vs, dist_near=round(d, 4), refused=PadCopper.why(hits))
+                 for _k, x, y, rot, d, vs, sd, hits in shown]
         Path(a.json).write_text(json.dumps(dict(rules=rules_line(), positions=recs), indent=1) + "\n")
         print(f"wrote {a.json}: {len(recs)} position(s)")
     return 0 if out else 1
