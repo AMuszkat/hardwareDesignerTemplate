@@ -1784,6 +1784,12 @@ has moved. `budget.py`'s docstring is the manual; in short:
   board wherever the copy is kept: inside the board folder by its path, outside `kicad_project/` (a cache
   folder) by the board's own file name in it and the session's `HW_BOARD`. `HW_BUDGET_IN` belongs to `race.py` and
   `prelayout.py`; set by hand it is a skipped gate.
+- **Before asking for a part to move, compare the via map with it moved -- no router needed.** TRAP (board1
+  R_PMIC Q101/D127, 2026-11-23): the wall named R60 as what shut a via site; concept granted the move (rung 7),
+  and the map was the same before and after -- R60's pad ended 0.35 mm short of the row; a pour, a via and
+  another group's diagonal set it. WAY AROUND: a no-cost probe (netgroup set-up only, or sites.py) on a copy with
+  the part moved, its site map diffed against the unmoved one; name a part in a wall only when the diff opens a cell.
+  PROOF: `diff probe_before/map.txt probe_after/map.txt` lists the cells the move opens.
 - **A round that measured nothing is not a round** (budget.py, `FREE` = 3 an epoch; the time still counts).
   A `netgroup.py` run that ends before its first negotiation -- `BLOCKED at this leg` at leg 1, a stop in
   the set-up -- closes its ledger event with `free`, and `route.py budget <group>` shows it as `[never
