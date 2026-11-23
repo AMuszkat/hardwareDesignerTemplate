@@ -421,6 +421,13 @@ variants) keeps a record that fits the real board — the same content is the sa
 hash — provided its `.origin.json` is copied back WITH it and the spec is at the same
 path inside the board folder. Copied back alone it is a plan with no record.
 
+- **A planner's own `_...` working values are not the spec** (board1 R_J2, 2026-11-23). TRAP: netgroup writes
+  `fields[]._box / _m / _clr / _shrink` into the spec it holds in memory before the origin is written; `normal()`
+  stripped `_` keys only at the top, so every plan with a `fields` block was refused at once as `spec CHANGED`
+  (`fields [...] -> [...]`, no visible difference) against its untouched spec file. WAY AROUND: `normal()` drops
+  `_` keys at every depth, and a record written before that is judged by its stored `normal`, re-normalised.
+  PROOF: R_J2.json, refused with exit 5, judges `spec unchanged (449acc49c30d)` with no `--accept-stale`.
+
 Another planner gets the same guard with two calls: `origin.retire(plan_path)` when
 it starts, `origin.write(plan_path, plan, spec_path, spec, pcb, board_sha,
 board_dir)` when it writes. `tests/test_plan_guard.py` holds all of it on the fixture

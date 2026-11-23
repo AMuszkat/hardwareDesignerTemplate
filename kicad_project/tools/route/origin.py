@@ -82,10 +82,21 @@ def _sha_obj(v):
     return hashlib.sha256(json.dumps(_canon(v), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _strip_private(v):
+    """Drop every "_..." key at any depth: a comment in the file, or a value a planner computes and
+    stores on the spec it holds in memory (netgroup's fields[]._box / _m / _clr / _shrink), which the
+    file never has -- left in, the origin read every such plan as stale against its unchanged spec."""
+    if isinstance(v, dict):
+        return {k: _strip_private(x) for k, x in v.items() if not str(k).startswith("_")}
+    if isinstance(v, (list, tuple)):
+        return [_strip_private(x) for x in v]
+    return v
+
+
 def normal(spec):
     """The part of a spec that decides the route: no "why" (prose), no "plan" (where the result
-    goes), no "_..." key (a comment)."""
-    return _canon({k: v for k, v in spec.items() if k not in ("why", "plan") and not str(k).startswith("_")})
+    goes), no "_..." key at any depth (a comment, or a planner's own working value)."""
+    return _canon(_strip_private({k: v for k, v in spec.items() if k not in ("why", "plan")}))
 
 
 def spec_sha(spec):
@@ -295,7 +306,10 @@ def judge(plan_path, board_dir, board_pcb):
         stale["spec"] = f"{rec['spec']['path']} cannot be read now ({type(e).__name__}): the plan's spec is gone"
     if cur is not None:
         now = spec_sha(cur)
-        if now == rec["spec"]["sha256"]:
+        # an origin written before normal() stripped "_..." keys at depth stored a sha over them; its
+        # stored normal, re-normalised, is the same spec when only such a key differs
+        was_now = spec_sha(rec["spec"]["normal"]) if rec["spec"].get("normal") else None
+        if now == rec["spec"]["sha256"] or now == was_now:
             lines.append(f"   spec   {rec['spec']['path']}: unchanged ({h(now)})")
         else:
             diff = spec_diff(rec["spec"].get("normal") or {}, normal(cur)) if rec["spec"].get("normal") else []
