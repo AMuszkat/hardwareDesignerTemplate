@@ -181,10 +181,16 @@ GROUND_NETS = ("GND",)    # net names the connector lint accepts without a NETS 
 # nets; "_swap" lists other pins that are interchangeable (a crystal's two
 # terminals). A net the design does not name starts with "_" (a regulator's
 # switch node): only its connections are checked, never its name.
+# "_through" names NC pins a track may run through, where the vendor's pin
+# table says so (an eMMC's NC balls): {"pins": [...], "nets": [...], "source":
+# "<datasheet table, page>"}. Each stays "NC" above and lands in netlist.json's
+# `nc_through`: unconnected, or on one of those nets -- the board's choice.
 PINS = {
     # "C1": ("+3V3", "GND"),
     # "U2": {"1": "+3V3", "2": "GND", "3": "I2C_SCL", "4": "NC"},
     # "Y1": {"1": "_XTAL_IN", "3": "_XTAL_OUT", "2": "GND", "4": "GND", "_swap": [["1", "3"]]},
+    # "U3": {"A3": "EMMC_D0", "A1": "NC", "A2": "NC",
+    #        "_through": {"pins": ["A1", "A2"], "nets": ["EMMC_D0"], "source": "<MPN> Table 7 p9"}},
 }
 RAILS = ()                # power nets beyond GROUND_NETS, drawn as power symbols ("+3V3", ...)
 

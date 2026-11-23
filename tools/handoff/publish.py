@@ -443,7 +443,10 @@ class Board:
                 if self.pinout else [])
         then += ["**`netlist.json`** — the same connectivity as data, for "
                  "`tools/sch` (`sch.py parity --handoff` checks your schematic "
-                 "against it, pin for pin)."]
+                 "against it, pin for pin)."
+                 + (" Its `nc_through` names not-connected pins a track may run "
+                    "through: such a pin is unconnected, or on ONE of the nets "
+                    "listed for its part." if self.netlist().get("nc_through") else "")]
         then += ["**`05_open.md`** — what is not decided yet, what it "
                  "blocks, and what is safe to start; then `04_deliberate.md`.",
                 "**`13_datasheets.md` before any footprint work** — the vendor "
@@ -1193,7 +1196,7 @@ class Board:
             for cell, net, _, _ in pins:
                 for pin in _pins(cell):
                     put(cref, str(int(pin) + off) if off and pin.isdigit() else pin, net, f"connector {cref}")
-        swap = {}
+        swap, through = {}, {}
         for pref, pins in (self.get("PINS") or {}).items():
             if isinstance(pins, (tuple, list)):
                 if len(pins) != 2:
@@ -1202,6 +1205,8 @@ class Board:
             for pin, net in pins.items():
                 if pin == "_swap":
                     swap[pref] = [list(map(str, g)) for g in net]
+                elif pin == "_through":
+                    through[pref] = net
                 else:
                     put(pref, pin, net, "PINS")
         nets = {}
@@ -1209,6 +1214,20 @@ class Board:
             nets.setdefault(n, []).append([r, pin])
         for n in nets:
             nets[n].sort(key=lambda x: (x[0], _pin(x[1])))
+        # "_through": NC pins a track may run through (the vendor says so). Such
+        # a pin stays in `nc` and may ALSO be drawn on one of the named nets.
+        nc_through = {}
+        for pref, t in through.items():
+            tp = sorted({str(x) for x in t.get("pins", ())}, key=_pin)
+            bad = [x for x in tp if (pref, x) not in nc]
+            if bad or not tp:
+                die(f"netlist: PINS {pref} _through: {', '.join(bad[:6]) or 'no pin'} -- every pin it names is 'NC' in PINS")
+            lost = [n for n in t.get("nets", ()) if n not in nets]
+            if lost or not t.get("nets"):
+                die(f"netlist: PINS {pref} _through: {', '.join(lost[:6]) or 'no net'} -- every net it names has a pin in the netlist")
+            if not t.get("source"):
+                die(f"netlist: PINS {pref} _through needs its 'source': the vendor's page that lets a track through an NC pin")
+            nc_through[pref] = dict(pins=tp, nets=list(t["nets"]), source=t["source"])
         covered = {r for r, _ in pin_net} | {r for r, _ in nc} | {r for r, _ in open_} \
             | set(self.get("PINS") or {})                # a fiducial is given, with no pins
         prose = sorted((r for r, p in parts.items() if not p["placeholder"] and r not in covered), key=_natkey)
@@ -1219,7 +1238,9 @@ class Board:
                     decided=decided,
                     rails=sorted(set(self.get("GROUND_NETS") or ("GND",)) | set(self.get("RAILS") or ())),
                     swap=swap, prose_only=prose, not_in_components=unknown,
-                    complete=not prose and not open_ and not unknown)
+                    complete=not prose and not open_ and not unknown,
+                    # only where a board has one: an empty key would restale every other board
+                    **({"nc_through": nc_through} if nc_through else {}))
 
     # -- lint -------------------------------------------------------------
     def lint(self, files):
