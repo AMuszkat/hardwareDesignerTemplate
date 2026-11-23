@@ -2040,3 +2040,14 @@ fills shaded, an optional plan (or a stalled router's `.partial.json`) on top.
   A gentler negotiation (`--pres-mul 1.03 --iters 800`) and a finer pitch (0.5/14,
   0.5/16: worse or out of the hour) did not help; changing the fanout model did
   (the bullets under `fanout.py`).
+
+**TRAP: an escape end inside a BGA's land halo blocks every source** (board1 NORTHGAP, 2026-11-23).
+Outside a field's `box`, netgroup stamps the field's lands at the spec's `padclr`, not at the area rule.
+F-row escapes that ended at y 14.7-14.8, north of U1's AG row, sat inside that halo
+(r + 0.2032 + w/2). Every source came back BLOCKED, naming "field U1: its pad area", which reads like an
+error in the box. Two `bgwait run --group` jobs started together (one variant each) were also charged one
+round each: the "in flight together" rule covers router runs, not jobs.
+**WAY AROUND:** put each escape end at least land radius + padclr + w/2 from the lands. Run all variants
+inside ONE job (a script that starts them side by side), not as one job each.
+**PROOF:** board1 tmpWork/NORTHGAP/v_*/netgroup.log (all sources BLOCKED at y 14.7 / 14.8);
+mkspec.py Y0 = 14.6.
