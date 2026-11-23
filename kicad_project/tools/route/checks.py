@@ -33,7 +33,10 @@ carries (`handoff/findings.json`, `route.py audit --findings`):
                                                      (a box, or `REF`: its courtyard) carries the current
                                                      by IPC-2221 internal at that rise and copper
                                                      (`pourneck.py`, a min cut on the refilled fill;
-                                                     `, raster 0.025 mm` to set it) |
+                                                     `, raster 0.025 mm` to set it; then
+                                                     `, source disc 0.75 mm` measures outside that
+                                                     radius of each feed via and judges the via's
+                                                     join, `, min width 1.5 mm` a width too) |
 
 Everything here is plain geometry on lists (`geometry(B)` reads them from the board once), so
 `tests/test_findings.py` drives it without KiCad.  An inner-layer pair rule on padded vias is
@@ -105,9 +108,11 @@ def parse(rule, val, s, G):
     elif rule == "pour neck":
         num = r"(-?\d+(?:\.\d+)?)"
         pt = r"\(\s*" + num + r"\s*,\s*" + num + r"\s*\)"
+        opt = (r"(?:,\s*raster\s+" + num + r"\s*mm\s*)?(?:,\s*source\s+disc\s+" + num
+               + r"\s*mm\s*)?(?:,\s*min\s+width\s+" + num + r"\s*mm\s*)?")
         m = re.fullmatch(r"\s*(\S+)\s+(\S+)\s*:\s*from\s+(.+?)\s+to\s+(" + pt + r"\s*-\s*" + pt
                          + r"|[A-Za-z]+\d+)\s*,\s*" + num + r"\s*A\s*,\s*" + num + r"\s*K\s*,\s*" + num
-                         + r"\s*um\s*(?:,\s*raster\s+" + num + r"\s*mm\s*)?", val)
+                         + r"\s*um\s*" + opt, val)
         feeds = []
         if m:
             rest = m.group(3)
@@ -116,12 +121,15 @@ def parse(rule, val, s, G):
             left = re.sub(pt + r"|[A-Za-z]+\d+(?:\.[A-Za-z0-9]+)?|[\s,]", "", rest)
         if not m or not feeds or left:
             raise RuleError("'pour neck' takes 'NET LAYER: from (x, y), (x, y) | REF[.PIN], ... to (x0, y0)-(x1, y1) "
-                            "| REF, 2.2 A, 10 K, 35 um' (', raster 0.025 mm' optional)")
+                            "| REF, 2.2 A, 10 K, 35 um' (then, optional and in this order: ', raster 0.025 mm', "
+                            "', source disc 0.75 mm', ', min width 1.5 mm')")
         to = (f"{m.group(5)},{m.group(6)},{m.group(7)},{m.group(8)}" if m.group(5) else m.group(4).strip())
         G.setdefault("pour_neck", []).append(dict(s, net=m.group(1), layer=m.group(2), feeds=feeds, to=to,
                                                   amps=float(m.group(9)), rise=float(m.group(10)),
                                                   copper_um=float(m.group(11)),
-                                                  raster=float(m.group(12)) if m.group(12) else 0.05))
+                                                  raster=float(m.group(12)) if m.group(12) else 0.05,
+                                                  source_disc=float(m.group(13)) if m.group(13) else None,
+                                                  min_width=float(m.group(14)) if m.group(14) else None))
     else:
         raise RuleError(f"not a check rule: {rule!r}")
 
@@ -327,22 +335,27 @@ def pour_neck(geo, rule):
     import pourneck as PN
     from types import SimpleNamespace
     a = SimpleNamespace(net=rule["net"], layer=rule["layer"], sfrom=";".join(rule["feeds"]), sto=rule["to"],
-                        balls=None)
+                        balls=None, source_disc=rule.get("source_disc"))
     refill = not geo.get("_refilled")
     try:
         g = PN.geom_of(B, a, refill=refill)
     except PN.Fail as e:
         return [f"{rule['net']} {rule['layer']}: {e}"]
     geo["_refilled"] = True
-    out, rc = PN.measure(g, rule["raster"], rule["amps"], rule["rise"], rule["copper_um"])
+    out, rc = PN.measure(g, rule["raster"], rule["amps"], rule["rise"], rule["copper_um"],
+                         source_disc=rule.get("source_disc"), min_width=rule.get("min_width"))
     if rc == 2 or "verdict" not in out:
         return [f"{rule['net']} {rule['layer']}: {out.get('error', 'no result')}"]
     if out["verdict"] == "PASS":
         return []
     where = "; ".join(f"{p['width_mm']:.2f} mm at x {p['x'][0]:.2f}-{p['x'][1]:.2f} y {p['y'][0]:.2f}-{p['y'][1]:.2f}"
                       for p in out["pieces"])
-    return [f"{rule['net']} {rule['layer']}: least cut {out['width_mm']:.3f} mm, {rule['amps']:g} A needs "
-            f"{out['need_mm']:.3f} mm -- {where}"]
+    disc = (f" outside {rule['source_disc']:g} mm of the feed via" if rule.get("source_disc") else "")
+    mw = f", {rule['min_width']:g} mm wanted" if rule.get("min_width") is not None else ""
+    joins = "".join(f"; feed via ({d['at'][0]:.2f}, {d['at'][1]:.2f}) not joined solid" for d in out.get("discs", [])
+                    if not d.get("ok") and d.get("at"))
+    return [f"{rule['net']} {rule['layer']}: least cut {out['width_mm']:.3f} mm{disc}, {rule['amps']:g} A needs "
+            f"{out['need_mm']:.3f} mm{mw} -- {where}{joins}"]
 
 
 # -- run ------------------------------------------------------------------------------------

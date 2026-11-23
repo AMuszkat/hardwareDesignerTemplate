@@ -485,7 +485,7 @@ def judge(g, a):
     return out, 0 if out["verdict"] == "PASS" else 1
 
 
-def measure(g, raster, amps, rise, copper_um):
+def measure(g, raster, amps, rise, copper_um, source_disc=None, min_width=None):
     """The flow on geometry g, run in tools/.venv: the result dict (see judge) and its exit code.
     For a caller in KiCad's interpreter (checks.py's `pour neck`)."""
     fd, path = tempfile.mkstemp(suffix=".json", prefix="pourneck_")
@@ -494,6 +494,10 @@ def measure(g, raster, amps, rise, copper_um):
         Path(path).write_text(json.dumps(g))
         cmd = [str(VENV_PY), __file__, "--geom", path, "--raster", str(raster), "--amps", str(amps),
                "--rise", str(rise), "--copper-um", str(copper_um), "--json"]
+        if source_disc:
+            cmd += ["--source-disc", str(source_disc)]
+        if min_width is not None:
+            cmd += ["--min-width", str(min_width)]
         r = subprocess.run(cmd, capture_output=True, text=True)
         try:
             return json.loads(r.stdout), r.returncode

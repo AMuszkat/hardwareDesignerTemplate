@@ -1704,6 +1704,13 @@ is not modelled.
   JOINED 360 deg; without the option the same run still reads 1.336, as before. `--selftest` holds
   the ring (1.31 / 1.34 without, 3.0 with), a 1.1 mm bridge outside the disc (still 1.1), a pinch
   wholly inside it (not counted), and a join solid / 3/8 open / 3/4 cut / on four spokes.
+- **A findings `pour neck` row takes the same two terms: `, source disc 0.75 mm, min width 1.5 mm`**
+  after `A, K, um` (and `, raster` if given), in that order. MISSING (board1 D128, 2026-11-23):
+  checks.py's row called pourneck.measure() with neither, so a published neck finding written to
+  Q102's terms still read the via ring. WORKED: on board1's PN_r169 copy, `VDD_SOC In4.Cu: from C63
+  to U1, 1.0 A, 10 K, 35 um, min width 1.5 mm` fails at 1.336 mm (x 30.51-30.91, y 13.30-13.70);
+  the same row with `, source disc 0.75 mm` before the width passes. A feed via not joined solid is
+  named in the failure line.
 
 ## `stitch.py` — stitching vias and GND pad drops, as a plan
 
