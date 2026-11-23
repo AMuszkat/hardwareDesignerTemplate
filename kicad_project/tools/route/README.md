@@ -668,6 +668,11 @@ its docstring. What the spec has to be told:
   the polygon; the same group with the router choosing SPEED's via (`ethled_rv2`) puts it 0.270 mm
   off the polygon, against 0.170 mm before (both pass `polyclr.py`); R_ETHLED2, R_EMMC_t2 c_v3 (a
   polygon on its routed F.Cu), R_J2 and `ethled_rv` give identical plans, old code against new.
+- **Parallel `--only` runs need a spec copy each** (netgroup, 2026-11-23). TRAP: board1's R_EMMC_t1 ran six
+  `--only` subsets of ONE spec side by side; they share its plan and `plan.partial.json.tmp`, and crashed each
+  other (`FileNotFoundError` on the partial). WAY AROUND: copy the spec per run (its plan and partial follow it).
+  Also: a `to_xy` goal right beside a field land of the routed net's own ball is blocked by that land -- end the
+  leg on the pad (`"to": [ref, pad]`). PROOF: `board1_module/tmpWork/R_EMMC_t1/STATE.md` (s5* specs, one each).
 - **A capacity split is only as true as its exits.** `fanout.py layers` proved board1's U1 at
   139 of 139 and no router closed it: the model ended 0.5 mm past the ball array, at the
   field's clearance. Each exit it counted and the board did not have cost a routing round --
