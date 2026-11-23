@@ -881,6 +881,12 @@ its docstring. What the spec has to be told:
   `exitlane_dump.load(OUT)["U1"]` and `shut_by(r, items)` in plain python -- same lanes, blocked set, width and
   clearance. TRAP (board1 R1-0, 2026-11-23): a channel via model with no lane term reported 'closes' that
   pretest failed on 10 U1 balls; with the dump's term it finds those same 10.
+- **A pair's own gap is a custom DRC rule, and an in-memory pretest does not run it.** TRAP (board1 R3b_fix43,
+  2026-11-23): one line of a pair moved 0.09 to clear an aggressor passed pretest (angles, exitlane, areaclear,
+  shape, vialink) and failed `route.py check` 25 minutes later on 'fab: a pair's own gap' (0.104 < 0.15). WAY
+  AROUND: before the rehearsal, measure every moved pair's P-N minimum against that rule's number read from the
+  .kicad_dru, exempt only where BOTH items touch a listed courtyard (KiCad's per-item semantics); or move the
+  pair as a pair. PROOF: that measure reproduced DRC's three numbers (0.1038 / 0.1162 / 0.1284) exactly.
 - **An area rule whose area is wider than the fab's is a hole in DRC: measure what it relaxes.** KiCad's
   `intersectsCourtyard` relaxes a gap wherever BOTH items touch the courtyard -- a track laid along the courtyard
   line is relaxed for its whole length -- and a memory's courtyard can be 3 mm wider each way than its ball array,
