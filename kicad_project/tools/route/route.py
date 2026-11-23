@@ -815,6 +815,19 @@ def rule_gates(B, plan):
             bad.append(f"field-via: {fv['ref']} is not on the board ({fv['source']})")
             continue
         fields.append((fv, box, lattice))
+    # A `bga field` courtyard: the guide makes the fab's escape rule the rule inside it (a neck-down
+    # between the balls, 14_fab's per-courtyard class), so a track there narrower than its class is
+    # that neck, not a width failure; wider than the class still fails, and DRC holds the minimum.
+    # board1 R1a, 2026-11-23: 12 DDR_DIFF escapes at 0.1016 inside U500 (14_fab BGA_ESCAPE_U500)
+    # failed "class wants 0.142" with 0 new DRC.
+    bga_cy = [(ref, tuple(B.mm(v) for v in box)) for ref, box in guide.field_parts(B.b, G, B.pn)
+              if any(f["ref"] == ref for f in G.get("bga_fields", []))]
+
+    def bga_at(x, y, tol=0.0):
+        """The bga field whose courtyard holds (x, y), grown by tol (a neck that ends ON the edge,
+        where the class width resumes, ends within its own width of it)."""
+        return next((ref for ref, (x0, y0, x1, y1) in bga_cy
+                     if x0 - tol <= x <= x1 + tol and y0 - tol <= y <= y1 + tol), None)
 
     def field_at(x, y, margin=None):
         for fv, box, lat in fields:
@@ -853,7 +866,9 @@ def rule_gates(B, plan):
                            f"with a reason if deliberate)")
         elif "class_width" in G:
             want = B.class_width(net)
-            if want and abs(w - want) > 1e-6 and (net, w) not in necks and w not in B.rule_widths(net, lay):
+            bga_neck = want and w < want and all(bga_at(x, y, w) for x, y in t["pts"])   # the whole piece inside
+            if want and abs(w - want) > 1e-6 and (net, w) not in necks and w not in B.rule_widths(net, lay) \
+                    and not bga_neck:
                 bad.append(f"width: {net} track {w} mm, class {cls} wants {want} mm "
                            f"({G['class_width']['source']}; declare it in \"necks\" with a reason "
                            f"if deliberate)")

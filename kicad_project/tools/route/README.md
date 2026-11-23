@@ -239,6 +239,15 @@ A plan declares its exceptions, each with a reason printed every run and
 reviewed with the copper (at the group's milestone, or the fab release):
 
 - `"necks": [{"net", "width", "why"}]` — a width the class does not give;
+  **not needed inside a `bga field` courtyard**: a track piece lying wholly in
+  one (its points within the courtyard grown by its own width, so a neck ending
+  on the edge counts) and narrower than its class is the fab's escape neck, which
+  the guide's `bga field` row makes the rule there. Wider than the class, or
+  narrow outside the courtyard, still fails, and DRC holds the minimum width.
+  board1 R1a, 2026-11-23: 12 DDR_DIFF escapes at 0.1016 inside U500
+  (14_fab BGA_ESCAPE_U500) failed "class wants 0.142" with 0 new DRC. With
+  this fix, a piece run 2.3 mm out of the courtyard, or narrowed outside it,
+  still fails.
 - `"edge_ok": [{"net", "layer"?, "min", "why"}]` — a closer edge distance;
 - `"accept": [{"type", "why"}]` — a DRC violation type the group produces on
   purpose (a fanout group ends every escape in free board, which DRC reports
@@ -2019,6 +2028,12 @@ check, new DRC, rule failures, vias, track length -- and `<race>/race.json` hold
   variant's processes with it.
 - A spec whose `"plan"` is an absolute path, or leaves the board folder, is refused: a variant writes only
   into its own copy.
+- **A spec's net keys are LEAF names** (`DRAM_CK_T_A`, never `/LPDDR4/DRAM_CK_T_A`): `netgroup.py` looks
+  each key up by the part after the last `/`, one board net per leaf, and exits `no such net on the board`
+  otherwise. `race.py` now checks every key of every spec (within a variant's `--only`) that way on the
+  board, once, BEFORE any child starts and before the budget is touched: a bad key is printed per spec
+  with the nearest leaf, and the race exits 2 with nothing run and nothing booked (`--no-preflight`
+  skips it). board1 R1a, 2026-11-23: five full-path specs ended in 9 s, 'no such net' in every child.
 
 ## A bus between two BGAs: test cheaply, use the cores, prove the chain whole (board1's U1-U500 DRAM)
 
