@@ -84,7 +84,9 @@ value alone ("the VCC and VCCQ 100 nF capacitors"), and no lint sees it
 (board 1's RV58.1). A layout rule or a drawing the
 decision adds is tried on the board's newest PCB snapshot first, with the
 board's own copper in place (`answer-question` step 2, "A geometric rule or
-a drawing"). Then
+a drawing"). A clearance, width or layer allowance it grants goes out as a
+custom DRC rule in the same publish, proven with `rulecheck.py`, never as
+prose alone (`answer-question` step 2). Then
 
     .venv/bin/python tools/handoff/publish.py --board boardN
     .venv/bin/python tools/handoff/publish.py --check --all

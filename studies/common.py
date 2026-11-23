@@ -146,3 +146,33 @@ def ipc2221_a(area_mm2, rise_k=10.0, internal=True):
     k 0.024 internal / 0.048 external."""
     return (0.024 if internal else 0.048) * rise_k ** 0.44 * (area_mm2 / 0.00064516) ** 0.725
 
+
+
+def plane_strip_nh(h_mm, d_mm, w_mm):
+    """The inductance a current adds by crossing d mm of a pour w mm wide over its return plane
+    h mm away: a parallel-plate strip, L = mu0 h d / w, in nH.  w is the NARROWEST width on the
+    way, so the figure is an upper bound for a wider pour; fringing (w not >> h) only lowers it."""
+    import math
+    return 4e-7 * math.pi * (h_mm * 1e-3) * (d_mm * 1e-3) / (w_mm * 1e-3) * 1e9
+
+
+def mounted_srf_hz(l_nh, c_uf):
+    """The frequency up to which a capacitor of c_uf holds its rail through a mounting loop of
+    l_nh: 1 / (2 pi sqrt(L C)).  Above it the smaller capacitors at the pins and the planes carry
+    the rail, so a bulk capacitor's distance is costed AT this frequency (s16, s23)."""
+    import math
+    return 1 / (2 * math.pi * math.sqrt(l_nh * 1e-9 * c_uf * 1e-6))
+
+
+def bulk_out_cost(h_mm, d_mm, w_mm, via_loop_nh, c_uf, stay=0):
+    """A bulk capacitor moved d mm from its pins along its rail's pour, costed at its mounted
+    resonance.  `stay` capacitors of the same value remain at the pins (each on via_loop_nh).
+    -> dict(add_nh: the strip's inductance; srf_hz; bank_add_nh: what the bank of 1 + stay gains
+    against all of them at the pins; mohm: that at srf_hz = mV for each ampere of load step)."""
+    import math
+    add = plane_strip_nh(h_mm, d_mm, w_mm)
+    srf = mounted_srf_hz(via_loop_nh, c_uf)
+    n = 1 + stay
+    moved = 1 / (1 / (via_loop_nh + add) + stay / via_loop_nh)        # nH, the bank with one out
+    bank_add = moved - via_loop_nh / n
+    return dict(add_nh=add, srf_hz=srf, bank_add_nh=bank_add, mohm=2 * math.pi * srf * bank_add * 1e-9 * 1e3)

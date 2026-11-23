@@ -105,6 +105,14 @@ relaxing it is a decision, not an answer. Commit
 read well was wrong on the board (it missed the DRAM's pair names; it
 outranked the BGA area classes).
 
+**A clearance, width or layer allowance an answer or a decision grants is a
+custom DRC rule in the same publish**, not only a sentence in the layout
+page: DRC and the board's planner read the net class, so an allowance left
+in prose is invisible to both and is asked for again. Write the `rules` row
+with the sentence, prove it as above, and name the rule in the sentence. (One
+bus's own-line spacing, granted in text, came back as a routing wall: the
+class clearance was all the tools saw.)
+
 **A geometric rule or a drawing** an answer publishes — a keep-out, a guard,
 "no other net inside", an escape "as drawn by concept" — is tried on the
 board's NEWEST PCB snapshot before the publish, with the board's own copper
