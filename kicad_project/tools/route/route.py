@@ -1299,7 +1299,8 @@ def cmd_status(a):
     seg = [t for t in tracks if t.GetClass() != "PCB_VIA"]
     print(f"copper: {len(seg)} track segments, {len(vias)} vias, {len(list(B.b.Zones()))} zones, "
           f"{sum(t.GetLength() for t in seg) / 1e6:.1f} mm")
-    print(f"open connections: {open_count(rep)}")
+    print(f"open connections: {open_conn(B.b)} (KiCad's connectivity; DRC's unconnected list shows "
+          f"{open_count(rep)}, capped at its report limit)")
     d = {}
     for t in seg:
         d.setdefault(B.netclass(t.GetNetname()) if t.GetNetname() else "?", [0, 0.0])
