@@ -42,6 +42,8 @@ WHAT IS BLOCKED, beyond the board's own copper:
     own escape end on that layer -- a signal across a plane is a slot;
   * a band "edge" mm (+ half a track) inside the board edge;
   * a via inside any goal pad (an 0402 with a drill in it is a solder thief);
+  * every drilled pad's hole (NPTH, or PTH where its pad is not), on every layer,
+    at drill / 2 + Board Setup's copper-to-hole; a new via at the hole-to-hole;
   * the spec's "block": [{"rect": [x0, y0, x1, y1], "layers": [...], "vias": true}];
   * the spec's "extra_tracks"/"extra_vias" (the group's ground and supply
     vias and pad links), which go into the plan as they are;
@@ -338,11 +340,32 @@ def main():
                      f"({', '.join(leaves[n])}). Rename one in the schematic, or route them by hand.")
 
     pads, tracks, bvias, padbox = [], [], [], {}
+    HOLECLR = B.mm(B.b.GetDesignSettings().m_HoleClearance)      # copper to hole (14_fab), every layer
+    H2H = B.mm(B.b.GetDesignSettings().m_HoleToHoleMin)          # a new via's hole to a hole
+    holes = []          # every drilled pad's hole: an obstacle on EVERY copper layer, pad or no pad
     for ref, f in B.fps.items():
         for p in f.Pads():
+            drilled = p.GetDrillSizeX() > 0 and p.GetDrillSizeY() > 0
+            if drilled:
+                # the hole, whatever copper the pad has: an NPTH (no net, often no copper layer at
+                # all) or a PTH on a layer it is not flashed on is still a hole there, and DRC holds
+                # every other net's copper the board's copper-to-hole from its wall
+                c_, sz_ = p.GetPosition(), p.GetDrillSize()
+                rx, ry = B.mm(sz_.x) / 2, B.mm(sz_.y) / 2
+                a_ = b_ = (B.mm(c_.x), B.mm(c_.y))
+                if abs(rx - ry) > 1e-6:                  # a slot: a capsule along its long axis
+                    ang = math.radians(p.GetOrientation().AsDegrees())
+                    h_ = abs(rx - ry)
+                    ux, uy = ((math.cos(ang), -math.sin(ang)) if rx > ry else (math.sin(ang), math.cos(ang)))
+                    a_ = (a_[0] - ux * h_, a_[1] - uy * h_)
+                    b_ = (b_[0] + ux * h_, b_[1] + uy * h_)
+                holes.append(dict(ref=ref, pad=p.GetNumber(), net=p.GetNetname().rsplit("/", 1)[-1],
+                                  npth=p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH, a=a_, b=b_, r=min(rx, ry)))
             if not list(p.GetLayerSet().CuStack()):
                 # a paste / mask aperture with no copper (a BergStak plug's stencil pads stacked on
-                # its real lands): not an obstacle -- taken as copper it sealed every J2 land
+                # its real lands): not an obstacle -- taken as copper it sealed every J2 land.  A
+                # copperless pad WITH a drill (an NPTH defined on the mask layers only) is its hole
+                # alone, stamped from `holes` below
                 continue
             bb = p.GetBoundingBox()
             rec = dict(ref=ref, pad=p.GetNumber(), net=p.GetNetname().rsplit("/", 1)[-1],
@@ -618,6 +641,29 @@ def main():
             G.static_via(v["x"], v["y"], v["r"])
             for L_ in LAYERS:
                 ROUND[L_].append((v["x"], v["y"], v["r"] + maze.PADCLR + maze.W / 2, v["net"]))
+
+    # every drilled pad's HOLE, on every layer routed here: the board's copper-to-hole from its wall
+    # (DRC's hole_clearance, every copper layer, pad or no pad).  An NPTH whose pad lists no copper
+    # layer was skipped whole above, and a PTH's pad halo covers its hole only where padclr plus
+    # its annular ring reaches the copper-to-hole; this stamps the hole itself, so neither depends
+    # on how the footprint drew the pad.  A routed net's own hole is its own (DRC does not test it).
+    # A new via keeps the hole-to-hole from every hole, its own net's included.
+    for h in holes:
+        G.mark(f"{'NPTH' if h['npth'] else 'PTH'} hole of {h['ref']}.{h['pad'] or '(no number)'}"
+               f" ({h['net'] or 'no net'}) at {at_(*h['a'])}")
+        if h["net"] not in fixed or not h["net"]:
+            F = field_of(*h["a"])
+            rr = h["r"] + HOLECLR + maze.W / 2 - (F["_shrink"] if F is not None else 0.0)
+            if h["a"] == h["b"]:
+                G.block_disc(LAYERS, h["a"][0], h["a"][1], rr)
+                for L_ in LAYERS:
+                    ROUND[L_].append((h["a"][0], h["a"][1], rr, h["net"]))
+            else:
+                G.block(LAYERS, G.seg(h["a"], h["b"], rr))
+            rv = h["r"] + max(HOLECLR + maze.VIA_R, H2H + float(DRILL) / 2)
+        else:
+            rv = h["r"] + H2H + float(DRILL) / 2
+        G.block(["via"], G.seg(h["a"], h["b"], rv) if h["a"] != h["b"] else G.disc(h["a"][0], h["a"][1], rv))
 
     # the field's pad area: escapes only, and they are laid -- unless the spec opens
     # its inner layers, where the balls have no lands and the dog-bones are the

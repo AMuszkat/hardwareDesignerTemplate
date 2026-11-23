@@ -638,6 +638,20 @@ its docstring. What the spec has to be told:
   layers and that pcbnew does not flash on a field's open inner layer is its drill / 2 + the
   board's copper-to-hole there. A power layer's own pours are not poured yet, so pcbnew does not
   flash their vias either: name those nets in `"keep_pads": {"In5.Cu": [...]}`.
+- **A drilled pad's HOLE is an obstacle on every layer, whatever copper its pad has** (netgroup,
+  2026-11-23). TRAP: netgroup skipped every pad that lists no copper layer (it was meant for paste
+  apertures), so an NPTH drawn on the mask layers only was not there at all. A test hole of 0.3 mm
+  on R_J2's In7 route came back -0.20 mm into its wall. A PTH was covered only where its pad halo
+  happened to reach copper-to-hole. WAY AROUND: every pad with a drill now stamps its hole (round,
+  or a slot's capsule) on every routed layer at drill / 2 + Board Setup's copper-to-hole (14_fab:
+  0.1778). New vias keep the hole-to-hole (0.28) from it, their own net's hole included; a routed
+  net's own hole is not an obstacle to that net. A copperless pad with NO drill is still not an
+  obstacle. Read `GetDrillSize`, not the layer set, before you call a pad a hole: R_J2's "J2 NPTH
+  holes" were J2's B.Paste apertures (J2 has no drill at all), and the spec's `block` rects
+  over them cost room for nothing. PROOF (`board1_module/tmpWork/T_netgroup_npth/`): with the test
+  hole the route keeps 0.224 mm, against -0.20 before. R_J2's spec with and without its blocks, the
+  same spec widened over H2's 2.7 mm PTH, and three R2 specs give byte-identical plans or partials,
+  old code against new.
 - **A capacity split is only as true as its exits.** `fanout.py layers` proved board1's U1 at
   139 of 139 and no router closed it: the model ended 0.5 mm past the ball array, at the
   field's clearance. Each exit it counted and the board did not have cost a routing round --
