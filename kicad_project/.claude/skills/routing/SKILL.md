@@ -312,6 +312,14 @@ turn and before a worker is briefed.
   order, one net alone, one half) names the bind in seconds; independent
   chains run on separate copies at once; a solve's input names the board's
   hash. `tools/route/README.md`, "A bus between two BGAs".
+- **A counting model proves itself before it spends a round.** A capacity
+  model of your own (a cut count, a lane count, a conflict rule) runs a
+  selftest first and stops the job when it reads otherwise: one case counted
+  by hand that must FAIL with the hand's number, one that must PASS (copper
+  already drawn and audited). Cuts are counted between anchored pairs along
+  a path, never as vertical lines at fixed x with no continuity between them
+  -- that model passed a row which was short 10, and three rounds in a row
+  were lost to the model, not the board (board1 Q105, Q106, Q110).
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
