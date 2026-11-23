@@ -229,10 +229,146 @@ def _clip(a, b, box, m=0.0):
     return (t0, t1) if t1 - t0 > 1e-9 else None
 
 
+# ---------------------------------------------------------------------------
+# non-functional pads: a plan via inside an "nfp_vias" courtyard carries "nfp": true
+# ---------------------------------------------------------------------------
+
+def nfp_rule(B):
+    """prelayout.json "nfp_vias", read by route.py's own reader (route.nfp_rule): the courtyards
+    `route.py check` refuses an untyped via in (RULE nfp) are the ones typed here, by one
+    definition.  None when the board names none.  Read BEFORE the run: a bad entry stops it in
+    seconds, not after the routing."""
+    import route as R            # here, not at the top: route.py puts tools/copper on the path
+    return R.nfp_rule(B)
+
+
+def nfp_type(B, vias, rule):
+    """Set "nfp": true on every plan via whose centre lies inside one of the rule's courtyards and
+    that lacks it; a via already typed is left as it is.  Returns (typed, inside): the vias typed
+    now, and the vias inside at all.  Called BEFORE the plan and its origin record are written: a
+    flag typed afterwards edits the plan origin.py hashed, and `check` / `apply` then stop on a
+    stale plan (exit 5) -- board1 R_W300, 2026-11-23: a board-local script typed it after the
+    run, and the group went to check and apply with --accept-stale plan."""
+    if not rule:
+        return 0, 0
+    pn = B.pn
+    typed = inside = 0
+    for v in vias:
+        p = pn.VECTOR2I(pn.FromMM(v["at"][0]), pn.FromMM(v["at"][1]))
+        if not any(q.Contains(p) for _r, polys in rule["areas"] for q in polys):
+            continue
+        inside += 1
+        if not v.get("nfp"):
+            v["nfp"] = True
+            typed += 1
+    return typed, inside
+
+
+def nfp_line(rule, typed, inside, total):
+    """The one line a run prints for it."""
+    if not rule:
+        return 'nfp: not run -- routing/prelayout.json has no "nfp_vias"'
+    return (f"nfp: {typed} of {total} plan vias typed (refs {', '.join(rule['refs'])})"
+            + (f"; {inside - typed} inside already carried it" if inside > typed else ""))
+
+
+def nfp_selftest(board, at=None, off=None):
+    """--selftest: nfp_type() alone, no routing, no budget, on the board READ-ONLY (nothing is
+    saved).  Cases: no rule -> nothing changes; a via inside a courtyard -> typed; a via outside
+    every courtyard -> no "nfp" key; a via inside that already carries it -> left exactly as it
+    was.  The points: each nfp ref's courtyard centre and a point 0.5 mm outside it, plus --at
+    (must be inside) and --off (must be outside).  The EXPECTED answer of every point is a ray
+    cast over the courtyard's corners, not KiCad's Contains (which nfp_type uses): a test that
+    asked the function under test for its answers would prove nothing.
+
+    Hand-checked on board1 (2026-11-23, the board read back): U300's F.CrtYd is the rectangle
+    x 7.455..19.945, y 5.405..19.395; U1's x 21.755..36.245, y 14.255..28.745.  So
+      --at 16.9,7.65   inside U300 (3.045 from its east edge, 2.245 below its top) -> typed;
+      --off 20.5,10.0  between the two (0.555 past U300's east edge, 1.255 short of U1's west)
+                       -> not typed;
+    and (10.0, 10.0) is INSIDE U300 (2.545 in from its west edge): not an outside case.
+        tools/kpy tools/route/netgroup.py --board board1 --selftest --at 16.9,7.65 --off 20.5,10.0"""
+    B = P.Board(board)
+    fails = []
+
+    def ok(cond, what):
+        print(f"  {'PASS' if cond else 'FAIL'}  {what}")
+        if not cond:
+            fails.append(what)
+
+    v0 = [dict(net="SELFTEST", at=[1.0, 1.0], pad=0.6, drill=0.3)]
+    ok(nfp_type(B, v0, None) == (0, 0) and "nfp" not in v0[0], "no nfp_vias: no via is touched")
+    rule = nfp_rule(B)
+    if not rule:
+        print(f"SELFTEST NOT RUN: {B.dir}/routing/prelayout.json has no \"nfp_vias\" -- name a board that has")
+        return 2
+    mm = B.pn.ToMM
+    rings = [[(mm(o.CPoint(i).x), mm(o.CPoint(i).y)) for i in range(o.PointCount())]
+             for _r, polys in rule["areas"] for q in polys for o in (q.Outline(k) for k in range(q.OutlineCount()))]
+
+    def raycast(x, y):
+        """Inside any courtyard outline, by crossings of a ray towards +x."""
+        for r in rings:
+            c = False
+            for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]):
+                if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+                    c = not c
+            if c:
+                return True
+        return False
+
+    pts = []
+    for ref, polys in rule["areas"]:
+        o = polys[0].Outline(0)
+        xs = [mm(o.CPoint(i).x) for i in range(o.PointCount())]
+        ys = [mm(o.CPoint(i).y) for i in range(o.PointCount())]
+        cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+        pts.append((f"{ref} courtyard centre", (cx, cy), True))
+        out = next(((x, y) for x, y in ((min(xs) - 0.5, cy), (max(xs) + 0.5, cy), (cx, min(ys) - 0.5),
+                                        (cx, max(ys) + 0.5)) if not raycast(x, y)), None)
+        if out:
+            pts.append((f"0.5 mm outside {ref}", out, False))
+    for label, s, want in (("--at", at, True), ("--off", off, False)):
+        if s:
+            xy = tuple(float(t) for t in s.split(","))
+            if raycast(*xy) != want:
+                print(f"SELFTEST BAD POINT: {label} {s} is {'outside every' if want else 'inside an'} nfp courtyard "
+                      "by the ray cast -- give a point that is where the case says")
+                return 2
+            pts.append((f"{label} {s}", xy, want))
+    vias, pre = [], []
+    for label, (x, y), want in pts:
+        if raycast(x, y) != want:
+            print(f"SELFTEST BAD POINT: {label} ({x:.3f}, {y:.3f}): the ray cast disagrees with its case")
+            return 2
+        vias.append((label, want, dict(net="SELFTEST", at=[x, y], pad=0.6, drill=0.3)))
+        if want:                  # the same place, already typed: must come back exactly as it went in
+            pre.append((label, dict(net="SELFTEST", at=[x, y], pad=0.6, drill=0.3, nfp=True, leg="pre")))
+    plan = [v for _l, _w, v in vias] + [v for _l, v in pre]
+    before = [dict(v) for _l, v in pre]
+    typed, inside = nfp_type(B, plan, rule)
+    for label, want, v in vias:
+        ok(v.get("nfp") is True if want else "nfp" not in v,
+           f"{label} ({v['at'][0]:.3f}, {v['at'][1]:.3f}): {'typed' if want else 'not typed'}")
+    for (label, v), b in zip(pre, before):
+        ok(v == b, f"{label}, already typed: left as it was")
+    n_in = sum(w for _l, w, _v in vias)
+    ok((typed, inside) == (n_in, n_in + len(pre)),
+       f"counts: typed {typed} (want {n_in}), inside {inside} (want {n_in + len(pre)})")
+    print(nfp_line(rule, typed, inside, len(plan)))
+    print("SELFTEST " + ("PASS" if not fails else f"FAIL ({len(fails)})"))
+    return 0 if not fails else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
-    ap.add_argument("spec")
+    ap.add_argument("spec", nargs="?")
+    ap.add_argument("--selftest", action="store_true",
+                    help="test the \"nfp\" typing of plan vias alone (no routing, no budget) on the board, "
+                         "read-only; --at X,Y a point inside an nfp_vias courtyard, --off X,Y one outside")
+    ap.add_argument("--at", help="--selftest: a point that must be typed")
+    ap.add_argument("--off", help="--selftest: a point that must not be typed")
     ap.add_argument("--iters", type=int, default=300)
     ap.add_argument("--pres0", type=float, default=0.5)
     ap.add_argument("--pres-mul", type=float, default=1.1)
@@ -271,6 +407,10 @@ def main():
     ap.add_argument("--plateau-pct", type=float, default=2.0,
                     help="percent the last --plateau iterations must improve the best count by (default 2)")
     a = ap.parse_args()
+    if a.selftest:
+        return nfp_selftest(P.board_dir_arg(a.board), a.at, a.off)
+    if not a.spec:
+        ap.error("the spec is required (or --selftest)")
     sys.stdout.reconfigure(line_buffering=True)   # a killed run's log ends at its last line, not its last buffer
     print(f"router core: {maze.CORE}")
     t0 = time.monotonic()
@@ -331,6 +471,7 @@ def main():
     maze.CLR, maze.PADCLR, maze.W, maze.VIA_R = float(S.get("clearance", 0.15)), float(S.get("padclr", 0.2)), W, VIA / 2
     board_sha = origin.sha_file(P.boardsel.one_pcb(a.board))   # BEFORE it is read: the plan is true of this content
     B = P.Board(a.board)
+    NFP = nfp_rule(B)            # prelayout.json "nfp_vias": typed on the plan's vias before it is written
     import pcbnew
     import guide
     gates = guide.load(a.board)                       # the board's general_routing_guide.md
@@ -1696,6 +1837,9 @@ def main():
         plan["tracks"].append(dict(extra, net=full.get(extra["net"], extra["net"])))
     for extra in S.get("extra_vias", []):
         plan["vias"].append(dict(extra, net=full.get(extra["net"], extra["net"])))
+    # "nfp" on every via inside an nfp_vias courtyard, BEFORE the plan and its origin record: typed
+    # afterwards, it makes the plan stale (board1 R_W300: --accept-stale plan on check and apply)
+    print(nfp_line(NFP, *nfp_type(B, plan["vias"], NFP), len(plan["vias"])))
     p = plan_path
     p.write_text(json.dumps(plan, indent=1) + "\n")
     sc = origin.write(p, plan, spec_path, S, B.pcb, board_sha, a.board,

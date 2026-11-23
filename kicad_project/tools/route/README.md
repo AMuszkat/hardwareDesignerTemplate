@@ -999,6 +999,19 @@ its docstring. What the spec has to be told:
   them standing (`ripped 335 of 594`, exit 0). Prove the gate both ways on a copy: `audit` fails before and passes
   after; a one-via plan inside the courtyard without `"nfp"` is refused, the same via with it and a via outside
   without it are not.
+- **`netgroup.py` types `"nfp"` itself, before it writes the plan and its origin record.** Every plan via whose
+  centre is inside a courtyard of `"nfp_vias"` gets `"nfp": true` (the courtyards are route.py's own
+  `nfp_rule`, so what it types is what `check` refuses), a via already typed is left as it is, and the run
+  prints `nfp: N of M plan vias typed (refs U1, U300)` (`nfp: not run` without the key). TRAP (board1 R_W300,
+  2026-11-23): the flag was typed by a board-local script AFTER the run, which edited the plan `origin.py` had
+  hashed -- `check` and `apply` stopped on a stale plan (exit 5) and the group went through with
+  `--accept-stale plan`. Never edit a netgroup plan after it is written; a flag it lacks is a netgroup defect.
+  Proof: `tools/kpy tools/route/netgroup.py --board B --selftest [--at X,Y --off X,Y]` (no routing, no budget,
+  the board read-only): no rule touches nothing, a via inside each courtyard (and `--at`) is typed, one outside
+  (and `--off`) is not, an already-typed via comes back unchanged; the expected answers are a ray cast over
+  the courtyard corners, not KiCad's `Contains`, and a point on the wrong side of its case stops it (exit 2).
+  board1: `--at 16.9,7.65 --off 20.5,10.0` (U300's courtyard is x 7.455..19.945, y 5.405..19.395 -- so
+  (10, 10) is inside it, not an outside case).
 - **A BGA's unrouted exit lane is invisible to DRC and to the escape bound: `exitlane.py` measures it.** A ring-1
   ball leaves straight out on the part's own outer layer, a ring-2 ball between two ring-1 lands; until those
   tracks are drawn, another net's via, pad or stub standing in a lane breaks no DRC rule (there is no track to be
