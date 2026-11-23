@@ -194,6 +194,24 @@ CSI_D0_P at the edge). A point inside another relaxed region (another such area,
 clearance rule names) is that region's. Proof: `python3 tools/route/test_areaclear.py` (a 45-degree
 breach, a pair broken and opened at the edge, a pair broken and not opened, pairs, a via and a pad).
 
+- **A plan's clearances in seconds, before the round: `planclr.py`** -- a design aid, never instead
+  of `check`, which still runs every round and is still counted. TRAP (board1 R_U1W r172c,
+  2026-11-23): 9 PCIE_85 items (0.106-0.180 against 0.2032) surfaced only after `check`'s ~2 min
+  DRC, in a counted round. `tools/kpy tools/route/planclr.py --board B PLAN.json [--pcb
+  SCRATCH.kicad_pcb] [--all]` lays the plan in memory as `apply` does -- its `rips`, `ripvias`
+  and `polyrips` removed FIRST by `rip_plan`'s own matching (a judge that skips them reads ripped
+  copper as obstacles), and measures each plan item, per copper layer, against other nets'
+  tracks, vias, pads and copper graphics and against holes, at the board's own `.kicad_dru`
+  (last match wins, both orientations, `(layer outer|inner)`), else the stricter class clearance;
+  then `exitlane.py`'s judge. A condition it cannot read is never guessed: the pair prints
+  `UNJUDGED` with both candidate values. Zone fills, edge and hole-to-hole are `check`'s. `--pcb`
+  stages the file as `<board>.kicad_pcb` beside copies of the project: pcbnew finds net classes by
+  the board file's own stem, so a `.scratch` file loaded as-is reads every net Default.
+  Proof: `--selftest` (a hand-counted board: 0.275 < 0.3 class by pattern, 0.1 < 0.12 by the
+  last rule over a looser and an inner one, a hole 0.36 < 0.4, a plan via, one UNJUDGED, a ripped
+  track and via never reported; moved clear, PASS) and r172c: all 9 DRC items at the DRC's gaps
+  (+-0.0003), 15 pairs in all (DRC names the first per track), exitlane U1 A26, 8 s.
+
 That indirection is the whole point. A hand-written clearance test that uses
 *the track's own* net class misses that KiCad enforces the **stricter of the two
 nets'** clearances — a Default track beside a Power pad needs the Power
