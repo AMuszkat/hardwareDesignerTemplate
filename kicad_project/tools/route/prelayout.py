@@ -180,6 +180,46 @@ def bundle(B, a, b, nets):
 DIRS = {"S": ((1, 0), (0, 1)), "N": ((1, 0), (0, -1)), "E": ((0, 1), (1, 0)), "W": ((0, 1), (-1, 0))}
 
 
+def straddle_check(usedp, strad, v_lo, v_hi, lat, r, clr, step=0.01):
+    """Each used pin's via site against the pads of parts that straddle the row's outer edge.
+
+    usedp: (u, net, pin) per used pin; strad: (u0, u1, v0, v1, net, 'REF.pad') in the row's frame. A via
+    centre may stand at v in [v_lo, v_hi] (the strip) and u within `lat` of its pin. A pad of another net
+    blocks the centres nearer than r + clr to its box; a pad of the pin's own net may take the via (C104's
+    under J1 do). Returns '' or the FAIL text naming every pin left with no site and the pads that shut it.
+    Neighbouring vias are not modelled here: that is the run count's job."""
+    if not strad:
+        return ""
+    nv = max(1, int(round((v_hi - v_lo) / step)))
+    nu = max(1, int(round(2 * lat / step)))
+    ok, obsof = [], []
+    for u, net, pin in usedp:
+        obs = [o for o in strad if o[4] != net and o[0] - r - clr < u + lat and o[1] + r + clr > u - lat]
+        obsof.append(obs)
+        ok.append(not obs or any(
+            all(math.hypot(max(o[0] - x, 0, x - o[1]), max(o[2] - y, 0, y - o[3])) >= r + clr - 1e-9 for o in obs)
+            for x in (u - lat + 2 * lat * i / nu for i in range(nu + 1))
+            for y in (v_lo + (v_hi - v_lo) * j / nv for j in range(nv + 1))))
+    # a run of neighbouring used pins of ONE net (a power entry: J1's six +5V_IN pins) is joined on the part's
+    # own layer and drops where any of them has a site: J1 pin 79 alone is shut by C104.2, 77 and 81 are not
+    bad = []
+    for i, (u, net, pin) in enumerate(usedp):
+        if ok[i]:
+            continue
+        a_, b_ = i, i
+        while a_ > 0 and usedp[a_ - 1][1] == net:
+            a_ -= 1
+        while b_ + 1 < len(usedp) and usedp[b_ + 1][1] == net:
+            b_ += 1
+        if not any(ok[a_:b_ + 1]):
+            bad.append((pin, net.split("/")[-1], sorted({o[5] for o in obsof[i]})))
+    if not bad:
+        return ""
+    who = sorted({x for _p, _n, o in bad for x in o})
+    return (f"{len(bad)} used pin(s) with no via site past the pads of {', '.join(who)} (a part whose courtyard "
+            f"straddles the row's outer edge): " + ", ".join(f"pin {p} {n}" for p, n, _o in bad))
+
+
 def row_check(B, c):
     f = B.fps[c["ref"]]
     (ux, uy), (vx, vy) = DIRS[c["side"]]
@@ -195,7 +235,9 @@ def row_check(B, c):
     elif isinstance(sel, list):
         pads = [p for p in pads if p.GetNumber() in [str(s) for s in sel]]
     skip = re.compile(c.get("skip", "^$"))
-    used = sorted(U(*pad_xy(B, p)) for p in pads if p.GetNetname() and not skip.search(p.GetNetname().split("/")[-1]))
+    usedp = sorted((U(*pad_xy(B, p)), p.GetNetname(), p.GetNumber()) for p in pads
+                   if p.GetNetname() and not skip.search(p.GetNetname().split("/")[-1]))
+    used = [u for u, _n, _p in usedp]
     if not used:
         return "PASS", "no used pin in the row"
     pad_d, _drill = c.get("via", [0.6, 0.3])
@@ -208,10 +250,18 @@ def row_check(B, c):
         (B.mm(p.GetBoundingBox().GetLeft()), B.mm(p.GetBoundingBox().GetBottom())),
         (B.mm(p.GetBoundingBox().GetRight()), B.mm(p.GetBoundingBox().GetTop()))))
     lo, hi = used[0] - lat - r, used[-1] + lat + r
+    strad = []          # pads of parts whose courtyard straddles the row's outer edge: (u0, u1, v0, v1, net, ref.pad)
     if c.get("strip") is not None:
         end, what = outer + float(c["strip"]) - edge, f"{float(c['strip']):.2f} mm strip (given)"
     else:
         end, what = None, None
+        # Every courtyard that overlaps the via strip (u in [lo, hi], v beyond the pads' outer edge) is tested.
+        # One wholly beyond that edge ends the strip at its near edge, for the whole row (unchanged). One that
+        # STRADDLES the edge (starts level with or behind it) was skipped by a `near edge > outer` test: R37 at
+        # F (23.70, 39.10), courtyard from y 38.63, its pads 0.09 mm into B-side J2's south strip, read PASS.
+        # Such a part (on the other side, under the row: Y100 and C104 under J1, J400 beside J2) cannot end
+        # the strip for the whole row -- J1 has 22 vias laid between and inside those pads -- so its PADS are
+        # tested, each pin on its own (straddle_check).
         for ref, g in B.fps.items():
             if ref == c["ref"]:
                 continue
@@ -220,8 +270,18 @@ def row_check(B, c):
                 continue
             us = sorted((U(cy[0], cy[1]), U(cy[2], cy[3])))
             vs = sorted((V(cy[0], cy[1]), V(cy[2], cy[3])))
-            if us[1] >= lo and us[0] <= hi and vs[0] > outer and (end is None or vs[0] < end):
-                end, what = vs[0], f"{ref}'s courtyard"
+            if not (us[1] >= lo and us[0] <= hi and vs[1] > outer + 1e-6):
+                continue
+            if vs[0] > outer:
+                if end is None or vs[0] < end:
+                    end, what = vs[0], f"{ref}'s courtyard"
+                continue
+            for q in g.Pads():
+                bx = B.box(q.GetBoundingBox())
+                qu = sorted((U(bx[0], bx[1]), U(bx[2], bx[3])))
+                qv = sorted((V(bx[0], bx[1]), V(bx[2], bx[3])))
+                if qu[1] >= lo and qu[0] <= hi and qv[1] > outer + 1e-6:
+                    strad.append((qu[0], qu[1], qv[0], qv[1], q.GetNetname(), f"{ref}.{q.GetNumber()}"))
         pn = B.pn
         for d in B.b.GetDrawings():
             if d.GetLayer() != pn.Edge_Cuts:
@@ -260,9 +320,12 @@ def row_check(B, c):
             continue
         if best is None or eff < best[1]:
             best = (k, eff)
+    # the straddlers are judged on the strip as found, and on its first via row at least when a nearer
+    # obstacle shuts it -- so each part that must move is named in one run (moves2: R405 and R37)
+    sfail = straddle_check(usedp, strad, outer + gap + r, max(end - r, outer + gap + r), lat, r, clr)
     if best is None:
         return "FAIL", (f"{len(used)} used pin(s), no room for one via row ({what}, {edge:g} mm kept, "
-                        f"via {pad_d:g} at {gap:g} from the pads)")
+                        f"via {pad_d:g} at {gap:g} from the pads)" + (f"; and {sfail}" if sfail else ""))
     k, eff = best
     worst = None
     for i in range(len(used)):
@@ -274,7 +337,10 @@ def row_check(B, c):
     head = f"{what}: {k} via row(s), one via per {eff:.2f} mm, links within {lat:g} mm"
     if worst:
         return "FAIL", (f"{worst[1]} used pins over {worst[3]:.2f} mm need {worst[1]} sites, {worst[2]} fit ({head}); "
-                        "a pin open or a via size the handoff must decide -- ask at placement")
+                        "a pin open or a via size the handoff must decide -- ask at placement"
+                        + (f"; and {sfail}" if sfail else ""))
+    if sfail:
+        return "FAIL", f"{sfail} ({head})"
     return "PASS", f"{len(used)} used pins fit ({head})"
 
 
@@ -393,7 +459,38 @@ def groups_test(B, board, waive, no_count):
                 say("groups", g["id"], status, f"{g['_tier']}; {why}")
 
 
+def selftest():
+    """straddle_check on hand-made rows (frame: u along the row, v away from it; outer edge v = 0)."""
+    r, clr, lat = 0.2, 0.1016, 0.6
+    v0, v1 = 0.1016 + r, 0.87                                   # J2-like: via 0.4 at 0.1016, 1.27 mm strip less 0.4
+    row = [(u, f"N{u:.1f}", str(i)) for i, u in enumerate((0.0, 0.4, 0.8, 1.2, 1.6))]
+    r37 = [(0.30, 0.86, 0.09, 0.71, "X", "R37.1"), (1.14, 1.70, 0.09, 0.71, "Y", "R37.2")]
+    cases = [
+        ("nothing in the strip", row, [], ""),
+        ("R37-like 0402 over the middle pins", row, r37, "pin 2"),
+        ("a pad deep in the strip leaves room nearer the pins", row, [(0.3, 1.7, 0.95, 1.4, "X", "C1.1")], ""),
+        ("a pad of the pin's own net takes its via", [(0.8, "X", "2")], [(0.3, 1.3, 0.0, 0.9, "X", "C1.1")], ""),
+        ("the same pad, another net", [(0.8, "Z", "2")], [(0.3, 1.3, 0.0, 0.9, "X", "C1.1")], "pin 2"),
+        ("a same-net run drops where one pin has a site", [(0.4, "P", "77"), (0.8, "P", "79"), (1.2, "P", "81")],
+         [(0.45, 1.15, 0.0, 0.9, "G", "C104.2")], ""),
+        ("a lone pin under that pad", [(0.4, "P", "77"), (0.8, "Q", "79"), (1.2, "P", "81")],
+         [(0.45, 1.15, 0.0, 0.9, "G", "C104.2")], "pin 79"),
+        ("a pin with a gap beside the pad", [(0.0, "Q", "1")], [(0.3, 1.3, 0.0, 0.9, "G", "C1.1")], ""),
+        ("first row only (the strip shut nearer)", row, r37, "pin 2"),
+    ]
+    bad = 0
+    for i, (what, used, strad, want) in enumerate(cases):
+        got = straddle_check(used, strad, v0, v0 if i == len(cases) - 1 else v1, lat, r, clr)
+        good = (want in got) if want else not got
+        bad += not good
+        print(f"{'ok  ' if good else 'FAIL'} {what}: {got or 'no pin shut'}")
+    print("SELFTEST PASS" if not bad else f"SELFTEST FAIL ({bad})")
+    return 1 if bad else 0
+
+
 def main():
+    if "--selftest" in sys.argv[1:]:
+        return selftest()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
     ap.add_argument("--spec", default="routing/prelayout.json")

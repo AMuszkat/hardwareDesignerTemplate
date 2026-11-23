@@ -1454,8 +1454,22 @@ budget (`budget.py`, below).
   board1's J1 counted 34 of 34 under the PMIC without them and 4-9 of 18 inner pins with them. Lay the other side's
   copper as a plan, then search the row cluster by cluster (pins more than ~0.8 mm apart do not interact), each
   `rowfan.py --plan` seeing the vias already chosen; the pins left over become runs to `padvias.py --map` sites.
-- `tests/fixture_pcb.py --kind prelayout` is the three historical failures;
-  each must FAIL.
+- **A part whose courtyard straddles the row's outer edge is tested by its pads, pin by pin.** TRAP (board1
+  R_U1W moves2, 2026-11-23): `row_check` ended the strip at the nearest courtyard whose near edge lay BEYOND the
+  pads' outer edge, so R37 at F (23.70, 39.10) -- courtyard from y 38.585, 0.10 mm behind B-side J2's outer edge
+  y 38.685, its pads over the via strip -- was never tested and the row read PASS. Testing its courtyard
+  instead shut every row with a part under it (Y100 and C104 under J1, J400 beside J2: both rows FAIL at
+  0.00 mm, though J1 has 22 vias laid there). WORKED: a courtyard wholly beyond the edge still ends the strip
+  for the whole row (R405's 0.09 mm, unchanged); a straddler's pads go to `straddle_check`: each used pin needs
+  one via centre within `lateral` of it, in the strip, `r + clearance` clear of every straddling pad of
+  another net (a pad of its own net may take the via), and a run of neighbouring pins of one net drops where
+  any of them has a site (J1's six +5V_IN pins: 79 alone is shut by C104.2, 77 and 81 are not). On the copy
+  with R37 moved, J2 FAILs naming R37.1 / R37.2; with moves2 whole it names R405 and R37 in one line; the real
+  board reads as before (26 pass, 8 waived). It does not take the sites a straddler removes from the run
+  count -- each pin is judged on its own. `prelayout.py --selftest` holds the cases.
+- **`unconnected-(...)` pads count as used pins in a row** (they match no `skip`): J2's outer row is 52 pads,
+  32 unconnected, 18 GND -- "34 used" is 32 unconnected + DSI_D3_P/N. Put `unconnected-` in the row's `skip`
+  (`"^(GND$|unconnected-)"`) when those pins take no via; R405's and R37's J2 FAILs are both on such pins.
 - A waiver's `target` is a part (every check on it) or, for `rows`, `REF:SIDE`
   (`"U400:S"`): one side waived, the part's other `rows` entries still run.
 
