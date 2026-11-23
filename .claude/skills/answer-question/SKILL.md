@@ -102,6 +102,14 @@ pair routes once argued from pin order each failed their next review (a
 pocket, then an exit four tracks short); the measurement settled the
 third.
 
+**A board's saved count model** (an escape or lane model its tools wrote,
+re-solved here with one term changed) says nothing about the board "as
+placed" until you know what the model already left out: read the log or
+the script that built it for the obstacle sets it dropped, and quote the
+result with them ("with those 17 sets out, 20 of 20"), or ask the board for
+the count on the board itself. One "closes as placed" published from such a
+model was 6 of 20 on the board, and cost a corrected revision.
+
 **A custom DRC rule** that an answer adds to or changes in a board's `FAB`
 (a `rules` row, or an area net class, which derives one) is proven on a copy
 of the board before the publish: `python3 tools/review/rulecheck.py --board
