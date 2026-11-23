@@ -272,7 +272,7 @@ def main():
         expect(rc == 2, "--timeout 0 is refused: a wait always has a limit", out)
         rc, out, dt = bg(env, "wait", "fine", "--timeout", "99999")
         expect(rc == 0 and "capped at 3600" in out, "--timeout above the cap is capped at 3600 s, and said so", out)
-        rc, out, _ = bg(env, "clean")
+        rc, out, _ = bg(env, "clean", "--all-ended")
         expect(rc == 0 and not list((tmp / "jobs").glob("*.json")), "clean forgets the ended jobs", out)
     finally:
         for p in loose:

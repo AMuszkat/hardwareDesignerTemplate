@@ -1358,6 +1358,23 @@ def render(R):
                  f"{s['tokens']['cache_creation'] / 1e6:.1f}", f"{s['compactions']['n']} ({s['compactions']['idle']})",
                  mins(s["compactions"]["seconds"]), "" if s["cost_usd"] is None else f"{s['cost_usd']:.0f}",
                  f"{sum(r['output_tokens'] for r in s['subagents']) / 1e6:.2f}"] for s in R["sessions"]])
+    if R.get("effort"):
+        L += ["## 11. Routing effort, by group", "",
+              "From each board's `routing/ledger.json`, which the route tools write themselves "
+              "(`kicad_project/tools/route/budget.py`): what every routing group has cost in rounds and in "
+              "wall-clock compute, against what its tier allows, and how many of its nets that put on copper. "
+              "Whole board, not the report's window. A group with hours and no nets on copper is where the next "
+              "design change is owed; hours outside every group are what-ifs nobody charged.", ""]
+        for b in R["effort"]:
+            L += [f"**{b['board']}**: {h(b['seconds'])} h in {len(b['groups'])} group(s), {b['nets_applied']} of "
+                  f"{b['nets']} nets on copper"
+                  + (f" -- {b['seconds'] / 3600.0 / b['nets_applied']:.2f} h a net" if b["nets_applied"] else "")
+                  + f"; {h(b['ungrouped_s'])} h in {b['ungrouped_n']} background job(s) outside every group", ""]
+            L += table(["group", "tier", "rounds (allowed)", "hours (allowed)", "count min", "nets", "on copper",
+                        "state", "walls"],
+                       [[g["group"], g["tier"], f"{g['rounds']} ({g['allow_rounds']})",
+                         f"{h(g['total_seconds'])} ({h(g['allow_seconds'])})", mins(g["count_s"]), g["nets"],
+                         g["nets_applied"], g["state"], g["walls"]] for g in b["groups"]], right={2, 3, 4, 5, 6, 8})
     notes = [f"{lab[s['id']]}: {s['unfinished_calls']} call(s) with no result on record (not counted)"
              for s in R["sessions"] if s["unfinished_calls"]]
     notes += [f"{lab[s['id']]}: {s['skipped_lines']} unreadable line(s) skipped" for s in R["sessions"] if s["skipped_lines"]]
@@ -1375,6 +1392,35 @@ def rounded(x):
     if isinstance(x, list):
         return [rounded(v) for v in x]
     return x
+
+
+def effort(project):
+    """Each board's routing ledger as rows: compute against nets on copper, per group. The ledger is the
+    route tools' own count (kicad_project/tools/route/budget.py), so this is read, never re-derived."""
+    route = os.path.join(project, "kicad_project", "tools", "route")
+    if not os.path.exists(os.path.join(route, "budget.py")):
+        return []
+    sys.path.insert(0, route)
+    try:
+        import budget
+    except Exception:
+        return []
+    finally:
+        sys.path.remove(route)
+    out = []
+    for led in sorted(glob.glob(os.path.join(project, "kicad_project", "board*", "routing", "ledger.json"))):
+        hb = budget.Path(os.path.dirname(os.path.dirname(led)))
+        try:
+            rows, ug = budget.table(hb), budget.read(hb).get("ungrouped", [])
+        except Exception:
+            continue
+        for r in rows:
+            r["group"], r["state"] = safe(r["group"]), r["state"].split(" (")[0]
+        out.append(dict(board=safe(hb.name), groups=rows,
+                        seconds=sum(r["total_seconds"] for r in rows), nets=sum(r["nets"] for r in rows),
+                        nets_applied=sum(r["nets_applied"] for r in rows),
+                        ungrouped_n=len(ug), ungrouped_s=sum(u.get("s") or 0 for u in ug)))
+    return out
 
 
 def build(project=None, transcripts=None, since=None, until=None, gap_min=GAP_MIN, config_dir=None):
@@ -1396,7 +1442,8 @@ def build(project=None, transcripts=None, since=None, until=None, gap_min=GAP_MI
     sessions = load(folders, project, lo, hi, gap_min, strict)
     return rounded(dict(project=safe(os.path.basename(project)) if project else "(transcripts)",
                         window=dict(since=iso(lo) if lo else None, until=iso(hi) if hi else None),
-                        gap_min=gap_min, priority=PRIORITY, sessions=sessions))
+                        gap_min=gap_min, priority=PRIORITY, sessions=sessions,
+                        effort=effort(project) if project else []))
 
 
 def main(argv=None):

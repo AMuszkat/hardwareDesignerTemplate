@@ -50,19 +50,45 @@ bundles  for two connectors, the point-to-point nets between them ordered across
          (perpendicular to the line between the connectors' centres) at each end; the
          inversions (pairs in opposite order) each need a via pair where both layers are
          free. FAIL above "max".
+groups   <board>/routing/groups.json: every routing group, DECLARED before the first of them is
+         routed, each with the count that shows it fits -- so the groups that do not fit come
+         back from the placement as one batch of questions, not one a day from the routing:
+
+           {"groups": [{"id": "R_emmc", "nets": ["^EMMC_", "^SD1_"], "matched": false,
+                        "count": ["tools/route/escape_bound.py", "--board", "{board}", "..."],
+                        "why": "eight data lines out of U1's west side on In2"},
+                       {"id": "R_fan", "nets": ["^DRAM_"], "matched": true,
+                        "covered": "fanout U1 and escape U1 In2.Cu above"}],
+            "pours": ["^GND$", "^VDD_", "^NVCC_"]}
+
+         "nets": patterns on the net's short name. COVERAGE: every net of the board with two
+         or more pads is in exactly one group or matches "pours" (FAIL names the rest).
+         "count": a command (run from kicad_project/, a .py with this interpreter, "{board}"
+         the board folder) that exits 0 when the group fits and non-zero when it does not; it
+         is the group's ONE feasibility count (budget.py): ended at 30 minutes, and no answer
+         by then is FAIL "does not fit". "covered": the test above, or the earlier group, that
+         already proves it, in words (a reviewer reads them). Neither: TODO. A result is kept
+         in routing/prelayout/count_<id>.json and reused until one of the group's own parts
+         moves or the handoff revision changes; --no-count runs nothing and reports the kept
+         results only. The line also names the group's budget tier (budget.py), which the
+         router, the race and the check then count against.
 """
 import argparse
+import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "place"))
 import place as P  # noqa: E402
+import budget  # noqa: E402  (tools/route: the tiers, and each group's one feasibility count)
 
 LINES = []
 
@@ -254,10 +280,125 @@ def row_check(B, c):
 
 # -- main ----------------------------------------------------------------------
 
+# -- groups ---------------------------------------------------------------------
+
+def run_count(g, board, sig, keep):
+    """One group's feasibility count -> (status, why).  Logged as the group's count (budget.py)."""
+    cmd = [str(x).replace("{board}", str(board)) for x in g["count"]]
+    if cmd and cmd[0].endswith(".py"):
+        cmd = [sys.executable] + cmd
+    hb = budget.home(board)
+    tok = None
+    if hb is not None:
+        try:
+            tok = budget.gate(board, g["id"], g["_nets"], kind="count", matched=bool(g.get("matched")),
+                              label="prelayout: " + " ".join(cmd[1:])[:140])
+        except SystemExit:                                # its one count on this placement is used: say what it said
+            c = next((e for e in reversed(budget.read(hb)["groups"].get(g["id"], {}).get("events", []))
+                      if e["kind"] == "count"), None)
+            if c and c.get("s") is not None:
+                return ("PASS" if c.get("ok") else "FAIL",
+                        f"counted already on this placement ({c.get('label', '')}): {c.get('result', '')}")
+            return "TODO", "its one feasibility count on this placement is running or died without an answer"
+    t0 = time.time()
+    env = dict(os.environ, **{budget.ENV_IN: "count"})
+    try:
+        r = subprocess.run(cmd, cwd=str(budget.KP), capture_output=True, text=True, timeout=budget.COUNT_S, env=env)
+        rc, out = r.returncode, (r.stdout or "") + (r.stderr or "")
+    except subprocess.TimeoutExpired:
+        rc, out = None, ""
+    except OSError as e:
+        rc, out = 127, str(e)
+    secs = time.time() - t0
+    if rc is None:
+        status, why = "FAIL", f"no answer in {budget.dur(budget.COUNT_S)}: it does not fit"
+    else:
+        tail_ = last(out, r"\S")[:200]
+        status = "PASS" if rc == 0 else "FAIL"
+        why = (f"fits ({budget.dur(secs)})" if rc == 0 else f"does not fit (exit {rc}, {budget.dur(secs)})") \
+            + (f": {tail_}" if tail_ else "")
+    if tok:
+        tok.end(why, ok=status == "PASS")
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    keep.write_text(json.dumps(dict(sig=sig, status=status, why=why, s=round(secs, 1), cmd=cmd), indent=1) + "\n")
+    return status, why
+
+
+def groups_test(B, board, waive, no_count):
+    gf = board / "routing" / "groups.json"
+    if not gf.exists():
+        if not waive("groups", "board"):
+            say("groups", "board", "TODO", "no routing/groups.json: the routing groups are not declared, so none has "
+                "a feasibility count and none a budget tier (this file's docstring, \"groups\")")
+        return
+    G = json.loads(gf.read_text())
+    pads = defaultdict(int)
+    for f in B.fps.values():
+        for p in f.Pads():
+            if p.GetNetname():
+                pads[budget.short(p.GetNetname())] += 1
+    nets = sorted(n for n, k in pads.items() if k >= 2)
+    pours = [re.compile(x) for x in G.get("pours", [])]
+    owner = defaultdict(list)
+    groups = [g for g in G.get("groups", []) if g.get("id")]
+    for g in groups:
+        pats = [re.compile(x) for x in g.get("nets", [])]
+        g["_nets"] = [n for n in nets if any(x.search(n) for x in pats)]
+        for n in g["_nets"]:
+            owner[n].append(g["id"])
+    free = [n for n in nets if n not in owner and not any(x.search(n) for x in pours)]
+    twice = sorted(n for n, o in owner.items() if len(o) > 1)
+    if not waive("groups", "coverage"):
+        if free or twice:
+            say("groups", "coverage", "FAIL",
+                "; ".join(x for x in (
+                    f"{len(free)} net(s) in no group and not a pour: {', '.join(free[:12])}{' ...' if len(free) > 12 else ''}"
+                    if free else "",
+                    f"{len(twice)} net(s) in two groups: " + ", ".join(f"{n} ({'/'.join(owner[n])})" for n in twice[:8])
+                    if twice else "") if x))
+        else:
+            say("groups", "coverage", "PASS", f"{len(owner)} net(s) in {len(groups)} group(s), "
+                f"{len(nets) - len(owner)} pour net(s)")
+    hb = budget.home(board) or board
+    todo = []
+    for g in groups:
+        tier, basis = budget.classify(hb, g["_nets"], bool(g.get("matched")))
+        g["_tier"] = f"tier {tier} ({basis})"
+        if waive("groups", g["id"]):
+            continue
+        if not g["_nets"]:
+            say("groups", g["id"], "FAIL", "its patterns match no net of the board")
+        elif g.get("covered") and not g.get("count"):
+            say("groups", g["id"], "PASS", f"{g['_tier']}; covered by: {g['covered']}")
+        elif not g.get("count"):
+            say("groups", g["id"], "TODO", f"{g['_tier']}; neither a \"count\" that shows it fits nor \"covered\"")
+        else:
+            sig = hashlib.sha256(json.dumps([g["count"], budget.handoff_rev(hb),
+                                             budget.parts_sha(board, g["_nets"])]).encode()).hexdigest()[:16]
+            keep = board / "routing" / "prelayout" / f"count_{re.sub(r'[^A-Za-z0-9_.-]', '_', g['id'])}.json"
+            try:
+                K = json.loads(keep.read_text())
+            except (OSError, ValueError):
+                K = {}
+            if K.get("sig") == sig:
+                say("groups", g["id"], K["status"], f"{g['_tier']}; {K['why']} (kept: the group's parts have not moved)")
+            elif no_count:
+                say("groups", g["id"], "TODO", f"{g['_tier']}; not counted on this placement (--no-count)")
+            else:
+                todo.append((g, sig, keep))
+    if todo:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(4, (os.cpu_count() or 2) // 4))) as pool:
+            for (g, _s, _k), (status, why) in zip(todo, pool.map(lambda t: run_count(t[0], board, t[1], t[2]), todo)):
+                say("groups", g["id"], status, f"{g['_tier']}; {why}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--board", help="boardN, the folder name or a path (default: this session's board)")
     ap.add_argument("--spec", default="routing/prelayout.json")
+    ap.add_argument("--no-count", action="store_true",
+                    help="groups: run no feasibility count; report the kept results only (TODO where there is none)")
     a = ap.parse_args()
     board = Path(P.board_dir_arg(a.board))
     sp = Path(a.spec) if Path(a.spec).is_absolute() else board / a.spec
@@ -372,6 +513,8 @@ def main():
             continue
         say("bundles", tgt, "PASS" if inv <= c.get("max", 0) else "FAIL",
             f"{inv} inversion(s) among {n} nets, max {c.get('max', 0)}" + (f" ({c['why']})" if c.get("why") else ""))
+
+    groups_test(B, board, waive, a.no_count)
 
     n_fail, n_todo = LINES.count("FAIL"), LINES.count("TODO")
     if n_fail or n_todo:

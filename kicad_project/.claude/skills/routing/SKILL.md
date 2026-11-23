@@ -55,6 +55,15 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   line** (`14_fab.md`, `10_layout.md` #N), and the prose sections with what the
   table cannot say. `route.py rules` prints what is active. A rule the handoff
   does not state is a QUESTIONS.md item, not a row you invent.
+- **Declare the groups, and count each before the first is routed**:
+  `routing/groups.json` (format in `prelayout.py`'s docstring) names every
+  group, the nets it holds (patterns), `"matched"` for a length-matched bus,
+  and the `"count"` command that shows it fits -- or `"covered"`, naming the
+  prelayout test that already proves it. `prelayout.py` runs the counts side
+  by side, each ended at 30 minutes (no answer is "it does not fit"), and
+  fails a net that is in no group. **Every group that does not fit is a
+  question now, all of them in one batch** -- not one a day, found by its
+  router. The file also gives every later run its group and its budget (§1).
 - Fill `ROUTING_PLAN.md` §1 (layer roles, class table) from the same lines,
   and §3 (the groups, criticality first: the most sensitive nets
   get first pick of the copper, then fanout, then bulk, then pours).
@@ -105,6 +114,42 @@ Tools: `tools/route/` (read `tools/route/README.md`), every script run as
   - Ask at placement, not at R5.
 
 ## 1. One group
+
+**Every group has an effort budget, and the tools count it.** Its tier is
+read from its nets -- A (up to 12 nets, no BGA ball, no pair): 2 rounds,
+45 min; B (up to 40 nets, a pair, up to 12 balls): 3 rounds, 2 h; C (an
+escape of over 12 balls, a matched bus, over 40 nets): 4 rounds, 6 h -- and
+one feasibility count of 30 minutes for any group. A round is one router run
+with its checks (three), or one race of up to six variants; runs of one group
+in flight together are one round. `netgroup.py`, `race.py`, `route.py check`
+and `bgwait.py run --group` count by themselves, on scratch copies too, and
+the group is its NETS: a new spec name or a new seed is the same budget.
+`route.py budget` shows where every group stands; read it at the start of a
+turn and before a worker is briefed.
+
+- **Before the first run, say what you expect to block it** and what you
+  would change if it does. A run that confirms it is the last run: declare
+  the wall then, with rounds in hand.
+- **`BUDGET SPENT` (exit 76) means the design has to change, not the spec.**
+  The one command left is `route.py wall <group> --blocks "…" --change
+  "placement: …" [--change "rule: …"] [--change "swap: …"] [--change
+  "layer: …"]`: it writes the question from the ledger -- every round, how
+  it ended, the changes cheapest first -- and prints the ring. Ring it (or
+  tell the user, relay off) and **take the next group**; the tools refuse
+  this one until a handoff revision answers that question or its parts move.
+  A second wall of the same group is the user's.
+- **A job for a group carries `--group`** (`bgwait.py run --name N --group
+  routing/X_spec.json -- …`), a what-if count `--group X --count` (one per
+  placement, ended at 30 minutes). A count that does not answer in that
+  time has answered.
+- **A worker gets the group's budget, not its own**: `route.py budget
+  <group> --worker "<its task>"` prints the lines for its brief -- what is
+  left, and that it stops at the first `BUDGET SPENT` and hands back what
+  blocks. Never brief a second worker on a group whose first came back
+  without copper: that is a wall.
+- **Copper before counts.** A group that is ready (its pads have via sites,
+  §0) is routed and applied before another group's what-if is started; the
+  day's measure is nets applied (`route.py budget`, "on copper"), not runs.
 
 1. **Read** the group's rules: the guide's sections that touch it, its
    `10_layout.md` items, its `02_nets.md` entries, its class rows. A bus head,

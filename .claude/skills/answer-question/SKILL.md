@@ -57,6 +57,20 @@ same problem that adds one more allowance is the failure this prevents:
 nine terms on one bus went out one at a time, each with its own two-hour
 count and its own decision, over five days.
 
+**A `WALL` question is one the board's tools wrote** (`route.py wall`, when
+a routing group's effort budget was spent or a round showed what blocks it:
+`kicad_project/tools/route/budget.py`). It carries the ledger -- every round
+and how it ended -- what blocks, and the changes that would unblock it in
+the order of their cost: placement, rule, swap, layer. Answer it as a
+ladder, in ONE revision, under the wall's own `Qn` (the board's tools reopen
+the group only when a handoff revision after the wall carries that heading
+in `07_answers.md`, or one of the group's parts moves): grant alone the
+rungs the facts decide (a placement the handoff already allows, a fact that
+was missing), take the rest to the user. **A second wall of one group** (its
+title says so) **is the user's whatever it asks** -- two budgets spent on one
+group is a design problem. Never answer a wall with "try again with …": an
+answer that changes no input reopens nothing, by design.
+
 **A question about a route** (pair order, which side a bus leaves, a
 crossing, an escape) is never answered from pin order alone. Before an
 option goes into the handoff, measure it yourself on a snapshot of the board

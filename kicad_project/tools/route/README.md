@@ -1385,6 +1385,14 @@ connectors joined by 4+ point-to-point nets), so leaving one out of
 `routing/prelayout.json` makes it TODO, not skipped. The spec is in the
 docstring.
 
+**And the routing groups, declared and counted before the first is routed** (`groups`): every net with
+two or more pads belongs to one group of `routing/groups.json` or matches its `"pours"`, and every group
+carries the `"count"` command that shows it fits (ended at 30 minutes: no answer is FAIL) or `"covered"`
+naming the test that already proves it. The groups that do not fit then come back from the placement as
+one batch of questions, not one a day from the routing. A kept result is reused until one of the group's
+parts moves; `--no-count` reports the kept results only. The same file gives each run its group and its
+budget (`budget.py`, below).
+
 - **The via-site model** (a fine-pitch row): the links to a deeper via row
   pass between the vias above, so k rows space a row's vias
   `max(pad + clearance, pad + (k-1) * width + k * clearance)` apart, one via
@@ -1697,6 +1705,57 @@ no site prints what blocks the least-blocked site in its disc (the pad, via, tra
   and its pocket removes the pour there; the pin reaches the net on the other layers. Each hole changes
   the fill beside it, so gate again until DRC is quiet (board2: J5 S1, J_MAIN1 21 / 23 / 27 / 29).
 
+## `budget.py` — what a group may cost before the DESIGN has to change
+
+A group that will not close after a few honest tries is not short of tries: a part, a rule, a pin or a
+layer is in its way. So every group has an effort budget set by its size, **the tools count against it by
+themselves**, and when it is spent they refuse the group until a question has been asked and the design
+has moved. `budget.py`'s docstring is the manual; in short:
+
+| tier | what puts a group in it (read from its nets, never chosen) | rounds | time |
+|---|---|---|---|
+| A | up to 12 nets, no BGA ball, no pair, nothing matched | 2 | 45 min |
+| B | up to 40 nets, or a pair, or up to 12 balls of a BGA | 3 | 2 h |
+| C | over 12 BGA balls (an escape), a matched bus (`"matched": true`), or over 40 nets | 4 | 6 h |
+| any | ONE feasibility count per placement and handoff revision | — | 30 min: no answer is "it does not fit" |
+
+- **A round** is one router run with its checks (the first, and two after a hand fix), or one `race.py`
+  call of up to six variants; router runs of one group in flight together are one round, up to six. A
+  group drawn by hand: its first check opens the round. **Time** is the wall-clock of the group's router
+  runs, races, checks and `bgwait.py run --group` jobs.
+- **What counts, with no flag to set:** `netgroup.py` (its `--timeout` is cut to what the group has left),
+  `race.py`, `route.py check`, `bgwait.py run --group G` (one round and its time, however many scripts
+  it runs; a router run inside it is not charged twice; six to a round), `bgwait.py run --group G
+  --count` and `prelayout.py`'s `count` (the feasibility count, ended at 30 min). On a scratch copy
+  inside the board folder too: it is charged to the board. **Never counted or refused:** `apply`, `rip`,
+  `audit`, `status`, `render`.
+- **Which group a run belongs to is decided by its nets, not its name**: `routing/groups.json`'s entry
+  that holds at least half of them, else the ledger group that does. A new spec name, a new seed or
+  `--only` half of the nets is the same group and the same budget.
+- **`route.py budget`** prints every group (tier, rounds, time, nets on copper, state) and the hours of
+  background jobs charged to no group; `route.py budget <group>` its record event by event;
+  `route.py budget routing/X_spec.json` the tier a spec would get; `route.py budget <group> --worker
+  "<task>"` logs a worker for the group and prints the two lines its brief must carry.
+  `route.py budget routing/X_spec.json --before "N: what"` enters N rounds the group was given before the
+  ledger existed (a board that takes the budget up mid-routing); it only ever adds.
+- **`BUDGET SPENT` (exit 76)** is not an error to work round. The one command left is
+
+      tools/kpy tools/route/route.py wall <group> --blocks "<the parts, vias, nets in the way, with numbers>" \
+          --change "placement: ..." [--change "rule: ..."] [--change "swap: ..."] [--change "layer: ..."]
+
+  which writes the next `## Qn — WALL <group>` into `QUESTIONS.md` from the ledger (every round and how
+  it ended), the changes in the order of what they cost -- placement, rule, swap (a pin or a part),
+  layer -- and prints the ring line. Then the next group. **Declare the wall before the budget is spent
+  when a round has shown the cause**: the budget is a ceiling, not a target.
+- **It reopens only when the input changes**: a handoff revision after the wall answers its `Qn`, or one
+  of the group's own parts moves on the board. A second wall of one group is the user's. A group with
+  every net on copper is finished; later work on it (a review's fix) is a new budget by itself.
+- The ledger is `<board>/routing/ledger.json`, written by the tools under a lock and quoted by the wall:
+  never edited, never copied back from a scratch copy. A run on a scratch copy is charged to the real
+  board wherever the copy is kept: inside the board folder by its path, outside `kicad_project/` (a cache
+  folder) by the board's own file name in it and the session's `HW_BOARD`. `HW_BUDGET_IN` belongs to `race.py` and
+  `prelayout.py`; set by hand it is a skipped gate.
+
 ## Background runs: `tools/bgwait.py` — started and waited on by pid, with a time limit
 
 A run that takes minutes is started in the background and waited on with `tools/bgwait.py` (board-free,
@@ -1707,7 +1766,14 @@ either session goes through it -- but the router is where the waiting happens:
     python3 tools/bgwait.py wait R2_a R2_b --timeout 100     # 0 all ended with exit 0 | 1 one failed | 124 still running
     python3 tools/bgwait.py status                           # every job of this session, without waiting
     python3 tools/bgwait.py kill R2_b                        # its whole process group
+    python3 tools/bgwait.py run --name emmc_c1 --group routing/R_emmc_spec.json -- tools/kpy build/emmc_try.py   # charged to the group
+    python3 tools/bgwait.py run --name emmc_fit --group R_emmc --count -- tools/kpy build/emmc_sites.py         # its ONE feasibility count: ended at 30 min
 
+- **A job that works for a routing group says so: `--group <id | its spec | its plan>`.** It is then one
+  round of that group's effort budget and its wall-clock time (`budget.py`, above), refused with exit 76
+  when the group is spent; `--count` makes it the group's one feasibility count, ended at 30 minutes.
+  A job of no group still runs, and is listed by `route.py budget` as time outside every group: a
+  what-if for one group started without `--group` is the day that produced the budget.
 - **`run` makes the job a (pid, start time) pair with a recorded exit code.** The command runs detached in
   its own session, stdout and stderr in `<jobs>/NAME.log` (or `--log`), Python unbuffered; a wrapper
   records the exit code in `<jobs>/NAME.json`, so `wait` reports it long after the process is gone. The

@@ -155,7 +155,12 @@ order inversions against what its corridor's free layers can take. These
 are the tests board1 and board2 learned to run after copper was laid (seven
 fanout rounds, 48 inversions under a pour, a contact with no via site); a
 FAIL here is a placement change or a question, decided before the first
-group. **Every `PRELAYOUT` line goes into the placement review request** (milestones), and into
+group. **And the routing groups themselves** (`groups`): `routing/groups.json`
+declares every group, its nets and the count that shows it fits on THIS
+placement, each count ended at 30 minutes; a net in no group, a group with no
+count and a count that says no are all failures here -- so every group that
+cannot be routed as placed is known, and asked about, together, while parts
+can still move. **Every `PRELAYOUT` line goes into the placement review request** (milestones), and into
 `ROUTING_PLAN.md` before the first group (release).
 
 ## 2. Spacing

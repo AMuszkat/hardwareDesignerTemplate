@@ -99,6 +99,10 @@ re-solving one problem have put nothing on copper, ask with the count you
 have (`QUESTIONS.md`): a rule that blocks the work is a handoff defect, and
 the next term is concept's (or the user's) to move, not yours to keep
 searching for.
+**The tools hold that line now: every routing group has an effort budget
+by its size (`tools/route/budget.py`; `route.py budget`), and at `BUDGET
+SPENT` the one move is `route.py wall <group>` -- the question, written from
+the ledger -- and then the next group.**
 
 **And the question carries the next terms, already counted.** You know what
 binds -- a spacing, a layer the nets may not use, a part that cannot shift,

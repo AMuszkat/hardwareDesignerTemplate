@@ -35,6 +35,9 @@ can be pasted into a pull request. What a name is:
   script's own source in the project; a script that is no tool of the
   repository is `other script`, unnamed; anything else is the program
   (`grep`, `git status`);
+- a routing group's id and tier, from each board's `routing/ledger.json` (section
+  11: rounds and compute hours against the nets that put on copper -- the route
+  tools' own count, `kicad_project/tools/route/budget.py`);
 - from a line between sessions, its protocol tokens only: `board1`, `RV7`,
   `PASS`, `Q12`, `pcb`, a revision number, a must-fix count.
 

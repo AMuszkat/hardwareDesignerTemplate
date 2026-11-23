@@ -88,6 +88,8 @@ KP = TOOLS.parent
 sys.path.insert(0, str(TOOLS))
 import boardsel      # noqa: E402  (which folder --board means, and the other-board wall)
 import par           # noqa: E402  (the core-count rule)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import budget        # noqa: E402  (the group's effort budget: a race is one round per six variants)
 
 KPY = TOOLS / "kpy"
 NETGROUP = TOOLS / "route" / "netgroup.py"
@@ -427,7 +429,21 @@ def main(argv=None):
             except (IndexError, ValueError):
                 die(f"{arg!r}: --timeout needs seconds")
         variants.append(dict(order=k, spec_arg=spec_arg, spec=spec, opts=opts, plan_rel=plan_rel, timeout=timeout,
-                             label=label_of(spec_arg, toks[1:], taken)))
+                             label=label_of(spec_arg, toks[1:], taken), group=S.get("group") or spec.stem,
+                             nets=list(S.get("nets", {})), matched=bool(S.get("matched"))))
+
+    # The group's budget: a race is ONE round per six variants, refused when the group is spent
+    # (exit 76, budget.py); no variant's --timeout runs past what the group has left.
+    tok = budget.gate(board, variants[0]["group"], sorted({n for v in variants for n in v["nets"]}), kind="race",
+                      matched=any(v["matched"] for v in variants), variants=len(variants),
+                      limit=1.5 * max(v["timeout"] for v in variants) + 60 + a.check_timeout,
+                      label=" | ".join(v["label"] for v in variants)[:160])
+    if tok:
+        for v in variants:
+            if tok.remaining < v["timeout"]:
+                v["timeout"] = max(1.0, tok.remaining)
+                if "--timeout" in v["opts"]:
+                    v["opts"][v["opts"].index("--timeout") + 1] = f"{v['timeout']:g}"
 
     if a.out:
         race_dir = Path(a.out).resolve()
@@ -445,6 +461,7 @@ def main(argv=None):
     if a.jobs <= 0 and sys.platform == "darwin" and not os.environ.get("HW_JOBS"):
         jobs = max(1, min(len(variants), cores - 1))     # par's macOS rule is about fork(); these are processes
     env = dict(os.environ, HW_JOBS=str(max(1, (cores - 1) // jobs)), PYTHONUNBUFFERED="1")
+    env[budget.ENV_IN] = "race"                          # the variants' runs and checks are this race's round
     before = tree_sha(board)
     note(f"{len(variants)} variant(s) of {board.name}, {jobs} at a time, in {race_dir}")
     t0 = time.monotonic()
@@ -466,6 +483,9 @@ def main(argv=None):
         board=str(board), wall_s=round(wall, 1), jobs=jobs, winner=win["variant"] if win else None,
         winner_passed=passed, board_changed_during_race=moved, results=results), indent=1) + "\n")
 
+    budget.note((f"winner {win['variant']}: check {win['check']}, {win['vias']} vias" if win and win["converged"]
+                 else "no variant converged: " + "; ".join(f"{r['variant']} {r['state']}" for r in results)[:300]),
+                ok=passed)
     print(table(results))
     print(f"\n{len(results)} variant(s), {jobs} at a time: {wall:.1f} s wall-clock, "
           f"{sum((r['route_s'] or 0) + (r['check_s'] or 0) for r in results):.1f} s of route + check in all. "

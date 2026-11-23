@@ -190,6 +190,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import place as P  # noqa: E402
 import maze  # noqa: E402
 import origin  # noqa: E402  (the plan's origin record, and the retiring of an older plan)
+import budget  # noqa: E402  (the group's effort budget: counted here, refused when spent)
 import par  # noqa: E402  (tools/par.py, on the path maze put it)
 from corners import straighten  # noqa: E402
 
@@ -282,6 +283,16 @@ def main():
     lack = [k for k in ("window", "nets", "why", "plan") if k not in S]
     if lack:
         sys.exit(f"{spec_path.name}: the spec lacks {lack} (tools/route/README.md)")
+    # The group's budget, BEFORE anything is retired or routed: a spent group is refused here
+    # (exit 76, budget.py), and --timeout never runs past what the group has left.
+    only_ = {n.strip() for n in a.only.split(",") if n.strip()}
+    tok = budget.gate(a.board, S.get("group") or spec_path.stem,
+                      [n for n in S["nets"] if not only_ or budget.short(n) in only_ or n in only_],
+                      kind="run", matched=bool(S.get("matched")), limit=a.timeout,
+                      label=spec_path.name + (f" --only {a.only}" if a.only else ""))
+    if tok and (not a.timeout or tok.remaining < a.timeout):
+        a.timeout = max(1.0, tok.remaining)
+        print(f"budget: --timeout {a.timeout:.0f} s -- what the group has left")
     # An older plan at the output path goes aside NOW, before anything can fail or be killed:
     # whatever ends this run, the path holds this run's plan or nothing (origin.py, 3).  Not
     # when the spec's "plane" reads its zone from that very file -- then the file is an input.
@@ -1513,6 +1524,10 @@ def main():
                 write_partial(last, bad, stage, itn[0], reach_rows, state, **found)
                 print(f"wrote {pp} (the last iteration, overlaps and all)")
             no_plan()
+            over = sorted(n for n, v in bad.items() if v)
+            budget.note(f"{state} (exit {code}) at leg {stage + 1}, iteration {itn[0]}: {len(over)} net(s) still "
+                        f"overlap" + (f" ({', '.join(over[:6])}{' ...' if len(over) > 6 else ''})" if over else ""),
+                        ok=False)
             return code
         for n, (runs, vias) in paths.items():
             out.setdefault(n, []).append((runs, vias))
@@ -1668,6 +1683,7 @@ def main():
     if pp.exists():
         pp.unlink()                    # an earlier run's partial would read as this run's state
         print(f"removed {pp.name}: the plan supersedes it")
+    budget.note(f"plan written: {len(plan['tracks'])} track run(s), {len(plan['vias'])} via(s)", ok=True)
     return 0
 
 

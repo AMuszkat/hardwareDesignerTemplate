@@ -115,6 +115,7 @@ import checks as CK                                         # noqa: E402  (tools
 import origin                                               # noqa: E402  (tools/route: a plan's origin record)
 import areaclear as AC                                      # noqa: E402  (tools/route: clearance past a relaxed area)
 import drccache                                             # noqa: E402  (tools/place)
+import budget                                               # noqa: E402  (tools/route: a group's effort budget)
 
 
 def group_of(plan_path, plan):
@@ -1336,6 +1337,9 @@ def pour_report(Bx, board):
     return r
 
 
+VERDICT = [None]          # the last check's verdict line, for the group's ledger (budget.py)
+
+
 def cmd_check(a, quiet=False, gate=True):
     B = RBoard(a.board)
     if gate:
@@ -1503,8 +1507,9 @@ def cmd_check(a, quiet=False, gate=True):
         print(f"  RULE {b}")
     new = real
     ok = not new and not bad
+    VERDICT[0] = "CHECK PASS" if ok else f"CHECK FAIL ({len(new)} new DRC, {len(bad)} rule)"
     if not quiet:
-        print("CHECK PASS" if ok else f"CHECK FAIL ({len(new)} new DRC, {len(bad)} rule)")
+        print(VERDICT[0])
     return 0 if ok else 1
 
 
@@ -1944,8 +1949,19 @@ def cmd_audit(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["status", "check", "apply", "rip", "render", "angles", "edge", "audit", "rules"])
-    ap.add_argument("plan", nargs="?", help="check/apply: plan JSON; rip/render: group name")
+    ap.add_argument("command", choices=["status", "check", "apply", "rip", "render", "angles", "edge", "audit", "rules",
+                                        "budget", "wall"])
+    ap.add_argument("plan", nargs="?", help="check/apply: plan JSON; rip/render/wall: group name; budget: nothing "
+                    "(every group), a group, or a spec / plan file (the tier it would get)")
+    ap.add_argument("--blocks", help="wall: what is in the way -- the parts, vias, nets, with the numbers")
+    ap.add_argument("--change", action="append", default=[], metavar="'KIND: TEXT'",
+                    help="wall: a change that would unblock the group, KIND one of placement, rule, swap, layer "
+                         "(repeat; listed in that order, the order of their cost)")
+    ap.add_argument("--blocking", action="store_true", help="wall: nothing else on the board can go on without it")
+    ap.add_argument("--worker", metavar="TASK", help="budget GROUP: log a worker sent out for the group and print "
+                    "the lines its brief needs (refused when the group is spent)")
+    ap.add_argument("--before", metavar="'N: WHAT'", help="budget SPEC|PLAN: enter N rounds the group was given "
+                    "before the ledger existed (what they were, how they ended); it only ever adds")
     ap.add_argument("--board", help="boardN, the folder name or a path (default: the folder you "
                     "are in, else this session's board)")
     ap.add_argument("--nets", action="store_true", help="status: list every net with its class")
@@ -1967,10 +1983,27 @@ def main():
             die(f"no such plan: {a.plan}")
     if a.command == "rip" and not a.plan:
         die("rip needs a group name")
+    if a.command == "budget":                                # the effort budget (budget.py's docstring is the manual)
+        f = a.plan and boardsel.in_board(a.board, a.plan)
+        sys.exit(budget.cmd_budget(a.board, str(f) if f and Path(f).is_file() else a.plan, a.worker, a.before))
+    if a.command == "wall":
+        if not a.plan:
+            die("wall needs a group: `route.py budget` lists them")
+        sys.exit(budget.cmd_wall(a.board, a.plan, a.blocks, a.change, a.blocking))
+    tok = None
+    if a.command == "check":                                 # counted against the plan's group; refused when it is spent
+        name_, nets_, matched_ = budget.plan_nets(a.plan)
+        tok = budget.gate(a.board, name_, nets_, kind="check", matched=matched_, label=Path(a.plan).name)
     try:
         rc = {"status": cmd_status, "check": cmd_check, "apply": cmd_apply,
               "rip": cmd_rip, "render": cmd_render, "angles": cmd_angles,
               "edge": cmd_edge, "audit": cmd_audit, "rules": cmd_rules}[a.command](a)
+        if tok:                                              # at its verdict only: a usage error is not a check
+            tok.end(VERDICT[0] or ("CHECK PASS" if rc == 0 else "CHECK FAIL"), ok=rc == 0)
+        if a.command == "apply" and rc == 0:
+            budget.applied(a.board, a.plan)
+        if a.command == "rip" and rc == 0:
+            budget.ripped(a.board, a.plan)
     finally:
         # every exit path, die() included: a kicad-cli DRC started in the background and not waited
         # for is ended and its ~<board>.kicad_pro.lck removed (drccache.abort_all); an orphan was

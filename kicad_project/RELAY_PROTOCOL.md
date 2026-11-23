@@ -174,6 +174,22 @@ the user. One term an answer, each "counted for at most two hours", is nine
 answers and nine decisions for one bus: the count is the machine's work and
 runs side by side, the decision is the user's and is asked once.
 
+**A WALL is that question, written by the tools.** When a routing group's
+effort budget is spent (`tools/route/budget.py`), or a round has shown what
+blocks it, the board's `route.py wall <group>` writes `## Qn — WALL <group>:
+…` into `QUESTIONS.md` from the ledger -- every round and how it ended, what
+blocks, and the changes that would unblock it in the order of their cost:
+placement, rule, swap, layer -- and the board rings `boardN Qn not blocking —
+WALL <group>: …` and takes its next group. The board's tools refuse the
+group until a handoff revision after the wall carries that `## Qn` in
+`07_answers.md`, or one of the group's parts has moved. Concept answers a
+wall as a ladder, in ONE revision: the rungs it may grant alone (a placement
+the handoff already allows, a fact that was missing), and the user's
+decision for the rest. **A group's second wall** (its title says so) **is
+the user's**, whatever it asks: two budgets spent on one group is a design
+problem, and the answer owes a `Decided` row. An answer never restores a
+budget by saying so; only the changed input does.
+
 Escalation is four steps, then **stop**: tell the board session
 `boardN Qn waits on the user`; send the user a `PushNotification` with the
 decision in one line; put the options and a recommendation in the terminal;

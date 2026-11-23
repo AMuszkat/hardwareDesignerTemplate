@@ -8,6 +8,17 @@ limit -- for both session types (the concept side calls it by path).
     python3 tools/bgwait.py kill NAME ...
     python3 tools/bgwait.py clean NAME ... | --all-ended
 
+    python3 tools/bgwait.py run --name N --group GROUP|SPEC|PLAN [--count] [--board boardN] -- <command>
+
+A JOB FOR A ROUTING GROUP SAYS SO.  `--group` (the group's id in
+routing/groups.json or the ledger, or its spec or plan file) charges the job
+to that group's effort budget (tools/route/budget.py): one round and its
+wall-clock time, whatever it runs inside; refused with exit 76 when the group
+is spent (`route.py wall` is then the one move).  `--count` makes it the
+group's ONE feasibility count: ended at 30 minutes, and no answer by then is
+the answer "it does not fit".  A job of no group still runs; one of a minute
+or more is listed by `route.py budget` as time outside every group.
+
 WHY IT EXISTS.  A board session started three router runs in the background
 and waited with `while pgrep -f "netgroup.py ... R2_emmc_"; do sleep 20; done`.
 `pgrep -f` matches whole command lines and the loop's own shell carried that
@@ -388,6 +399,7 @@ class Steps:
         self.leader, self.every = leader, every
         self.rows = {}                         # label -> [wall s, cpu s, {(pid, start)}]
         self.last = {}                         # (pid, start) -> own cpu s at the last sample
+        self.waiters = set()                   # (pid, start) that has had a child: a shell, a loop script
         self.t = time.monotonic()
 
     def sample(self):
@@ -400,15 +412,22 @@ class Steps:
                 if s and s[2] == self.leader and s[0] not in "ZX":
                     procs[int(name)] = s
         parents = {s[1] for s in procs.values()}
+        self.waiters |= {(p, procs[p][4]) for p in parents if p in procs}
         seen, working = {}, set()
-        for p, (_state, _ppid, _sess, cpu, start) in procs.items():
+        for p, (_state, ppid, _sess, cpu, start) in procs.items():
             key = (p, start)
             dcpu = max(0.0, cpu - self.last.get(key, 0.0))
             seen[key] = cpu
-            label = step_label(_argv(p))
+            argv = _argv(p)
+            label = step_label(argv)
             row = self.rows.setdefault(label, [0.0, 0.0, set()])
             row[1] += dcpu
-            if p not in parents or dcpu >= 0.5 * dt:
+            # A leaf is the program running -- except a shell caught BETWEEN two children (it has
+            # had one, has none in this sample) and a fork caught before its exec (first seen, its
+            # parent's command line still): neither is a step unless it burns the CPU itself.
+            between = key in self.waiters
+            unexeced = key not in self.last and ppid in procs and argv == _argv(ppid)
+            if (p not in parents and not between and not unexeced) or dcpu >= 0.5 * dt:
                 working.add(label)
                 row[2].add(key)
         for label in working:
@@ -754,6 +773,47 @@ def scope_prefix(name, total):
 # commands
 # ---------------------------------------------------------------------------
 
+def _budget():
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "route"))
+    import budget                                            # tools/route/budget.py: standard library only
+    return budget
+
+
+def budget_gate(a):
+    """`run --group G [--count]`: the job is charged to routing group G's effort budget
+    (tools/route/budget.py) -- one round, its wall-clock time -- and refused when the group
+    is spent.  --count: the group's ONE feasibility count, ended at its 30 minutes."""
+    if a.count and not a.group:
+        die("run: --count goes with --group G: whose feasibility count is it?")
+    if not a.group:
+        return None
+    B = _budget()
+    name, nets, matched, bdir = a.group, [], False, None
+    if a.board:                                              # a folder, or boardN
+        hit = [Path(a.board)] if Path(a.board).is_dir() else sorted(KP.glob(a.board + "_*"))
+        if not hit:
+            die(f"run --board {a.board}: no such board folder")
+        bdir = hit[0].resolve()
+    # a spec or a plan names the group, its nets and its board: as typed, else inside the board
+    # folder -- the way netgroup.py and route.py read the same argument
+    f = next((c for c in (Path(a.group), (bdir or B.session_board() or Path(".")) / a.group) if c.is_file()), None)
+    if f is not None:
+        name, nets, matched = B.plan_nets(str(f))
+        bdir = bdir or B.board_of(str(f))
+    elif a.group.endswith(".json") or "/" in a.group:
+        die(f"run --group {a.group}: no such spec or plan (looked here and in the board folder); "
+            "a group's id has no path: `route.py budget` lists them")
+    bdir = bdir or B.session_board()
+    if bdir is None:
+        die("run --group: which board? run it from the board folder, or add --board boardN")
+    jid = f"{a.name}@{int(time.time())}"
+    tok = B.gate(bdir, name, nets, kind="count" if a.count else "job", matched=matched,
+                 label=f"{a.name}: " + " ".join(a.cmd)[:140], jid=jid)
+    if not tok:
+        return None                                          # a board with no budget (a fixture)
+    return dict(tok.detach(), jid=jid, count=bool(a.count))
+
+
 def cmd_run(a):
     if not a.cmd:
         die("run: no command (bgwait.py run --name NAME -- cmd ...)")
@@ -777,8 +837,9 @@ def cmd_run(a):
         return 75
     log = Path(a.log).resolve() if a.log else d / f"{a.name}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    bud = budget_gate(a)                                     # --group: counted, or refused (exit 76), before it starts
     save(jf, {"name": a.name, "cmd": a.cmd, "cwd": os.getcwd(), "log": str(log),
-              "created": time.time(), "pid": None})
+              "created": time.time(), "pid": None, **({"budget": bud} if bud else {})})
     scope = scope_prefix(a.name, total)
     if scope:
         job0 = load(jf)
@@ -821,6 +882,12 @@ def cmd_exec(jobfile):
     job.update(pid=pid, start=start_token(pid), started=time.time())
     save(jobfile, job)
     env = dict(os.environ, PYTHONUNBUFFERED="1")
+    bud = job.get("budget")
+    if bud:                                              # the route tools the command runs know whose time this is
+        B = _budget()
+        env["HW_BUDGET_BOARD"] = bud["board"]
+        env[B.ENV_IN if bud["count"] else B.ENV_JOB] = "count" if bud["count"] else bud["jid"]
+        B.adopt(bud["board"], bud["key"], bud["event"], pid)
 
     def first_to_go():                                   # in the child, before exec: every process of the job inherits it
         try:
@@ -872,6 +939,24 @@ def cmd_exec(jobfile):
             signal.signal(s, forward)
         stop, th = watch() if LINUX else (None, None)
         peak[0] = rss_gb([q for q in session_pids(pid) if q != pid]) if LINUX else 0.0
+        if bud and bud["count"]:                         # a feasibility count has a limit: no answer in it IS the answer
+            try:
+                rc = child.wait(timeout=float(bud["limit"]))
+            except subprocess.TimeoutExpired:
+                job["budget_limit"] = True
+                print(f"bgwait: the feasibility count reached its {bud['limit']:g} s: ended. No answer in that "
+                      "time is the answer \"it does not fit\" (tools/route/budget.py).", flush=True)
+                for sig, grace in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+                    for q in [q for q in session_pids(pid) if q != pid] or [child.pid]:
+                        try:
+                            os.kill(q, sig)
+                        except OSError:
+                            pass
+                    try:
+                        child.wait(timeout=grace)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
         rc = child.wait()
         if stop:
             stop.set()
@@ -888,6 +973,25 @@ def cmd_exec(jobfile):
     if steps and steps.table():
         job["steps"] = steps.table()
     save(jobfile, job)
+    try:                                                 # the group's ledger; a job of no group is on the record too
+        B = _budget()
+        secs = job["ended"] - job["started"]
+        if bud:
+            last = ""
+            try:
+                with open(job["log"], "rb") as lf_:
+                    lf_.seek(max(0, os.path.getsize(job["log"]) - 4000))
+                    lines = [x.strip() for x in lf_.read().decode("utf-8", "replace").splitlines() if x.strip()]
+                    last = lines[-1][:200] if lines else ""
+            except OSError:
+                pass
+            res = (f"no answer in {bud['limit']:g} s: it does not fit" if job.get("budget_limit")
+                   else f"exit {job['exit']}" + (f": {last}" if last else ""))
+            B.close(bud["board"], bud["key"], bud["event"], secs, res, ok=job["exit"] == 0 and not job.get("budget_limit"))
+        else:
+            B.ungrouped(job["name"], job["cmd"], secs)
+    except Exception as e:                               # the ledger is a record, never the job's risk
+        print(f"bgwait: budget record not written: {e}", flush=True)
     try:
         os.unlink(sfile)                                 # the running job's table: the record holds the last one now
     except OSError:
@@ -1128,6 +1232,12 @@ def main(argv=None):
     p = sub.add_parser("run", help="start a command detached; record its pid, start time and exit code")
     p.add_argument("--name", required=True, help="the job's name (letters, digits, . _ -)")
     p.add_argument("--log", help="stdout + stderr go here (default: <jobs>/NAME.log)")
+    p.add_argument("--group", metavar="GROUP|SPEC|PLAN",
+                   help="the routing group this job works for: charged to its effort budget, refused when it is "
+                        "spent (tools/route/budget.py). A group id, or its spec / plan file")
+    p.add_argument("--count", action="store_true",
+                   help="with --group: the group's ONE feasibility count -- ended at 30 min, and no answer is 'no'")
+    p.add_argument("--board", help="with --group: boardN or a board folder (default: this session's board)")
     p.add_argument("cmd", nargs=argparse.REMAINDER, help="-- the command and its arguments")
     p.set_defaults(fn=cmd_run)
     p = sub.add_parser("wait", help="wait by pid until all ended, or the timeout (exit 124)")

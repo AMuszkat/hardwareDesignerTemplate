@@ -41,10 +41,13 @@ repository (nothing here is written; the copy is deleted unless --keep):
              partial every iteration, R1), route.py check twice (the second
              runs kicad-cli once: the DRC cache, R6), route.py audit, and the
              review snapshot --kind pcb serial and parallel (same SUMMARY rows,
-             the wall clock of each: V4)
+             the wall clock of each: V4); and the effort budget: that run and
+             its checks are one round in routing/ledger.json (budget.py)
   prelayout  tools/route/prelayout.py on tests/fixture_pcb.py --kind prelayout:
              the in-pad BGA fanout, the via-site shortage and the reversed
-             bundle must each FAIL before any copper (R7)
+             bundle must each FAIL before any copper (R7); and the routing
+             groups: undeclared is TODO, a declared group's count that fits
+             PASSes, one that does not FAILs
   vias       tools/copper/viafix.py on tests/fixture_pcb.py --kind vias, with
              and without --push, each with its scan cache on and off
              (HW_VF_CACHE=0): the same plan and report either way (R5), every
@@ -739,6 +742,18 @@ def stage_pcb(copy, board, quick):
     if "AUDIT " not in out:
         ok = False
         notes.append("audit: " + tail(out, 2))
+    # the effort budget (tools/route/budget.py): the router run and its two checks are ONE round
+    # of the group, counted by the tools themselves in the board's routing/ledger.json
+    rc, out = run([kpy, str(tools / "route" / "route.py"), "budget", "--board", str(board)], kp)
+    try:
+        G = json.loads((board / "routing" / "ledger.json").read_text())["groups"]
+    except (OSError, ValueError, KeyError):
+        G = {}
+    ev = [e["kind"] for g in G.values() for e in g.get("events", [])]
+    nums["budget"] = next((ln.strip() for ln in out.splitlines() if ln.startswith("R1")), tail(out, 1))
+    if rc or len(G) != 1 or sorted(ev) != ["check", "check", "run"] or " 1 / " not in nums["budget"]:
+        ok = False
+        notes.append(f"budget: one group with a run and two checks in one round expected: {sorted(ev)}; {nums['budget']}")
     # H2: the handoff's zones, hole-to-edge and layer / class tables seeded, and the placement
     # checks with no hand edit
     rc, out = run([kpy, str(tools / "place" / "place.py"), "seed", "--board", str(board)], kp)
@@ -793,8 +808,18 @@ def stage_prelayout():
         if rc:
             stage("prelayout", "FAIL", time.time() - t0, "fixture_pcb: " + tail(out))
             return
-        rc, out = run([kpy, str(ROOT / "kicad_project" / "tools" / "route" / "prelayout.py"), "--board",
-                       str(tmp / "prelayout")], ROOT)
+        pre = [kpy, str(ROOT / "kicad_project" / "tools" / "route" / "prelayout.py"), "--board", str(tmp / "prelayout")]
+        rc, out = run(pre, ROOT)
+        # the routing groups, declared and counted (routing/groups.json): a count that fits, the
+        # same group with a count that does not, a group whose patterns match nothing
+        gj = tmp / "prelayout" / "routing" / "groups.json"
+        gj.parent.mkdir(exist_ok=True)
+        gout = []
+        for code in (0, 3):
+            gj.write_text(json.dumps({"groups": [
+                {"id": "fits", "nets": ["."], "count": [sys.executable, "-c", f"print('9 of 9'); raise SystemExit({code})"]},
+                {"id": "ghost", "nets": ["^NO_SUCH_NET$"], "covered": "nothing"}]}))
+            gout.append(run(pre, ROOT)[1])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     want = {"fanout U1": False, "rows J3": False, "bundles J4-J5": False}
@@ -802,11 +827,18 @@ def stage_prelayout():
         for k in want:
             if ln.startswith(f"PRELAYOUT {k}") and ": FAIL" in ln:
                 want[k] = True
-    ok = rc == 1 and all(want.values())
+
+    def line(text, target, status):
+        return any(ln.startswith(f"PRELAYOUT groups {target}: {status}") for ln in text.splitlines())
+    groups = (line(out, "board", "TODO") and line(gout[0], "coverage", "PASS") and line(gout[0], "fits", "PASS")
+              and line(gout[0], "ghost", "FAIL") and line(gout[1], "fits", "FAIL") and "9 of 9" in gout[1])
+    ok = rc == 1 and all(want.values()) and groups
     stage("prelayout", "PASS" if ok else "FAIL", time.time() - t0,
           "the three historical failures FAIL before routing: " + ", ".join(f"{k} {'FAIL' if v else 'MISSED'}"
                                                                          for k, v in want.items())
-          + f" (exit {rc})", **{k.replace(" ", "_"): v for k, v in want.items()})
+          + f" (exit {rc}); routing groups: undeclared TODO, a count that fits PASS, one that does not FAIL -- "
+          + ("as expected" if groups else "NOT as expected"),
+          groups=groups, **{k.replace(" ", "_"): v for k, v in want.items()})
 
 
 def stage_vias():
@@ -882,6 +914,7 @@ SCRIPT_STAGES = [
     ("rev-mode", "test_review_mode.py", False),
     ("bashguard", "test_bashguard.py", False),
     ("bgwait", "test_bgwait.py", False),
+    ("budget", "test_budget.py", False),
     ("stall", "test_router_stall.py", False),
     ("planguard", "test_plan_guard.py", False),
     ("race", "test_race.py", False),
