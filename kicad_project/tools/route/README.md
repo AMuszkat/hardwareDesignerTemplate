@@ -397,7 +397,10 @@ again from it — same UUID, same padstack flags — then reads them back
   at `... is already applied; rip it first, or --force` (exit 3). `--force`
   would rip by UUIDs that no longer exist. WAY AROUND: a script that
   restores a backup also sets aside every `<board>/routing/*.applied.json`
-  newer than that backup (`find ... -newer $BAK`, renamed `.restored-HHMM`).
+  the run wrote: `touch $MARK` before its first step, then `find ... -newer
+  $MARK` (renamed `.restored-HHMM`). Not `-newer $BAK`: `cp -a` keeps the
+  board's own mtime, so that also takes manifests of groups applied before
+  the run (board1 R_W300, 2026-11-23).
   `route.py status` then lists only what is on the board. PROOF: the re-run
   applied both groups ("applied R_U1W_nwp2 ... read back and matched").
 

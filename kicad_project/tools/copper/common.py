@@ -138,10 +138,16 @@ def out_in_board(a, rel):
 
 
 def out_path(a, name):
-    """Where a tool's output goes: `--out` if given, else <board>/routing/<name>."""
+    """Where a tool's output goes: `--out` if given; else, for a `--pcb` copy outside the board
+    folder, beside that copy; else <board>/routing/<name>.  TRAP (board1 R_W300, 2026-11-23):
+    `shape.py --pcb <trial copy> --guide <board>` wrote the trial's 509 sites over the board's
+    own routing/shape_sites.json, the file entryfix and the audit read."""
     out = getattr(a, "out", None)
     if out:
         return out_in_board(a, out)
+    pcb = getattr(a, "pcb", None)
+    if pcb and Path(pcb).resolve().parent != Path(a.board).resolve():
+        return Path(pcb).resolve().parent / name
     d = Path(a.board) / "routing"
     d.mkdir(parents=True, exist_ok=True)
     return d / name

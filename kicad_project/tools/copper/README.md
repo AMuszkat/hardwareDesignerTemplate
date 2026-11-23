@@ -20,7 +20,9 @@ plan, judged by `route.py check` and laid by `route.py apply` like any group.
     tools/.venv/bin/python tools/copper/crops.py window|sites|moves ...
 
 `--board` takes `boardN`, the folder name or a path (default: this session's
-board); `--pcb FILE --guide DIR` judges a scratch copy with the board's guide.
+board); `--pcb FILE --guide DIR` judges a scratch copy with the board's guide,
+and without `--out` writes its output BESIDE that copy, never into the board's
+`routing/` (a trial's sites once overwrote the board's `shape_sites.json`).
 `route.py audit` runs the audits together, and `route.py check` runs `shape`
 and `vialink` on every plan's scratch copy (a new site fails the plan).
 
