@@ -560,6 +560,57 @@ def hand_checks(geom, path, c):
     c.eq("probe: no outline in the dump", pr["edge"], None)
     pr = G.probe((35, 0.2), radius=0.05, net="P")
     c.eq("probe as net P: Q is the nearest", (round(pr["layers"][0]["gap"], 9), pr["layers"][0]["other"].net), (0.15, "Q"))
+    # across, sites: two 0.2 mm tracks on F.Cu, A along y 0 and B along y 1 (x 0..10), nothing on B.Cu; a via of C
+    # at (8, 0.5), pad 0.4 on F.Cu only (a bare 0.2 hole on B.Cu)
+    room = dict(source=dict(file="room", kicad="-", schema=1, units="mm"),
+                board=dict(copper_layers=["F.Cu", "B.Cu"], outline_box=[0, 0, 10, 1], edges=[], thickness=1.6,
+                           rules=dict(clearance=0.1, track_width=0.1, hole_clearance=0.15, hole_to_hole=0.25,
+                                      via_diameter=0.4, through_drill=0.2), netclasses={}, net_class={}),
+                parts=[], pads=[], arcs=[], zones=[], shapes=[], texts=[],
+                tracks=[dict(uuid="ra", net="A", layer="F.Cu", a=[0, 0], b=[10, 0], w=0.2),
+                        dict(uuid="rb", net="B", layer="F.Cu", a=[0, 1], b=[10, 1], w=0.2)],
+                vias=[dict(uuid="rv", net="C", at=[8, 0.5], d=0.4, drill=0.2, type="through", layers=["F.Cu", "B.Cu"],
+                           flashed=["F.Cu"])])
+    (Path(path).parent / "room.json").write_text(json.dumps(room))
+    GR = geom.load(Path(path).parent / "room.json")
+    # the cut x 5, y 0..1: the tracks' edges are at y 0.1 and 0.9; a 0.1 track's centre keeps 0.1 + 0.05 from each,
+    # so it runs 0.25..0.75: 0.5 mm, floor(0.5 / 0.2) + 1 = 3 lanes
+    fl = GR.free_lanes((5, 0), (5, 1))
+    by = {r["layer"]: r for r in fl["layers"]}
+    c.eq("across F.Cu: lanes", by["F.Cu"]["lanes"], 3)
+    c.eq("across F.Cu: the run", [round(v, 6) for v in by["F.Cu"]["runs"][0]], [0.25, 0.75])
+    c.eq("across B.Cu: the whole cut, floor(1 / 0.2) + 1", (by["B.Cu"]["lanes"], round(by["B.Cu"]["free"], 6)), (6, 1.0))
+    c.eq("across: total", fl["total"], 9)
+    c.eq("across, B not an obstacle: 0.25..1.0, floor(0.75 / 0.2) + 1", GR.free_lanes((5, 0), (5, 1), ["F.Cu"], ignore=["B"])["total"], 4)
+    # the cut x 8 meets C's via: on F.Cu its pad (y 0.3..0.7) leaves no centre between 0.25 and 0.75 at 0.15 from it;
+    # on B.Cu its bare hole (y 0.4..0.6) at hole clearance 0.15 shuts 0.2..0.8: runs 0..0.2 and 0.8..1, 2 + 2 lanes
+    fl = GR.free_lanes((8, 0), (8, 1))
+    by = {r["layer"]: r for r in fl["layers"]}
+    c.eq("across the via: F.Cu shut", by["F.Cu"]["lanes"], 0)
+    c.eq("across the via: B.Cu round the bare hole", (by["B.Cu"]["lanes"], [[round(v, 6) for v in r] for r in by["B.Cu"]["runs"]]),
+         (4, [[0.0, 0.2], [0.8, 1.0]]))
+    # sites in x 2..4, y 0..1, pad on both layers: the pad's centre keeps 0.1 + 0.1 + 0.2 = 0.4 from each centre line,
+    # so y 0.4..0.6 (5 grid rows x 41 columns = 205 points); at 0.5 mm centres the greedy row is x 2, 2.5, 3, 3.5, 4
+    vs = GR.via_sites([2, 0, 4, 1])
+    c.eq("sites: free points", len(vs["free"]), 205)
+    c.eq("sites: packed", [p[0] for p in vs["sites"]], [2.0, 2.5, 3.0, 3.5, 4.0])
+    c.eq("sites: what shut the rest", vs["shut"], {"F.Cu track": 21 * 41 - 205})
+    # with the pad on B.Cu only, F.Cu sees the 0.2 hole at hole clearance 0.15: 0.1 + 0.15 + 0.1 = 0.35, y 0.35..0.65
+    c.eq("sites, pad on B.Cu only", len(GR.via_sites([2, 0, 4, 1], pad_layers=["B.Cu"])["free"]), 7 * 41)
+    # beside C's via (8, 0.5), 25 points on y 0.5.  Pad on B.Cu only: its B.Cu pad against C's bare hole there
+    # 0.2 + 0.15 + 0.1, its F.Cu hole against C's pad 0.1 + 0.15 + 0.2, hole to hole 0.1 + 0.25 + 0.1 -- 0.45 each way
+    vs = GR.via_sites([7.4, 0.5, 8.6, 0.5], pad_layers=["B.Cu"])
+    c.eq("sites beside a via, pad on B.Cu only: 0.45 centres", [p[0] for p in vs["free"]],
+         [7.4, 7.45, 7.5, 7.55, 8.45, 8.5, 8.55, 8.6])
+    c.eq("sites beside a via: the cause is the pad layer's, read first", vs["shut"], {"B.Cu via-hole": 17})
+    # pad on both layers: pad to pad on F.Cu is the wall, 0.2 + 0.1 + 0.2 = 0.5 centres
+    vs = GR.via_sites([7.4, 0.5, 8.6, 0.5])
+    c.eq("sites beside a via, pad on both: 0.5 centres", ([p[0] for p in vs["free"]], sum(vs["shut"].values())),
+         ([7.4, 7.45, 7.5, 8.5, 8.55, 8.6], 19))
+    # hole to hole alone: a wider rule (0.4 wall to wall = 0.6 centres) shuts what copper leaves open
+    vs = GR.via_sites([7.4, 0.5, 8.6, 0.5], hole_hole=0.4)
+    c.eq("sites beside a via: hole to hole 0.4", ([p[0] for p in vs["free"]], vs["shut"].get("hole to hole (a via)")),
+         ([7.4, 8.6], 4))
     # added: what changes.json lists (written beside the dump, as in a snapshot folder)
     (Path(path).parent / "changes.json").write_text(json.dumps(dict(
         base=dict(id="RV0"), copper=dict(added=[dict(uuid="t-Q-32-0.5")], removed=[]), vias=dict(added=[dict(uuid="vP")], removed=[]))))

@@ -170,7 +170,12 @@ checks.py`: `cap reach`, `layers apart`, `stitch via`, `neck length`,
 and writes them all to `handoff/findings.json`. The board runs them with
 `route.py audit --findings` before it asks again, and the next snapshot runs
 them as its `findings` gate — closed findings included, so the one that
-comes back fails in seconds. Never delete a Check line when its finding
+comes back fails in seconds. **A `pour neck` check's load is the copper
+that feeds the balls** -- `to REF.balls` (the part's ball vias on the
+layer), never the field box or the courtyard: every piece of the net's
+copper inside a box is load, so a lobe that enters the field and feeds no
+ball passes it (board1 RV64.2 passed at 3.01 mm with the rail's 19 balls
+behind one 0.57 mm door, D129). Never delete a Check line when its finding
 closes. **Run every new Check line before you publish it**:
 `route.py audit --findings --board <a copy's ABSOLUTE path>` (a relative one
 resolves against the board tools' folder: "no such board") on a copy of the snapshot with

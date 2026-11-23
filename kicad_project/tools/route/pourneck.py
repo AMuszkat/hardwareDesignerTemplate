@@ -53,8 +53,15 @@ outside the pad (pad + 0.02 mm) and 0.05 mm further, an arc whose angle shrinks 
 spoke's parallel sides) is a spoke and does not count.  --min-width W gives the verdict on a
 width (a page's "at least 1.5 mm wide") with or without --amps; with --source-disc the join is
 part of it.
---to: 'x0,y0,x1,y1' (the net's copper with its cell centre inside the box), or 'REF'
-(that part's courtyard box).  Exit 0 PASS, 1 FAIL, 2 bad input.
+--to: 'x0,y0,x1,y1' (the net's copper with its cell centre inside the box), 'REF' (that
+part's courtyard box), or 'REF.balls' -- only the pads on --layer of the vias that feed REF's
+pads of the net (in the pad, or one straight track from it) and REF's own pads there.  A box
+or a courtyard makes EVERY piece of the net's copper inside it load, so a lobe of the pour that
+enters a ball field and feeds no ball is "reached" and the cut is taken to it: board1 RV64.2
+read 3.01 mm in 4 pieces to the field box while the rail's 19 balls sat behind one door of
+0.57 mm (D129).  REF.balls for a ball field; a box only for a load with no pads to name, drawn
+round the balls and not round the field.  With one or two ball vias the least cut is the ring
+round them (2 pi x the pad's radius each): the box form then.  Exit 0 PASS, 1 FAIL, 2 bad input.
 
 Two interpreters: KiCad's (tools/kpy) reads and refills the board -- loaded with its
 project files, since a lone .kicad_pcb fills at default clearances -- and writes the
@@ -238,8 +245,22 @@ def _geom_of(B, a, refill, P):
         sys.exit("--source-disc needs a feed VIA in --from ('x,y' of a via, or REF whose pad a via feeds)")
 
     sink = None
+    sink_rings = load_ref = None
     toks = a.sto.split(",")
-    if len(toks) == 4:
+    if a.sto.endswith(".balls"):
+        ref = a.sto[:-len(".balls")]
+        if ref not in B.fps:
+            sys.exit(f"--to {a.sto}: {ref} is not a part on the board")
+        lv = [c for c in cand if c[0] != "via" and c[0].split(".")[0] == ref] + [c for c, _why in feed_vias(ref, "")]
+        if not lv:
+            sys.exit(f"--to {a.sto}: no pad of {a.net} on {a.layer} and no {a.net} via in or linked straight to "
+                     f"one of {ref}'s pads (give the load as a box round its balls)")
+        sink = list(B.courtyard(B.fps[ref]))
+        sink_rings = [poly for c in lv for poly in c[4]]
+        n_pads = sum(1 for p in B.fps[ref].Pads() if short(p.GetNetname()) == a.net)
+        sink_label = f"{ref}'s {len(lv)} ball via(s) / pad(s) on the layer ({n_pads} pads on the net)"
+        load_ref = ref
+    elif len(toks) == 4:
         sink = [float(v) for v in toks]
         sink_label = f"box x {sink[0]:g}-{sink[2]:g}, y {sink[1]:g}-{sink[3]:g}"
     else:
@@ -247,7 +268,7 @@ def _geom_of(B, a, refill, P):
             sys.exit(f"--to {a.sto}: neither a box x0,y0,x1,y1 nor a part on the board")
         sink = list(B.courtyard(B.fps[a.sto]))
         sink_label = f"{a.sto}'s courtyard x {sink[0]:.2f}-{sink[2]:.2f}, y {sink[1]:.2f}-{sink[3]:.2f}"
-    balls_ref = a.balls or (a.sto if len(toks) != 4 else None)
+    balls_ref = a.balls or load_ref or (a.sto if len(toks) != 4 else None)
     balls = None
     if balls_ref:
         if balls_ref not in B.fps:
@@ -255,7 +276,7 @@ def _geom_of(B, a, refill, P):
         balls = sum(1 for p in B.fps[balls_ref].Pads() if short(p.GetNetname()) == a.net)
     return {"board": str(B.pcb), "net": a.net, "layer": a.layer, "zones": len(zones),
             "fill": fill, "items": items, "sources": srcs, "sink": sink, "sink_label": sink_label,
-            "balls_ref": balls_ref, "balls": balls}
+            "sink_rings": sink_rings, "balls_ref": balls_ref, "balls": balls}
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +389,8 @@ def solve(g, raster, disc=None):
     bx = g["sink"]
     inbox = ((cx[None, :] >= bx[0]) & (cx[None, :] <= bx[2]) & (cy[:, None] >= bx[1]) & (cy[:, None] <= bx[3]))
     snk = inbox & cu & ~src
+    if g.get("sink_rings"):                   # REF.balls: only the copper at the part's own ball vias is load
+        snk = paint(g["sink_rings"]) & cu & ~src
     if not src.any():
         return {"error": "the feed items cover no copper cell at this raster"}
     if not snk.any():
@@ -548,12 +571,12 @@ def selftest():
     sq = lambda x0, y0, x1, y1: [[[x0, y0], [x1, y0], [x1, y1], [x0, y1]]]
     fails = []
 
-    def case(name, fill, src, box, want, tol, disc=None, at=None, items=()):
+    def case(name, fill, src, box, want, tol, disc=None, at=None, items=(), balls=None):
         s0 = {"label": "s", "rings": src}
         if at:
             s0.update({"at": at, "pad_r": 0.2})
         g = {"net": "N", "layer": "In4.Cu", "fill": fill, "items": list(items), "sources": [s0],
-             "sink": box, "sink_label": "box"}
+             "sink": box, "sink_label": "box", "sink_rings": balls}
         for r in (0.05, 0.025):
             A.raster = r
             got = solve(g, r, disc)["width_mm"]
@@ -587,6 +610,14 @@ def selftest():
     pinch = [[sq(0, 0, 10, 3)[0], circ(2.0, 1.0, 0.15), circ(2.0, 2.0, 0.15)]]
     case("via, disc 0.75, pinch inside", pinch, via, [9.5, 0, 10, 3], 3.0, 0.06, disc=0.75,
          at=[2.0, 1.5], items=via)
+    # D129's load (board1 RV64.2): a 3 mm strip enters a "field" box at x 6; a wall at x 7.9-8.1 leaves a
+    # 0.5 mm door, and the three ball vias stand behind it at x 9.  To the box the least cut is the strip,
+    # 3.0 (the copper in x 6-7.9 is in the box and feeds no ball); to the ball vias it is the door, 0.5
+    # (their three rings would be 3 x 1.26).
+    walled = [[[[0, 0], [7.9, 0], [7.9, 2.5], [8.1, 2.5], [8.1, 0], [10, 0], [10, 3], [0, 3]]]]
+    bv = [[circ(9.0, y, 0.2)] for y in (0.6, 1.4, 2.2)]
+    case("field box: a dead-end lobe", walled, [sq(0, 0, 0.5, 3)], [6, 0, 10, 3], 3.0, 0.06, items=bv)
+    case("REF.balls: the door, 0.5 mm", walled, [sq(0, 0, 0.5, 3)], [6, 0, 10, 3], 0.5, 0.06, items=bv, balls=bv)
     # the join inside the disc: solid fill (360), the strip's half cut by a wide antipad (about 180 or
     # more), and a thermal relief -- a 0.25 mm gap round the pad, four 0.2 mm spokes at 45 degrees
     def jcase(name, fill, want_ok):
@@ -629,7 +660,8 @@ def main():
     ap.add_argument("--net")
     ap.add_argument("--layer")
     ap.add_argument("--from", dest="sfrom", default="", help="'x,y;x,y' feed vias/pads, or REF / REF.PIN")
-    ap.add_argument("--to", dest="sto", default="", help="x0,y0,x1,y1 (the load box) or REF (its courtyard)")
+    ap.add_argument("--to", dest="sto", default="", help="x0,y0,x1,y1 (the load box), REF (its courtyard) or REF.balls (only its ball vias' pads "
+                    "on the layer: copper that feeds no ball is no load)")
     ap.add_argument("--balls", default=None, help="REF whose pads on the net count for --amps-per-ball")
     ap.add_argument("--amps", type=float, default=None, help="the current through the cut")
     ap.add_argument("--amps-per-ball", type=float, default=None, help="x the --balls part's pads on the net")

@@ -88,6 +88,8 @@ read only:
 | `coupled SEL --within G` | the length a selection's tracks run nearer than G to each foreign net on their own layer | stations 0.01 mm apart along the centre line; edge-to-edge gap of the track's copper there |
 | `overlap SEL [--adjacent L,L] [--margin M]` | the length its tracks lie over or under foreign tracks, via pads, pads and shapes of other layers, and with copper on every such layer at once | plan view, stations as above; pours and bare holes never count |
 | `probe X,Y [--radius R] [--drill D] [--net N]` | what a disc at a point would meet: nearest copper per layer, the nearest hole, the outline | disc edge to copper edge; wall to wall |
+| `across X0,Y0,X1,Y1 [--layer L,L] [--track W] [--clear C] [--hole-clear H] [--ignore NET] [--pours]` | the room for more tracks across a line, per layer: the free runs and the lanes in each | a point is free when a track of W centred there keeps C to every copper edge and H to a bare hole's wall; run ends bisected to 1 nm; lanes = floor(run / (W + C)) + 1; defaults from the board's rules; fills skipped unless `--pours` |
+| `sites X0,Y0,X1,Y1 [--layer L,L] [--radius R] [--drill D] [--clear C] [--hole-clear H] [--hole-hole HH] [--grid G] [--pitch P] [--ignore NET]` | where a through via is legal in a rectangle, how many fit, what shuts the rest | grid points G apart; pad edge at C on `--layer` (the layers it is flashed on), drill wall at H on the others, wall to wall HH; packed greedily west to east at P (default pad + C); `shut` = first cause per failed point |
 | `box X0,Y0,X1,Y1` | every copper object, part, text and zone touching a rectangle | copper edge, not centre |
 | `show SEL`, `info` | what an object is; counts, layers, rules, net classes | |
 

@@ -26,6 +26,12 @@ cannot answer is written as a script in tmpWork/ and NAMED in the report's
     coupled  SEL --within G      the length a selection's tracks run nearer than G to each foreign net, same layer
     overlap  SEL [--adjacent L,L] [--margin M]   the length its tracks lie over / under foreign copper of other layers
     probe    X,Y [--radius R] [--drill D] [--net N]   what a disc at a point would meet on each layer, hole and edge
+    across   X0,Y0,X1,Y1 [--layer L,L] [--track W] [--clear C] [--hole-clear H] [--ignore NET] [--pours]
+                                 the free lanes across a straight cut, per layer: how many more tracks can cross it
+    sites    X0,Y0,X1,Y1 [--layer L,L] [--radius R] [--drill D] [--clear C] [--hole-clear H] [--hole-hole HH]
+             [--grid G] [--pitch P] [--ignore NET] [--pours]
+                                 where a through via could stand in a rectangle (--layer: the layers it has a pad on),
+                                 packed at --pitch, and what shuts the rest
     box      X0,Y0,X1,Y1         every object in a rectangle
     bare     REF [REF ...] [--net N,N]   the pads of a part that no copper of their net reaches (a ball with no stub, no via, no pour)
     unused-pads REF | X0,Y0,X1,Y1   the vias in a part's courtyard (or a rectangle): which drop their unconnected inner
@@ -1531,6 +1537,148 @@ class Geometry:
         edge = max(0.0, min(pt_seg(at, a, b)[0] for a, b in edges) - radius) if edges else None
         return dict(at=at, layers=rows, hole=hole, edge=edge)
 
+    # -- room: lanes across a line, via sites in a box -------------------------------------
+
+    def _blocked(self, at, radius, layers, clear, hole_clear, ignore=(), hole=False, pours=False):
+        """The first foreign object a disc of `radius` at a point stands too near on `layers`:
+        (layer, Item, gap), or None.  Every net is foreign but those in `ignore`; a zone's fill
+        is no obstacle unless `pours` (it refills round new copper).  A disc of
+        copper is held to `clear` from copper and to `hole_clear` from a hole that has no pad
+        on that layer; `hole=True` makes the disc a bare hole -- `hole_clear` from every
+        copper object, other holes left to the hole-to-hole test."""
+        fills = self.__dict__.get("_fills")
+        if fills is None:
+            fills = self.__dict__["_fills"] = [o for o in self.items if len(o.pts) >= 3]
+        skip = () if pours else ("pour",)
+        layers = frozenset(layers)
+        bare = ("via-hole", "pad-hole", "hole")
+        first = lambda o: sorted(o.layers & layers, key=self._layer_key)[0]
+        for o in fills:
+            if (o.layers & layers) and o.net not in ignore and o.kind not in skip and o.contains(at):
+                return first(o), o, 0.0
+        R = max(clear, hole_clear)
+        for j, edges in self._near((at[0] - radius, at[1] - radius, at[0] + radius, at[1] + radius), R).items():
+            o = self.items[j]
+            if not (o.layers & layers) or o.net in ignore or o.kind in skip or (hole and o.kind in bare):
+                continue
+            gap = max(0.0, min(pt_seg(at, a, b)[0] for a, b in edges) - radius - o.r)
+            if gap < (hole_clear if hole or o.kind in bare else clear) - 1e-9:
+                return first(o), o, gap
+        return None
+
+    def _room_rules(self, **given):
+        """The widths a room query was given, the rest from the dump's board rules."""
+        rules = self.d["board"].get("rules") or {}
+        keys = dict(track="track_width", clear="clearance", hole_clear="hole_clearance", hole_hole="hole_to_hole",
+                    drill="through_drill")
+        out = {}
+        for k, v in given.items():
+            out[k] = rules.get(keys[k]) if v is None else v
+            if k == "hole_clear" and out[k] is None:
+                out[k] = out.get("clear")
+            if out[k] is None:
+                raise SystemExit(f"geom: --{k.replace('_', '-')} is needed (the dump's board rules have no {keys[k]})")
+        return out
+
+    def free_lanes(self, a, b, layers=None, track=None, clear=None, hole_clear=None, ignore=(), step=0.01, pours=False):
+        """The free lanes across a straight cut from a to b -- how many more tracks can cross it.
+
+        On each layer the cut is walked: a point is free when a track of width `track` centred
+        there keeps `clear` to every track, via, pad and copper shape not of an `ignore` net (an
+        ignored net's pads are no obstacle either; zone fills only with `pours`: they refill
+        round a new track) and `hole_clear` to a hole with no pad on that layer.  The free points form runs (ends
+        found to 1 nm); a run of length L holds floor(L / (track + clear)) + 1 tracks side by
+        side.  {length, track, clear, hole_clear, layers: [{layer, lanes, free, runs: [(s0,
+        s1)]}], total} -- s is the distance from a along the cut.  The cut's two ends are not
+        walls: draw it from one obstacle to another.  A count of lanes, not a routing: it says
+        nothing of whether a track can reach the cut, and a via site is another query (`sites`)."""
+        w = self._room_rules(track=track, clear=clear, hole_clear=hole_clear)
+        a, b = (float(a[0]), float(a[1])), (float(b[0]), float(b[1]))
+        length = math.dist(a, b)
+        if length <= 0:
+            raise SystemExit("geom: across needs a cut of some length")
+        n = max(1, int(math.ceil(length / step)))
+        pt = lambda s: (a[0] + (b[0] - a[0]) * s / length, a[1] + (b[1] - a[1]) * s / length)
+        rows = []
+        for L in (layers or self.copper_layers):
+            free = lambda s: self._blocked(pt(s), w["track"] / 2, [L], w["clear"], w["hole_clear"], ignore, pours=pours) is None
+
+            def edge(s_free, s_shut):
+                for _ in range(40):
+                    m = (s_free + s_shut) / 2
+                    s_free, s_shut = (m, s_shut) if free(m) else (s_free, m)
+                return s_free
+            runs, start, prev, was = [], None, 0.0, False
+            for i in range(n + 1):
+                s = length * i / n
+                f = free(s)
+                if f and not was:
+                    start = edge(s, prev) if i else 0.0
+                if was and not f:
+                    runs.append((start, edge(prev, s)))
+                prev, was = s, f
+            if was:
+                runs.append((start, length))
+            rows.append(dict(layer=L, runs=runs, free=sum(e - s for s, e in runs),
+                             lanes=sum(int((e - s) / (w["track"] + w["clear"]) + 1e-6) + 1 for s, e in runs)))
+        return dict(length=length, layers=rows, total=sum(r["lanes"] for r in rows), **w)
+
+    def via_sites(self, box, radius=None, drill=None, pad_layers=None, clear=None, hole_clear=None, hole_hole=None,
+                  ignore=(), grid=0.05, pitch=None, pours=False):
+        """Where a through via could stand in a rectangle, and how many fit.
+
+        A grid point (pitch `grid`) is free when a via centred there keeps, on each of
+        `pad_layers` (the layers it has its pad on; default: all), `clear` from its pad
+        (`radius`) to every copper object not of an `ignore` net and `hole_clear` to a bare
+        hole; on every other copper layer `hole_clear` from its drill to every copper object;
+        and `hole_hole` wall to wall to every other drilled hole.  The free points are then
+        packed greedily, west to east, no two nearer than `pitch` centre to centre (default:
+        the pad's diameter + `clear`).  {free: the free grid points, sites: [(x, y)], shut:
+        {"layer kind": points} -- what closed the others, first cause only, radius, drill, ...}.
+        Zone fills are no obstacle unless `pours`: a fill opens round a new via -- so a site
+        may still cut a pour's neck (`neck`).  The greedy count is a floor, not an optimum, and
+        the board's edge is not tested."""
+        w = self._room_rules(clear=clear, hole_clear=hole_clear, hole_hole=hole_hole, drill=drill)
+        if not radius:
+            d = (self.d["board"].get("rules") or {}).get("via_diameter")
+            if d is None:
+                raise SystemExit("geom: sites needs --radius (the dump's board rules have no via_diameter)")
+            radius = d / 2
+        x0, y0, x1, y1 = min(box[0], box[2]), min(box[1], box[3]), max(box[0], box[2]), max(box[1], box[3])
+        pads = list(pad_layers or self.copper_layers)
+        rest = [L for L in self.copper_layers if L not in pads]
+        pitch = 2 * radius + w["clear"] if pitch is None else pitch
+        m = w["drill"] / 2 + w["hole_hole"] + 1.0
+        holes = [(tuple(v["at"]), v["drill"] / 2, f"via {short(v['net'])}") for v in self.d.get("vias", [])
+                 if v["net"] not in ignore and x0 - m <= v["at"][0] <= x1 + m and y0 - m <= v["at"][1] <= y1 + m]
+        pad_holes = [Item("hole", p["net"], [], p["hole"]["core"], p["hole"]["r"], f"pad {p['ref']}.{p['num']}", p)
+                     for p in self.d.get("pads", []) if p.get("hole") and p["net"] not in ignore
+                     and x0 - m - 5 <= p["at"][0] <= x1 + m + 5 and y0 - m - 5 <= p["at"][1] <= y1 + m + 5]
+        free, shut = [], {}
+        for i in range(int(round((x1 - x0) / grid)) + 1):
+            for k in range(int(round((y1 - y0) / grid)) + 1):
+                at = (round(x0 + i * grid, 6), round(y0 + k * grid, 6))
+                why = self._blocked(at, radius, pads, w["clear"], w["hole_clear"], ignore, pours=pours)
+                if why is None and rest:
+                    why = self._blocked(at, w["drill"] / 2, rest, w["hole_clear"], w["hole_clear"], ignore, hole=True, pours=pours)
+                key = f"{why[0]} {why[1].kind}" if why else None
+                if key is None and any(math.dist(at, c) - r - w["drill"] / 2 < w["hole_hole"] - 1e-9 for c, r, _n in holes):
+                    key = "hole to hole (a via)"
+                if key is None:
+                    me = Item("hole", "", [], [at], w["drill"] / 2, "site", {})
+                    if any(core_gap(me, o)[0] < w["hole_hole"] - 1e-9 for o in pad_holes):
+                        key = "hole to hole (a pad's)"
+                if key is None:
+                    free.append(at)
+                else:
+                    shut[key] = shut.get(key, 0) + 1
+        sites = []
+        for at in sorted(free):
+            if all(math.dist(at, q) >= pitch - 1e-9 for q in sites):
+                sites.append(at)
+        return dict(box=(x0, y0, x1, y1), free=free, sites=sites, shut=shut, radius=radius, pitch=pitch, grid=grid,
+                    pad_layers=pads, **w)
+
 
 def lane_key(ln):
     """A lane's identity: two balls whose lanes share it compete for one track (two ring-2
@@ -1616,7 +1764,7 @@ def main(argv=None):
     ap.add_argument("snapshot", help="a PCB snapshot folder (out/reviews/<board>/<id>-pcb) or a geometry.json")
     ap.add_argument("query", choices=["info", "show", "nearest", "gap", "label", "joints", "via-pad", "holes",
                                       "copper", "lengths", "conn", "stitch", "coupled", "overlap", "probe", "box",
-                                      "bare", "unused-pads", "lanes", "links", "ring", "neck"])
+                                      "bare", "unused-pads", "lanes", "links", "ring", "neck", "across", "sites"])
     ap.add_argument("args", nargs="*", help="the query's SEL / NET / REF / box")
     ap.add_argument("--layer", help="one copper layer")
     ap.add_argument("--within", type=float, help="nearest: every foreign object nearer than this (mm), not only the nearest; "
@@ -1651,6 +1799,11 @@ def main(argv=None):
     ap.add_argument("--clear", type=float, help="lanes: the clearance (default: the board's clearance rule)")
     ap.add_argument("--reach", type=float, help="lanes: end each lane this far past the outer lands' centre line when "
                     "that is nearer than the courtyard line")
+    ap.add_argument("--pours", action="store_true", help="across, sites: zone fills are obstacles too (default: they refill round new copper)")
+    ap.add_argument("--hole-clear", type=float, help="across, sites: copper to a hole with no pad on the layer (default: the board's hole_clearance rule)")
+    ap.add_argument("--hole-hole", type=float, help="sites: hole wall to hole wall (default: the board's hole_to_hole rule)")
+    ap.add_argument("--grid", type=float, default=0.05, help="sites: the pitch of the points tried (mm, default 0.05)")
+    ap.add_argument("--pitch", type=float, help="sites: the least centre-to-centre distance of two sites (default: the pad's diameter + the clearance)")
     ap.add_argument("--parts", default="C*", help="ring: the parts counted, an fnmatch pattern (default C*)")
     ap.add_argument("--res", type=float, default=0.05, help="neck: the raster pitch (mm, default 0.05)")
     ap.add_argument("--json", action="store_true")
@@ -1668,7 +1821,7 @@ def main(argv=None):
     d = G.d
     q = a.query
     need = {"show": 1, "nearest": 1, "gap": 2, "copper": 1, "box": 1, "conn": 1, "stitch": 1, "coupled": 1,
-            "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1, "ring": 2, "neck": 3}
+            "overlap": 1, "probe": 1, "unused-pads": 1, "lanes": 1, "ring": 2, "neck": 3, "across": 1, "sites": 1}
     if q in need and len(a.args) != need[q]:
         ap.error(f"{q} takes {need[q]} argument(s)")
     if q in ("bare", "links") and not a.args:
@@ -1911,6 +2064,35 @@ def main(argv=None):
              + f"{len(rows)} link(s) of {', '.join(a.args)}; {len(bad)} not one axis piece out of the pad's centre"
              + (f", {sum(r['declared'] for r in rows)} more declared in the board's vialink_exceptions.json" if exc else "")
              + ("" if a.all else " (listed; --all lists every link)"))
+    elif q in ("across", "sites"):
+        try:
+            bx = [float(v) for v in a.args[0].split(",")]
+        except ValueError:
+            bx = []
+        if len(bx) != 4:
+            ap.error(f"{q}: {a.args[0]!r} is not X0,Y0,X1,Y1")
+        lay = [L.strip() for L in a.layer.split(",")] if a.layer else None
+        for L in lay or ():
+            if L not in G.copper_layers:
+                ap.error(f"{q}: {L} is not a copper layer of this board")
+        if q == "across":
+            R = G.free_lanes(bx[:2], bx[2:], lay, a.track, a.clear, a.hole_clear, ignore, a.step, a.pours)
+            emit(a, ["layer", "lanes", "free mm", "free runs (mm from the first point)"],
+                 [[r["layer"], r["lanes"], f"{r['free']:.3f}", ", ".join(f"{s:.2f}-{e:.2f}" for s, e in r["runs"]) or "none"]
+                  for r in R["layers"]], [R],
+                 f"the cut {fmt_pt(bx[:2])}-{fmt_pt(bx[2:])}, {R['length']:.3f} mm: {R['total']} free lane(s) on "
+                 f"{len(R['layers'])} layer(s) for a {R['track']:g} mm track at {R['clear']:g} mm (holes {R['hole_clear']:g})"
+                 + (f"; {len(ignore)} net(s) not counted as obstacles" if ignore else ""))
+        else:
+            R = G.via_sites(bx, a.radius, a.drill, lay, a.clear, a.hole_clear, a.hole_hole, ignore, a.grid, a.pitch, a.pours)
+            emit(a, ["site"], [[fmt_pt(p)] for p in cut(R["sites"])], [R],
+                 (more(R["sites"]) + "\n" if more(R["sites"]) else "")
+                 + f"in ({R['box'][0]:g}, {R['box'][1]:g})-({R['box'][2]:g}, {R['box'][3]:g}): {len(R['sites'])} via site(s) at "
+                 f"{R['pitch']:g} mm centres, from {len(R['free'])} free point(s) on a {R['grid']:g} mm grid -- pad "
+                 f"{2 * R['radius']:g} on {', '.join(R['pad_layers'])}, drill {R['drill']:g}, clearance {R['clear']:g}, "
+                 f"hole {R['hole_clear']:g}, hole to hole {R['hole_hole']:g}"
+                 + ("\nshut by: " + ", ".join(f"{k} {n}" for k, n in sorted(R["shut"].items(), key=lambda t: -t[1])[:8])
+                    if R["shut"] else ""))
     elif q == "neck":
         if not a.layer:
             ap.error("neck needs --layer L (one copper layer)")

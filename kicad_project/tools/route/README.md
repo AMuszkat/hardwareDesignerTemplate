@@ -1738,6 +1738,17 @@ is not modelled.
   to U1, 1.0 A, 10 K, 35 um, min width 1.5 mm` fails at 1.336 mm (x 30.51-30.91, y 13.30-13.70);
   the same row with `, source disc 0.75 mm` before the width passes. A feed via not joined solid is
   named in the failure line.
+- **A ball field's load is `REF.balls`, never the field's box or the courtyard.** TRAP (board1
+  RV64.2, D129, 2026-11-23): `to (22.5, 15.0)-(35.5, 28.0)`, U1's field, read 3.01 PASS for
+  VDD_GPU_VPU_DRAM -- every copper cell of the net inside the box is load, and three lobes of the
+  pour at the field's corner feed no ball; the rail's 19 balls sat behind one door of 0.574 mm
+  (2.77 needed). WORKED: `--to U1.balls` (a row: `to U1.balls`) takes as load only the pads on the
+  layer of the part's ball vias (a via in a pad of the net, or one straight track from it) and the
+  part's own pads there: on that board the rail reads 0.574 FAIL (11 ball vias, 19 balls), and
+  VDD_ARM, 2.562 PASS to the field box, reads 0.791 through two webs inside the field (`geom.py
+  neck` to a box round the cluster: 0.792). `--selftest`: a strip into a walled box with a 0.5 mm
+  door reads 3.0 to the box and 0.5 to the ball vias. With one or two ball vias the least cut is
+  their own rings (2 pi x the pad's radius each): a box round them then.
 
 ## `stitch.py` — stitching vias and GND pad drops, as a plan
 

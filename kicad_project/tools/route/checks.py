@@ -30,7 +30,11 @@ carries (`handoff/findings.json`, `route.py audit --findings`):
                     2.2 A, 10 K, 35 um            | the least copper width across any cut of the net's
                                                      copper on the layer between the feeds (`(x, y)` a
                                                      via or pad there, or `REF` / `REF.PIN`) and the load
-                                                     (a box, or `REF`: its courtyard) carries the current
+                                                     (a box, `REF`: its courtyard, or `REF.balls`: only
+                                                     the pads of its ball vias on the layer -- the form
+                                                     for a ball field, where a box or a courtyard also
+                                                     counts a lobe of the pour that feeds no ball)
+                                                     carries the current
                                                      by IPC-2221 internal at that rise and copper
                                                      (`pourneck.py`, a min cut on the refilled fill;
                                                      `, raster 0.025 mm` to set it; then
@@ -111,7 +115,7 @@ def parse(rule, val, s, G):
         opt = (r"(?:,\s*raster\s+" + num + r"\s*mm\s*)?(?:,\s*source\s+disc\s+" + num
                + r"\s*mm\s*)?(?:,\s*min\s+width\s+" + num + r"\s*mm\s*)?")
         m = re.fullmatch(r"\s*(\S+)\s+(\S+)\s*:\s*from\s+(.+?)\s+to\s+(" + pt + r"\s*-\s*" + pt
-                         + r"|[A-Za-z]+\d+)\s*,\s*" + num + r"\s*A\s*,\s*" + num + r"\s*K\s*,\s*" + num
+                         + r"|[A-Za-z]+\d+(?:\.balls)?)\s*,\s*" + num + r"\s*A\s*,\s*" + num + r"\s*K\s*,\s*" + num
                          + r"\s*um\s*" + opt, val)
         feeds = []
         if m:
@@ -121,7 +125,7 @@ def parse(rule, val, s, G):
             left = re.sub(pt + r"|[A-Za-z]+\d+(?:\.[A-Za-z0-9]+)?|[\s,]", "", rest)
         if not m or not feeds or left:
             raise RuleError("'pour neck' takes 'NET LAYER: from (x, y), (x, y) | REF[.PIN], ... to (x0, y0)-(x1, y1) "
-                            "| REF, 2.2 A, 10 K, 35 um' (then, optional and in this order: ', raster 0.025 mm', "
+                            "| REF | REF.balls, 2.2 A, 10 K, 35 um' (then, optional and in this order: ', raster 0.025 mm', "
                             "', source disc 0.75 mm', ', min width 1.5 mm')")
         to = (f"{m.group(5)},{m.group(6)},{m.group(7)},{m.group(8)}" if m.group(5) else m.group(4).strip())
         G.setdefault("pour_neck", []).append(dict(s, net=m.group(1), layer=m.group(2), feeds=feeds, to=to,
