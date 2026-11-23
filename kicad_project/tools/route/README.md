@@ -725,6 +725,10 @@ its docstring. What the spec has to be told:
   just routed: `place.py drc` / `route.py audit` mark such a count "AT KiCad's report limit -- at least that
   many". Judge a routed group by `route.py status`' open links and by walking each net's own copper from
   its first pad to its last via (track ends that stop inside a via's pad count as joined).
+- **`pad.GetConnectedPads()` is not a net's connectivity**: it returns the pads joined to that pad
+  directly, so a script that counts clusters with it reads every routed two-pad net as 1 open (board1
+  R_next_inventory, 2026-11-23: eight connected MDI nets counted open). Use `route.py status`, or
+  `board.GetConnectivity().GetConnectedItems(pad, False)` and look for the other pad in the result.
 - **A rip at the 199 limit shows old violations as new.** `route.py check` compares against a baseline
   KiCad cut at 199 a test, so a plan that REMOVES copper uncovers violations that were there before
   and hidden (board1 D115: 74 via_dangling). Prove they predate the plan (the same items on the
