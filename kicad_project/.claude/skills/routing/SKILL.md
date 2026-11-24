@@ -325,6 +325,13 @@ turn and before a worker is briefed.
   (or the `block` list from `exitlane.py --spec-blocks`). Board1 NORTHGAP
   r10, 2026-11-24: nine rounds converged on site vias north of U1 that the
   check refused with 14 exitlane items.
+  **A ball whose escape the race starts from is board copper, not a spec
+  `extra_tracks` entry:** exitlane reads the board, so a ball escaped only
+  in the spec counts as unrouted and its lane is held against the group's
+  own vias. Lay the escape stubs (and their site vias) on the race copy in
+  a route.py plan, gate that plan, then race. Board1 NORTHGAP r12,
+  2026-11-24: the first exitlane gate failed at AF7 / AF8 on the 8 strip
+  stubs; moved into the race copy's fixed-copper plan, it passed.
 - **Moving parts** to make a group routable goes through `place.py check`, one
   Konnect call, is named in the report, and is reviewed with the group (in
   release mode, at the fab release). Whether
