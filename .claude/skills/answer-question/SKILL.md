@@ -91,6 +91,15 @@ unconnected. That is a rung with no term, and the board cannot see it. One
 eMMC's third wall asked for layers and part moves while its datasheet let
 signals run through 100 unused balls.
 
+**A race that did not close is read before a term is offered for it.**
+`python3 tools/review/knots.py <variant>/partial.json` prints the router's last
+state as knots: layer, place, the nets in each. A knot of two tracks on one
+layer is a crossing with no second layer there; the term to look for is what
+shuts the other layers at that place. A static count (crossing pairs, lanes)
+ranks a rung only after it has predicted a race: two ladders once went out on
+a crossing count that fell from 64 pairs to 50 while the race went from 82
+cells to 97.
+
 **A question about a route** (pair order, which side a bus leaves, a
 crossing, an escape) is never answered from pin order alone. Before an
 option goes into the handoff, measure it yourself on a snapshot of the board
