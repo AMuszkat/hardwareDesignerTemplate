@@ -2077,6 +2077,15 @@ has moved. `budget.py`'s docstring is the manual; in short:
 - **A wall closes its group to every job** until a later handoff revision answers it (`budget.py`
   refuses a gate too): a lead polished to CHECK PASS is polished before the wall is written or after
   its answer, never beside it.
+- **DOES NOT FIT is read from the ceiling's knots, not from its `LEFT n`.** Before a wall whose
+  ceiling does not close, read that variant's `knots.txt`: a knot whose line reads `OPEN here` on any
+  layer, or `via here: no term shuts it`, is a crossing with a free layer, hand-laid on the partial
+  (one net changes layer once at the knot) and gated (planclr, the copper gates, `route.py check`:
+  gates, not a round). DOES NOT FIT is shown only when every knot of the last partial has each other
+  layer and its via shut by a NAMED term, with the plan's own terms (each net's layers, exit lanes,
+  reserves) moved too. TRAP (board1 NORTHGAP, Q128 / D138, 2026-11-25): the ceiling plateaued with 4
+  nets in two knots, each with a free layer and an unshut via; the wall said DOES NOT FIT and the
+  answer was to hand-lay two layer changes -- one round trip lost.
 - **A reopen is not a refill.** A reopened group gets half of its tier's budget after its first wall and
   a quarter after every later one (never less than one round and 15 min): the wall's table holds a plan
   that closed, so the new epoch re-proves and lays it. The share is on the ledger's reopen event; an
