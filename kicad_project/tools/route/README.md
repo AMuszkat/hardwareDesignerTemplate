@@ -877,6 +877,11 @@ its docstring. What the spec has to be told:
   clearance hit that a refill would clear (board1 NORTHGAP r7: 33 false clearance violations from six
   re-sited J1 fan vias). PROOF: the same pair of copies with `--refill-zones` read 0 new clearance or
   hole violations (tmpWork/NORTHGAP/r7/drc7f.txt).
+  Both copies also sit beside the board's own `.kicad_pro`, `.kicad_dru` and `fp-lib-table`: kicad-cli
+  on a `.kicad_pcb` alone runs KiCad's default rules and no project library, so the two halves of the
+  diff are not the same test (board1 NORTHGAP r8: 27 `lib_footprint_issues` on the base copy only, read
+  as 27 GONE items, tmpWork/NORTHGAP/r8/drc8.txt). PROOF: a diff's by-type line shows no type present
+  on one side only that the plan cannot make.
 - **Via sites for a fan of track ends: least total length, then uncross.**
   Giving each end of one layer the nearest free site by squared length handed
   board1's In3 three knots of crossing nets, and no amount of banning sites
