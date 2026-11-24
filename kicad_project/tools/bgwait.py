@@ -8,7 +8,7 @@ limit -- for both session types (the concept side calls it by path).
     python3 tools/bgwait.py kill NAME ...
     python3 tools/bgwait.py clean NAME ... | --all-ended
 
-    python3 tools/bgwait.py run --name N --group GROUP|SPEC|PLAN [--count | --gate] [--board boardN] -- <command>
+    python3 tools/bgwait.py run --name N --group GROUP|SPEC|PLAN [--count | --gate | --terms] [--board boardN] -- <command>
 
 A JOB FOR A ROUTING GROUP SAYS SO.  `--group` (the group's id in
 routing/groups.json or the ledger, or its spec or plan file) charges the job
@@ -20,7 +20,13 @@ the answer "it does not fit".  `--gate` says the job only CHECKS the group's
 board -- a DRC diff, a preflight, a dry run that stops before the race: its
 time is the group's, its round is not counted while it runs no router or race
 and ends within 5 minutes (budget.py GATE_S); longer, it is a round.  A search
-of your own is never a gate.  A job of no group still runs; one of a minute
+of your own is never a gate.  `--terms` makes it one VARIANT OF THE TERMS
+COUNT a wall carries (budget.py, THE WALL CARRIES ITS COUNT): the group's
+problem on a scratch copy with some term of the design moved -- the ceiling,
+every term at once, first.  It runs when the group is spent, costs no round
+and none of the group's time, and is ended at the end of the group's terms
+window (20, 45 or 90 minutes by tier, from the first such job): start every
+variant together.  A job of no group still runs; one of a minute
 or more is listed by `route.py budget` as time outside every group.
 
 WHY IT EXISTS.  A board session started three router runs in the background
@@ -793,6 +799,11 @@ def budget_gate(a):
         die("run: --gate goes with --group G: a job of no group is charged to none already")
     if a.gate and a.count:
         die("run: --gate or --count, not both: a feasibility count searches")
+    if a.terms and not a.group:
+        die("run: --terms goes with --group G: whose wall is the count for?")
+    if a.terms and (a.gate or a.count):
+        die("run: --terms, --count or --gate, one of them: a variant of the terms count is neither the "
+            "feasibility count nor a gate")
     if not a.group:
         return None
     B = _budget()
@@ -815,12 +826,12 @@ def budget_gate(a):
     if bdir is None:
         die("run --group: which board? run it from the board folder, or add --board boardN")
     jid = f"{a.name}@{int(time.time())}"
-    tok = B.gate(bdir, name, nets, kind="count" if a.count else "job", matched=matched,
+    tok = B.gate(bdir, name, nets, kind="count" if a.count else "terms" if a.terms else "job", matched=matched,
                  label=("gate " if a.gate else "") + f"{a.name}: " + " ".join(a.cmd)[:140], jid=jid,
                  is_gate=bool(a.gate))
     if not tok:
         return None                                          # a board with no budget (a fixture)
-    return dict(tok.detach(), jid=jid, count=bool(a.count))
+    return dict(tok.detach(), jid=jid, count=bool(a.count), terms=bool(a.terms))
 
 
 def cmd_run(a):
@@ -895,7 +906,10 @@ def cmd_exec(jobfile):
     if bud:                                              # the route tools the command runs know whose time this is
         B = _budget()
         env["HW_BUDGET_BOARD"] = bud["board"]
-        env[B.ENV_IN if bud["count"] else B.ENV_JOB] = "count" if bud["count"] else bud["jid"]
+        if bud["count"] or bud.get("terms"):             # a count: what runs inside it is charged nothing more
+            env[B.ENV_IN] = "count" if bud["count"] else "terms"
+        else:
+            env[B.ENV_JOB] = bud["jid"]
         B.adopt(bud["board"], bud["key"], bud["event"], pid)
 
     def first_to_go():                                   # in the child, before exec: every process of the job inherits it
@@ -948,13 +962,15 @@ def cmd_exec(jobfile):
             signal.signal(s, forward)
         stop, th = watch() if LINUX else (None, None)
         peak[0] = rss_gb([q for q in session_pids(pid) if q != pid]) if LINUX else 0.0
-        if bud and bud["count"]:                         # a feasibility count has a limit: no answer in it IS the answer
+        if bud and (bud["count"] or bud.get("terms")):   # a count has a limit: no answer in it IS the answer
             try:
                 rc = child.wait(timeout=float(bud["limit"]))
             except subprocess.TimeoutExpired:
                 job["budget_limit"] = True
                 print(f"bgwait: the feasibility count reached its {bud['limit']:g} s: ended. No answer in that "
-                      "time is the answer \"it does not fit\" (tools/route/budget.py).", flush=True)
+                      "time is the answer \"it does not fit\" (tools/route/budget.py)." if bud["count"] else
+                      f"bgwait: the group's terms window ended ({bud['limit']:.0f} s for this variant): ended. It "
+                      "is `\"closes\": null` in the group's terms table (tools/route/budget.py).", flush=True)
                 for sig, grace in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
                     for q in [q for q in session_pids(pid) if q != pid] or [child.pid]:
                         try:
@@ -994,7 +1010,8 @@ def cmd_exec(jobfile):
                     last = lines[-1][:200] if lines else ""
             except OSError:
                 pass
-            res = (f"no answer in {bud['limit']:g} s: it does not fit" if job.get("budget_limit")
+            res = (f"no answer in {bud['limit']:.0f} s" + (": it does not fit" if bud["count"] else
+                                                          ", the end of the terms window") if job.get("budget_limit")
                    else f"exit {job['exit']}" + (f": {last}" if last else ""))
             B.close(bud["board"], bud["key"], bud["event"], secs, res, ok=job["exit"] == 0 and not job.get("budget_limit"))
         else:
@@ -1249,6 +1266,9 @@ def main(argv=None):
     p.add_argument("--gate", action="store_true",
                    help="with --group: the job only checks the board (DRC, preflight, dry run): its time is the "
                         "group's, no round while it runs no router or race and ends within 5 min")
+    p.add_argument("--terms", action="store_true",
+                   help="with --group: one variant of the terms count a wall carries (a term of the design moved, "
+                        "on a scratch copy) -- runs when the group is spent, no round, ended at the terms window's end")
     p.add_argument("--board", help="with --group: boardN or a board folder (default: this session's board)")
     p.add_argument("cmd", nargs=argparse.REMAINDER, help="-- the command and its arguments")
     p.set_defaults(fn=cmd_run)

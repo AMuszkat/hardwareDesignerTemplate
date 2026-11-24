@@ -2009,15 +2009,34 @@ has moved. `budget.py`'s docstring is the manual; in short:
   "<task>"` logs a worker for the group and prints the two lines its brief must carry.
   `route.py budget routing/X_spec.json --before "N: what"` enters N rounds the group was given before the
   ledger existed (a board that takes the budget up mid-routing); it only ever adds.
-- **`BUDGET SPENT` (exit 76)** is not an error to work round. The one command left is
+- **`BUDGET SPENT` (exit 76)** is not an error to work round. What is left is the terms count, its
+  table, and the wall:
 
-      tools/kpy tools/route/route.py wall <group> --blocks "<the parts, vias, nets in the way, with numbers>" \
-          --change "placement: ..." [--change "rule: ..."] [--change "swap: ..."] [--change "layer: ..."]
+      python3 tools/bgwait.py run --group <group> --terms --name <variant> -- <one variant on a scratch copy>
+      python3 tools/route/budget.py terms <group>          # routing/terms/<group>.json: TERMS OK, or what it lacks
+      tools/kpy tools/route/route.py wall <group> --blocks "<the parts, vias, nets in the way, with numbers>"
 
-  which writes the next `## Qn — WALL <group>` into `QUESTIONS.md` from the ledger (every round and how
-  it ended), the changes in the order of what they cost -- placement, rule, swap (a pin or a part),
-  layer -- and prints the ring line. Then the next group. **Declare the wall before the budget is spent
-  when a round has shown the cause**: the budget is a ceiling, not a target.
+  The wall writes the next `## Qn — WALL <group>` into `QUESTIONS.md` from the ledger (every round and
+  how it ended) and from the table, and prints the ring line. Then the next group. **Declare the wall
+  before the budget is spent when a round has shown the cause**: the budget is a ceiling, not a target.
+- **The wall carries its count** (budget.py's section of that name has the table's format). The changes a
+  wall offers are rows that CLOSED on a scratch copy, and the count starts at the loose end: the
+  **ceiling** -- every term that could move, moved at once -- and, when that closes, one variant per term
+  (the term alone, or every term but it), all side by side in the group's terms window (20 / 45 / 90 min
+  by tier, on the ledger, no round). `route.py wall` refuses without the table for a tier B or C group,
+  and for any group's second wall; with it, it takes no `--change`. A ceiling that does not close is a
+  wall titled `DOES NOT FIT`: no routing term is left, the question is the placement or the stack-up, and
+  it is the user's at once.
+  TRAP (board1, 2026-11-23 and 24): 28 walls on five groups in 32 hours. Each wall named changes nobody
+  had counted; each answer granted one; the next rounds showed it was not enough. One group of 33 nets
+  reached its tenth wall with 13.5 h of tool time against a 6 h budget and no net on copper; four of its
+  answers were "no new term" -- the wall had been the only way to get another budget -- and the term
+  counts that were run sat outside every budget (82 ungrouped jobs, 5.7 h).
+  WORKED: nothing yet -- this is the rule that replaces it; the proof is `tools/route/test_budget_terms.py`.
+- **A reopen is not a refill.** A reopened group gets half of its tier's budget after its first wall and
+  a quarter after every later one (never less than one round and 15 min): the wall's table holds a plan
+  that closed, so the new epoch re-proves and lays it. The share is on the ledger's reopen event; an
+  epoch opened before the rule keeps what it had.
 - **It reopens only when the input changes**: a handoff revision after the wall answers its `Qn`, or one
   of the group's own parts moves on the board. A second wall of one group is a design problem: concept
   answers it alone only when no offered change adds a term to the design, else the user decides. A group with

@@ -7,7 +7,9 @@
     tools/kpy tools/route/route.py budget R_emmc --worker "one count: the west strip's via sites"
     tools/kpy tools/route/route.py budget routing/R_emmc_spec.json --before "1: the six-variant count of 11-22, 0 of 14"
                                                                         # rounds run before the ledger existed
-    tools/kpy tools/route/route.py wall R_emmc --blocks "..." --change "placement: ..." [--change "rule: ..."]
+    python3 tools/bgwait.py run --group R_emmc --terms --name t_ceiling -- <one variant on a scratch copy>
+    python3 tools/route/budget.py terms R_emmc                          # routing/terms/R_emmc.json: TERMS OK, or what it lacks
+    tools/kpy tools/route/route.py wall R_emmc --blocks "..."           # the question, from the ledger and that table
 
 WHY IT EXISTS.  A board session spent a day on counts, races and workers for four groups and
 put two nets on copper: 85 background jobs and 108 worker runs in 56 hours, and nothing in the
@@ -54,17 +56,74 @@ folder) by the board's own file name in it and the session that runs on it (HW_B
 copy's own routing/ledger.json is never read, and never copied back.  Any other board (a test
 fixture, a review snapshot run by the concept session) has no budget.
 
-SPENT means: the rounds are used and another would start, or the time is used.  Then
-`route.py wall <group>` is the one command left.  It writes the question from the ledger into
-QUESTIONS.md -- every round and how it ended, what blocks (yours to say: parts, vias, nets),
-and the changes that would unblock it in the fixed order of what they cost: placement, rule,
-swap (a pin or a part), layer -- and prints the ring.  Then the board moves to the next group.
-A wall may be declared BEFORE the budget is spent, and should be when a round has shown the
-cause: the budget is a ceiling, not a target.
+SPENT means: the rounds are used and another would start, or the time is used.  Then the
+terms count and `route.py wall <group>` are what is left.  The wall writes the question from
+the ledger into QUESTIONS.md -- every round and how it ended, what blocks (yours to say:
+parts, vias, nets), and the changes that would unblock it in the fixed order of what they
+cost: placement, rule, swap (a pin or a part), layer -- and prints the ring.  Then the board
+moves to the next group.  A wall may be declared BEFORE the budget is spent, and should be
+when a round has shown the cause: the budget is a ceiling, not a target.
+
+THE WALL CARRIES ITS COUNT.  A wall asks for a term of the design to move, and a term nobody
+counted is a guess: the answer grants it, the next round shows it was not enough, and the
+group is back with the next term -- one term a question, hours a term.  (board1, 2026-11-23
+and 24: 28 walls on five groups in 32 hours; one group of 33 nets had 10 walls and 13.5 h of
+tool time against a 6 h budget, and no net on copper.)  So the changes a wall offers are the
+rows of a table that CLOSED on a scratch copy, and the table starts from the loose end:
+
+  1. the CEILING -- one variant with EVERY term that could move, moved at once: every
+     keep-out the group could ask to open, every spacing at the fab's own minimum, every
+     layer the stack-up has, every part of it that could shift.  It is the loosest problem
+     there is and closes fast when it closes at all.  When it does not close, no single term
+     will: the group does not fit this placement and stack-up, the ceiling's own numbers are
+     the question, and it is the user's at once -- not ten walls later.
+  2. when the ceiling closes -- one variant per term: that term ALONE moved, or every term
+     BUT it.  All of them at once (`par.cmap`, `race.py`, a board-worker each): which terms
+     the group needs, and which it never did.  The cheapest row that closes is what is asked,
+     and its plan is the copper once the term is granted: the reopened group re-proves and
+     lays it, it does not search again.
+
+  The table is <board>/routing/terms/<group>.json, yours to write from the variants' results:
+
+      {"terms": {"T1": {"kind": "rule",      "text": "R1's reserve ends 0.6 mm further south (one via row)"},
+                 "T2": {"kind": "placement", "text": "R215..R217 move to the east pocket x 44..48.8"},
+                 "T3": {"kind": "layer",     "text": "the straps change layer west of U200 (In7)"}},
+       "rows":  [{"moved": ["T1", "T2", "T3"], "closes": true,  "left": 0, "evidence": "tmpWork/R4_terms/ceiling/result.json"},
+                 {"moved": ["T1"],             "closes": false, "left": 3, "evidence": "tmpWork/R4_terms/t1/result.json"},
+                 {"moved": ["T2"],             "closes": true,  "left": 0, "evidence": "tmpWork/R4_terms/t2/result.json"},
+                 {"moved": ["T3"],             "closes": null,  "left": null, "evidence": "tmpWork/R4_terms/t3/netgroup.log",
+                  "note": "no answer in the window: 4 knots at it 170"}]}
+
+  "kind": placement, rule, swap or layer.  "closes": true (every net of the group, gates
+  clean on the copy), false ("left": the nets it did not close), or null (no answer in the
+  window).  "evidence": the variant's result, a file of the board folder written in this
+  epoch -- a table counted for an earlier wall is refused.  A row with "moved": [] is the
+  published terms as they stand (more effort only).  `budget.py terms <group>` checks the
+  table; `route.py wall` refuses to write without it -- for a tier B or C group from its
+  first wall, for any group from its second -- and then takes no --change: the changes ARE
+  the closing rows, cheapest first.  The table that a wall quoted is kept beside it as
+  routing/terms/<group>.wall<n>.json.
+
+  THE TERMS COUNT HAS ITS OWN WINDOW: `bgwait.py run --group G --terms --name N -- <variant>`
+  runs when the budget is spent, costs no round and none of the group's time, and is on the
+  ledger.  The window opens with the epoch's first such job and lasts TERMS_S (tier A 20 min,
+  B 45 min, C 90 min); every variant started in it is ended at its end, and one that gave no
+  answer by then is "closes": null.  Start them together -- the cores are idle while a
+  question travels, and a window used one variant at a time is a window wasted.
+
+A REOPEN IS NOT A REFILL.  An answered wall (or a part that moved) opens a new epoch, and the
+epoch gets a SHARE of the tier's budget: half after the group's first wall, a quarter after
+every later one (never less than one round and 15 min).  The wall's own table holds a plan
+that closed on scratch, so what the new epoch has to do is lay it -- re-prove on the board as
+it stands, apply -- and a group that needs a whole budget again was not answered, it was
+postponed.  The full budget that every answer used to restore is what let one group spend
+four budgets and reach ten walls.  The share is written into the ledger's reopen event; an
+epoch opened before this rule keeps what it had.
 
 THE BUDGET REOPENS ONLY WHEN THE INPUT CHANGES: the handoff answers the wall's question in a
 later revision (handoff/07_answers.md carries its `## Qn`), or one of the group's own parts
-has moved on the board.  Not by a new name, a new seed or a new day.  A group that reaches a
+has moved on the board.  Not by a new name, a new seed or a new day -- and then to a share of
+the budget, not all of it (above).  A group that reaches a
 SECOND wall is a design problem and its question says so: concept answers it alone only when
 no offered change adds a term to the design -- more router effort, the board's own copper
 re-laid on terms already published, an order between groups -- and takes every other one to
@@ -114,6 +173,9 @@ KP = Path(__file__).resolve().parents[2]                 # kicad_project/
 TIERS = {"A": dict(rounds=2, seconds=45 * 60), "B": dict(rounds=3, seconds=2 * 3600),
          "C": dict(rounds=4, seconds=6 * 3600)}
 COUNT_S = 30 * 60            # the feasibility count
+TERMS_S = {"A": 20 * 60, "B": 45 * 60, "C": 90 * 60}     # the terms count a wall carries: one window, variants side by side
+REOPEN = (0.5, 0.25)         # the share of its tier's budget a reopened group gets: after its first wall, after any later
+MIN_S = 15 * 60              # ... and never less time than this
 CHECKS = 3                   # checks a round carries: its first, and two after a hand fix
 RACE = 6                     # variants, or runs in flight together, that are one round
 DEAD_S = 600                 # charged for a run that died without a word (killed -9)
@@ -336,6 +398,23 @@ def cost(e, now):
     return max(0.0, min(lim, now - e["t"]))
 
 
+def allowance(g):
+    """What the group's current epoch may cost: its tier's budget, or the share of it that the
+    reopen which began the epoch gave (REOPEN; an epoch opened before that rule has no share
+    on record and keeps the whole)."""
+    T = TIERS[g.get("tier", "A")]
+    ep = g.get("epoch", 1)
+    frac = next((float(e["frac"]) for e in g.get("events", [])
+                 if e["kind"] == "reopen" and e.get("epoch", 1) == ep and e.get("frac")), 1.0)
+    if frac >= 1.0:
+        return dict(rounds=T["rounds"], seconds=T["seconds"], frac=1.0)
+    return dict(rounds=max(1, int(T["rounds"] * frac)), seconds=max(MIN_S, T["seconds"] * frac), frac=frac)
+
+
+def share(frac):
+    return "all" if frac >= 1.0 else "half" if frac == 0.5 else "a quarter" if frac == 0.25 else f"{frac:g}"
+
+
 def tally(g, now=None):
     """What the group's current epoch has used."""
     now = now or time.time()
@@ -353,7 +432,7 @@ def tally(g, now=None):
             d_[j] = d_.get(j, 0) + 1
     rounds = checks = free = 0                           # free: runs that never negotiated, their round left out
     secs = count_s = last = 0.0
-    counts, on_copper, t_apply = [], {}, 0.0
+    counts, terms, on_copper, t_apply = [], [], {}, 0.0
     for e in g.get("events", []):                        # copper is a fact of the board, whatever the epoch
         if e["kind"] == "apply":
             on_copper[e.get("name")] = set(e.get("nets", []))
@@ -365,6 +444,8 @@ def tally(g, now=None):
         if k == "count":
             counts.append(e)
             count_s += s
+        elif k == "terms":                               # the count a wall carries: its own window, no round, not the group's time
+            terms.append(e)
         elif k in ("reopen", "worker", "apply", "rip"):
             pass
         elif k == "job":                                 # the job owns its time; what ran inside it says what it was
@@ -398,7 +479,7 @@ def tally(g, now=None):
                     free += 1                            # it measured nothing: its time counts, its round does not
                 else:
                     rounds, checks = rounds + int(e.get("rounds", 1)), 0
-    T = TIERS[g.get("tier", "A")]
+    T = allowance(g)
     wall = next((w for w in reversed(g.get("walls", [])) if w.get("epoch", 1) == ep), None)
     left_r, left_s = T["rounds"] - rounds, T["seconds"] - secs
     copper = set().union(*on_copper.values()) if on_copper else set()
@@ -408,7 +489,8 @@ def tally(g, now=None):
     state = ("wall" if wall else "applied" if copper and t_apply >= last else "spent" if no_more else "open")
     return dict(rounds=rounds, seconds=secs, checks=checks, free=free, counts=counts, count_s=count_s, complete=complete,
                 nets_applied=nets_applied, left_rounds=left_r, left_seconds=left_s, state=state, wall=wall,
-                no_more=no_more, allow_rounds=T["rounds"], allow_seconds=T["seconds"])
+                no_more=no_more, allow_rounds=T["rounds"], allow_seconds=T["seconds"], frac=T["frac"], terms=terms,
+                terms_end=(min(e["t"] for e in terms) + TERMS_S[g.get("tier", "A")]) if terms else None)
 
 
 def key_for(L, name, nets):
@@ -452,9 +534,10 @@ def _reopen(L, g, key):
         now = parts_sha(hb, g.get("nets", []))
         if now and w.get("parts") and now != w["parts"]:
             why = "its parts moved on the board"
-    if why:
+    if why:                                              # a reopen is not a refill: a share of the tier's budget
+        frac = REOPEN[0] if len(g.get("walls", [])) <= 1 else REOPEN[1]
         g["epoch"] = g.get("epoch", 1) + 1
-        g["events"].append(dict(t=time.time(), kind="reopen", epoch=g["epoch"], result=why))
+        g["events"].append(dict(t=time.time(), kind="reopen", epoch=g["epoch"], result=why, frac=frac))
         L.dirty = True
     return why
 
@@ -471,11 +554,16 @@ def refuse(key, g, t, what):
                f"its parts moves on the board -- not before. Work on the next group.")
     else:
         msg = (f"BUDGET SPENT -- {key}: {used}; {what} refused. More runs will not close it: something in the "
-               f"design is in its way. The one command left is\n    tools/kpy tools/route/route.py wall {key} "
-               f"--blocks \"<the parts, vias, nets in the way>\" --change \"placement: ...\" "
-               f"[--change \"rule: ...\"] [--change \"swap: ...\"] [--change \"layer: ...\"]\n"
-               f"which writes the question from the ledger; then work on the next group "
-               f"(tools/route/budget.py's docstring is the manual).")
+               f"design is in its way. What is left, in this order:\n"
+               f"  1. the terms count, on scratch copies and all at once -- the CEILING (every term that could "
+               f"move, moved together) and one variant per term:\n"
+               f"       python3 tools/bgwait.py run --group {key} --terms --name <variant> -- <its command>\n"
+               f"     ({dur(TERMS_S[T])} from the first of them; no round, not the group's time)\n"
+               f"  2. routing/terms/{key}.json, the table of what closed "
+               f"(`python3 tools/route/budget.py terms {key}` checks it)\n"
+               f"  3. tools/kpy tools/route/route.py wall {key} --blocks \"<the parts, vias, nets in the way>\"\n"
+               f"which writes the question from the ledger and the table; then work on the next group "
+               f"(tools/route/budget.py's docstring is the manual: THE WALL CARRIES ITS COUNT).")
     print(msg, file=sys.stderr)
     sys.exit(EXIT)
 
@@ -605,12 +693,15 @@ def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, labe
             g["tier"], g["basis"] = max(tier, g["tier"]), basis
         L.dirty = True
         what = {"run": "the router run", "race": "the race", "check": "the check", "job": "the job",
-                "count": "the feasibility count", "worker": "the worker", "before": "the earlier work"}[kind]
+                "count": "the feasibility count", "worker": "the worker", "before": "the earlier work",
+                "terms": "the terms count"}[kind]
         why = _reopen(L, g, key)
-        if why:
-            print(f"budget: {key} reopened ({why}): a new budget, tier {g['tier']}")
         t = tally(g, now)
-        T = TIERS[g["tier"]]
+        T = dict(rounds=t["allow_rounds"], seconds=t["allow_seconds"])
+        if why:
+            print(f"budget: {key} reopened ({why}): {T['rounds']} round(s) and {dur(T['seconds'])}, "
+                  f"{share(t['frac'])} of tier {g['tier']}'s budget -- a reopen is not a refill: lay the plan the "
+                  f"wall's table closed on scratch")
         ep = g["epoch"]
         if t["state"] == "wall":
             refuse(key, g, t, what)
@@ -630,6 +721,24 @@ def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, labe
                 e["jid"] = jid
             g["events"].append(e)
             return Token(hb, key, e["id"], COUNT_S, now)
+        if kind == "terms":                               # the count a wall carries: runs when spent, in its own window
+            span = TERMS_S[g["tier"]]
+            t0 = min((x["t"] for x in t["terms"]), default=now)
+            left = t0 + span - now
+            if left <= 1:
+                print(f"BUDGET SPENT -- {key}: its terms count is over ({dur(span)} from "
+                      f"{time.strftime('%H:%M', time.localtime(t0))}, every variant side by side). A variant that "
+                      f"gave no answer in it is `\"closes\": null` in routing/terms/{key}.json: write the table, "
+                      f"then `route.py wall {key}`.", file=sys.stderr)
+                sys.exit(EXIT)
+            e = dict(base, id=len(g["events"]) + 1, s=None, limit=round(left, 1), pid=None if jid else os.getpid())
+            if jid:
+                e["jid"] = jid
+            g["events"].append(e)
+            print(f"budget: {key} -- terms count, variant {len(t['terms']) + 1}: it may take {dur(left)} "
+                  f"(the window of {dur(span)} {'is open' if t['terms'] else 'opens now'}); no round, and not the "
+                  f"group's time. Start every variant now, the ceiling among them.")
+            return Token(hb, key, e["id"], left, now)
         if kind == "before":                              # rounds run before the ledger existed: only ever adds
             g["events"].append(dict(base, id=len(g["events"]) + 1, s=0, round=True, rounds=max(1, int(variants)),
                                     result="before the ledger: " + label, ok=False))
@@ -781,6 +890,160 @@ def ripped(board_dir, name):
                 L.dirty = True
 
 
+# ---------------------------------------------------------------- the terms table (what a wall carries)
+
+def terms_path(hb, key):
+    return Path(hb) / "routing" / "terms" / (re.sub(r"[^A-Za-z0-9_.-]", "_", key) + ".json")
+
+
+def epoch_start(g):
+    ep = g.get("epoch", 1)
+    return min((e["t"] for e in g.get("events", []) if e.get("epoch", 1) == ep), default=0.0)
+
+
+def read_terms(hb, key, since=0.0):
+    """The group's terms table, checked (the docstring's THE WALL CARRIES ITS COUNT).
+    -> (the table, []) or (None, what is wrong with it).  The table gains "path", "sha",
+    "ceiling" (its row) and "closing" (the rows that closed, cheapest first)."""
+    hb = Path(hb)
+    p = terms_path(hb, key)
+    rel = p.relative_to(hb)
+    try:
+        raw = p.read_bytes()
+        D = json.loads(raw)
+    except OSError:
+        return None, [f"there is no {rel}"]
+    except ValueError as e:
+        return None, [f"{rel} is not JSON: {e}"]
+    if not isinstance(D, dict):
+        return None, [f"{rel}: an object with \"terms\" and \"rows\""]
+    errs = []
+    terms = D.get("terms") if isinstance(D.get("terms"), dict) else {}
+    if not terms:
+        errs.append("\"terms\" is empty: name every term that could move -- a keep-out, a spacing, a layer's use, "
+                    "a part's place, a pin")
+    for tid, x in terms.items():
+        if not isinstance(x, dict) or x.get("kind") not in CHANGES or not str(x.get("text") or "").strip():
+            errs.append(f"term {tid}: {{\"kind\": one of {', '.join(CHANGES)}, \"text\": \"the change, with its numbers\"}}")
+    if errs:
+        return None, errs
+    allt = set(terms)
+
+    def rank(mv):
+        k = [CHANGES.index(terms[m]["kind"]) for m in mv]
+        return (max(k) if k else -1, len(k), sum(k))
+
+    rows = []
+    for i, r in enumerate(D.get("rows") if isinstance(D.get("rows"), list) else []):
+        if not isinstance(r, dict) or not isinstance(r.get("moved"), list):
+            errs.append(f"row {i + 1}: {{\"moved\": [term ids], \"closes\": true | false | null, \"left\": the nets "
+                        f"not closed, \"evidence\": \"a file of the board folder\"}}")
+            continue
+        mv = [str(m) for m in r["moved"]]
+        name = f"row {i + 1} ({' + '.join(mv) or 'no term'})"
+        if set(mv) - allt:
+            errs.append(f"{name}: {', '.join(sorted(set(mv) - allt))} is not in \"terms\"")
+            continue
+        c, left = r.get("closes", "?"), r.get("left")
+        if not (c is True or c is False or c is None):
+            errs.append(f"{name}: \"closes\" is true, false, or null (no answer in the window)")
+        elif c is True and not (left == 0 and left is not False):
+            errs.append(f"{name}: it closes with \"left\": {left!r}? closed is every net of the group: 0 left")
+        elif c is False and not (isinstance(left, int) and not isinstance(left, bool) and left > 0):
+            errs.append(f"{name}: \"left\": how many nets it did not close -- the wall quotes the number")
+        ev = str(r.get("evidence") or "")
+        f = hb / ev
+        if not ev or Path(ev).is_absolute() or ".." in Path(ev).parts or not f.is_file():
+            errs.append(f"{name}: \"evidence\": the variant's result, a file inside the board folder (tmpWork/..., "
+                        f"routing/...) -- {('no such file: ' + ev) if ev else 'none given'}")
+        elif f.stat().st_mtime < since:
+            errs.append(f"{name}: its evidence {ev} is older than this epoch (which began "
+                        f"{time.strftime('%m-%d %H:%M', time.localtime(since))}): it was counted for an earlier wall, "
+                        f"on an earlier board -- count it again")
+        rows.append(dict(r, moved=mv, closes=c))
+    ceiling = next((r for r in rows if set(r["moved"]) == allt), None)
+    if ceiling is None:
+        errs.append("no CEILING row: one variant with every term moved at once (\"moved\": "
+                    + json.dumps(sorted(allt)) + "). If that does not close, no single term will, and the "
+                    "question is a different one")
+    elif ceiling["closes"] is True and len(allt) > 1:
+        for tid in sorted(allt):
+            if not any(set(r["moved"]) in ({tid}, allt - {tid}) for r in rows):
+                errs.append(f"term {tid} has no row of its own: the ceiling closes, so count {tid} ALONE or every "
+                            f"term BUT {tid} -- which terms the group needs is the question")
+    if errs:
+        return None, errs
+    rows.sort(key=lambda r: r is not ceiling)             # the ceiling first, the rest as written
+    closing = sorted((r for r in rows if r["closes"] is True), key=lambda r: rank(r["moved"]))
+    return dict(D, terms=terms, rows=rows, ceiling=ceiling, closing=closing, path=str(rel),
+                sha=hashlib.sha256(raw).hexdigest()[:12]), []
+
+
+def terms_lines(TT):
+    """The table as the wall quotes it."""
+    allt, bs = set(TT["terms"]), chr(92)
+    out = [f"**The count** (`{TT['path']}`: each row one variant on a scratch copy, run side by side; the first is "
+           "the CEILING, every term below moved at once):", "",
+           "| moved | closes | nets left | evidence |", "|---|---|---|---|"]
+    for r in TT["rows"]:
+        mv, c = r["moved"], r["closes"]
+        what = (f"every term ({', '.join(mv)}): the ceiling" if set(mv) == allt and len(allt) > 1 else
+                " + ".join(mv) if mv else "no term: the published terms as they stand")
+        out.append(f"| {what} | {'yes' if c is True else 'NO' if c is False else 'no answer in the window'} | "
+                   f"{r['left'] if r.get('left') is not None else '?'} | `{r['evidence']}`"
+                   + (f": {str(r['note']).replace('|', bs + '|')}" if r.get("note") else "") + " |")
+    out += ["", "**The terms:**", ""]
+    out += [f"- **{tid}** ({x['kind']}) — {str(x['text']).strip()}" for tid, x in TT["terms"].items()]
+    return out
+
+
+def closing_lines(TT, key):
+    """What the wall offers: the rows that closed, cheapest first -- or that nothing did."""
+    if not TT["closing"]:
+        c = TT["ceiling"]
+        return ["", "**No change the board can name closes it.** With every term above moved at once the count "
+                + (f"left {c['left']} net(s) open: {key} does not fit this placement and stack-up as they stand"
+                   if c["closes"] is False else
+                   f"gave no answer in its window: as loose as the board can make it, {key} still does not close "
+                   "in the time a group may cost")
+                + ". No routing term is left to ask for: what moves next is the design's -- a part out of the "
+                "group's field, a layer, a net -- and the user's, with the ceiling's evidence above "
+                "(RELAY_PROTOCOL.md section 5)."]
+    out = ["", "**The changes that close it, cheapest first** -- each is a row above that CLOSED on a scratch copy, "
+           "and its plan is the copper once granted (placement, rule, swap, layer is the order of cost; grant one, "
+           "or say the last rung allowed):", ""]
+    for i, r in enumerate(TT["closing"]):
+        mv = r["moved"]
+        kinds = sorted({TT["terms"][m]["kind"] for m in mv}, key=CHANGES.index)
+        out.append(f"{i + 1}. **{' + '.join(kinds) if kinds else 'no term'}** — "
+                   + (f"{' + '.join(mv)}: " + "; ".join(str(TT["terms"][m]["text"]).strip() for m in mv) if mv else
+                      "more router effort only: the count closed on the published terms, and the budget ran out first")
+                   + f" (`{r['evidence']}`)")
+    return out
+
+
+def cmd_terms(board_dir, key):
+    """`budget.py terms <group>`: the table, checked as the wall will check it."""
+    hb = home(board_dir)
+    if hb is None:
+        print(f"{board_dir}: not a session's board: no budget, no terms table", file=sys.stderr)
+        return 2
+    L = read(hb)
+    g = L["groups"].get(key) or next((x for k, x in L["groups"].items() if key in x.get("names", [])), None)
+    if g is None:
+        print(f"terms: {key} is not in the ledger ({', '.join(sorted(L['groups'])) or 'empty'})", file=sys.stderr)
+        return 2
+    key = next(k for k, x in L["groups"].items() if x is g)
+    TT, errs = read_terms(hb, key, epoch_start(g))
+    if errs:
+        print(f"TERMS FAIL -- {terms_path(hb, key).relative_to(hb)}:\n  " + "\n  ".join(errs))
+        return 1
+    print("\n".join(terms_lines(TT) + closing_lines(TT, key)))
+    print(f"\nTERMS OK -- {len(TT['rows'])} row(s), {len(TT['closing'])} close(s): `route.py wall {key} --blocks \"...\"` "
+          f"writes the question from it")
+    return 0
+
+
 # ---------------------------------------------------------------- the commands (route.py budget / wall)
 
 def table(hb, now=None):
@@ -810,7 +1073,7 @@ def print_table(hb):
         print(f"{r['group'][:18]:18s}  {r['tier']}    {r['rounds']} / {r['allow_rounds']}   "
               f"{dur(r['seconds']):>7s} / {dur(r['allow_seconds']):<6s} {dur(r['count_s']) if r['count_s'] else '-':>6s}  "
               f"{r['nets']:5d}  {r['nets_applied']:9d}  {r['state']}"
-              + (f" (wall {r['walls']})" if r["walls"] else ""))
+              + (f" (wall {r['walls']}, {dur(r['total_seconds'])} in all)" if r["walls"] else ""))
     ug = read(hb).get("ungrouped", [])
     if ug:
         print(f"\noutside every group: {len(ug)} background job(s), {dur(sum(u['s'] for u in ug))} "
@@ -818,7 +1081,8 @@ def print_table(hb):
               + ", ".join(f"{u['name']} {dur(u['s'])}" for u in sorted(ug, key=lambda u: -u["s"])[:4]) + ")")
     spent = [r["group"] for r in rows if r["state"] == "spent"]
     if spent:
-        print(f"\nSPENT, and no question asked yet: {', '.join(spent)} -- `route.py wall <group> ...` each, then the next group")
+        print(f"\nSPENT, and no question asked yet: {', '.join(spent)} -- for each the terms count (`bgwait.py run "
+              f"--group G --terms`, the ceiling first), its table, `route.py wall <group> ...`; then the next group")
     return 0
 
 
@@ -830,8 +1094,11 @@ def print_group(hb, key):
         return 2
     t = tally(g)
     print(f"{key}: tier {g['tier']} ({g.get('basis', '')}); epoch {g.get('epoch', 1)}; {t['state']}; "
-          f"{t['rounds']} of {t['allow_rounds']} round(s), {dur(t['seconds'])} of {dur(t['allow_seconds'])}; "
-          f"names: {', '.join(g.get('names', []))}")
+          f"{t['rounds']} of {t['allow_rounds']} round(s), {dur(t['seconds'])} of {dur(t['allow_seconds'])}"
+          + (f" ({share(t['frac'])} of the tier's: a reopen)" if t["frac"] < 1 else "")
+          + (f"; terms count open until {time.strftime('%H:%M', time.localtime(t['terms_end']))}"
+             if t["terms_end"] and t["terms_end"] > time.time() else "; terms count used" if t["terms"] else "")
+          + f"; names: {', '.join(g.get('names', []))}")
     for e in g.get("events", []):
         print("  " + event_line(e))
     for w in g.get("walls", []):
@@ -869,7 +1136,8 @@ def cmd_budget(board_dir, arg=None, worker=None, before=None):
         tier, basis = classify(hb, nets, matched or bool(d and d.get("matched")))
         T = TIERS[tier]
         print(f"{Path(arg).name}: group {d['id'] if d else name} -- tier {tier} ({basis}): {T['rounds']} round(s), "
-              f"{dur(T['seconds'])}, and one feasibility count of {dur(COUNT_S)}")
+              f"{dur(T['seconds'])}, one feasibility count of {dur(COUNT_S)}, and before a wall a terms count of "
+              f"{dur(TERMS_S[tier])}; reopened, it gets {share(REOPEN[0])} of that, then {share(REOPEN[1])}")
         return 0
     if arg and worker:
         tok = gate(board_dir, arg, kind="worker", label=worker)
@@ -879,7 +1147,9 @@ def cmd_budget(board_dir, arg=None, worker=None, before=None):
               f"  GROUP {tok.key} (tier {g['tier']}): {max(0, t['left_rounds'])} round(s) and "
               f"{dur(max(0, t['left_seconds']))} are left, and the tools count every run you start -- on your "
               f"scratch copy too.\n  STOP at the first `BUDGET SPENT`, or when one round has shown what blocks: "
-              f"hand back what blocks (parts, vias, nets) and the change that would unblock it; do not start another run.")
+              f"hand back what blocks (parts, vias, nets) and EVERY term that could move, each with the edit that "
+              f"moves it on a scratch copy -- the terms count's variants (budget.py, THE WALL CARRIES ITS COUNT); "
+              f"do not start another run.")
         return 0
     if arg:
         return print_group(hb, arg)
@@ -904,10 +1174,6 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
                   f"{', '.join(CHANGES)} (that order is their cost)", file=sys.stderr)
             return 2
         rows.append((CHANGES.index(kind), kind, text.strip()))
-    if not rows:
-        print("wall: at least one --change \"placement|rule|swap|layer: ...\": a wall with no way through it is "
-              "not a question concept can answer", file=sys.stderr)
-        return 2
     rows.sort()
     qf = hb / "QUESTIONS.md"
     if not qf.is_file():
@@ -931,15 +1197,39 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
             print(f"wall: {key} has no round and no count on record: run the feasibility count or one round first "
                   f"-- a wall is what a measurement found, not a guess", file=sys.stderr)
             return 2
+        n_wall = len(g.get("walls", [])) + 1
+        # the wall carries its count: the changes it offers are rows that closed on scratch
+        TT, terrs = None, []
+        if n_wall >= 2 or g.get("tier", "A") != "A" or terms_path(hb, key).is_file():
+            TT, terrs = read_terms(hb, key, epoch_start(g))
+        if terrs:
+            print(f"WALL REFUSED -- {key}'s wall number {n_wall} (tier {g.get('tier', 'A')}) carries its count, and "
+                  f"{terms_path(hb, key).relative_to(hb)} is not it yet:\n  " + "\n  ".join(terrs) + "\n"
+                  f"Count on scratch copies, all at once: the CEILING (every term that could move, moved together) "
+                  f"and one variant per term --\n    python3 tools/bgwait.py run --group {key} --terms --name "
+                  f"<variant> -- <its command>\nthen write the table (`python3 tools/route/budget.py terms {key}` "
+                  f"checks it) and run this again. tools/route/budget.py's docstring has the format: THE WALL "
+                  f"CARRIES ITS COUNT.", file=sys.stderr)
+            return 2
+        if TT and rows:
+            print(f"wall: no --change with a terms table: the changes this wall offers are the rows of "
+                  f"{TT['path']} that closed. A change that is not there has not been counted: add its term and "
+                  f"its row.", file=sys.stderr)
+            return 2
+        if not TT and not rows:
+            print("wall: at least one --change \"placement|rule|swap|layer: ...\": a wall with no way through it is "
+                  "not a question concept can answer", file=sys.stderr)
+            return 2
         txt = qf.read_text()
         qn = max([int(x) for x in re.findall(r"^## Q(\d+)\b", txt, re.M)] or [0]) + 1
-        n_wall = len(g.get("walls", [])) + 1
         ep = g.get("epoch", 1)
         ev = [e for e in g["events"] if e.get("epoch", 1) == ep and e["kind"] not in ("reopen",)]
         rev = handoff_rev(hb)
         head = blocks.strip().splitlines()[0][:110]
         second = n_wall >= 2
         title = (f"WALL {key}" + (f", the {['', '', 'SECOND', 'THIRD'][min(n_wall, 3)]}" if second else "") + f": {head}")
+        if TT and not TT["closing"]:
+            title = title.replace(": ", " -- DOES NOT FIT: ", 1)
         # the layers the epoch's rounds could use, and the board's others: a layer no round opened
         # is the change nobody priced (board1 R_PMIC, 2026-11-23: two walls on three layers, with
         # four more the handoff's own terms allowed)
@@ -973,15 +1263,29 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
             out.append(f"| {time.strftime('%m-%d %H:%M', time.localtime(e['t']))} | {what}: "
                        f"{str(e.get('label') or e.get('name', '')).replace('|', chr(92) + '|')} | "
                        f"{dur(e['s']) if e.get('s') is not None else 'no end'} | {res} |")
-        out += ["", "**The changes that would unblock it, cheapest first** (placement, rule, swap, layer -- "
-                "a ladder: say the last rung allowed):", ""]
-        out += [f"{i + 1}. **{kind}** — {text}" for i, (_, kind, text) in enumerate(rows)]
+        if TT:
+            out += [""] + terms_lines(TT) + closing_lines(TT, key)
+        else:
+            out += ["", "**The changes that would unblock it, cheapest first** (placement, rule, swap, layer -- "
+                    "a ladder: say the last rung allowed):", ""]
+            out += [f"{i + 1}. **{kind}** — {text}" for i, (_, kind, text) in enumerate(rows)]
+        nxt = allowance(dict(g, epoch=ep + 1, events=[dict(kind="reopen", epoch=ep + 1,
+                                                           frac=REOPEN[0] if n_wall <= 1 else REOPEN[1])]))
         out += ["", f"**Without an answer I would:** leave {key} unrouted and work on the next group; no value is chosen.",
+                f"**When it reopens:** {nxt['rounds']} round(s) and {dur(nxt['seconds'])}, {share(nxt['frac'])} of its "
+                f"tier's budget -- enough to re-prove and lay a plan that closed above, not to search again.",
                 f"**Working from:** rev {rev}."]
         qf.write_text(txt.rstrip("\n") + "\n\n" + "\n".join(out) + "\n")
-        g.setdefault("walls", []).append(dict(t=time.time(), epoch=ep, n=n_wall, q=f"Q{qn}", rev=rev,
-                                              parts=parts_sha(hb, g.get("nets", [])), blocks=blocks.strip(),
-                                              changes=[f"{k}: {x}" for _, k, x in rows]))
+        w = dict(t=time.time(), epoch=ep, n=n_wall, q=f"Q{qn}", rev=rev,
+                 parts=parts_sha(hb, g.get("nets", [])), blocks=blocks.strip(),
+                 changes=[f"{k}: {x}" for _, k, x in rows])
+        if TT:                                            # the table as the wall quoted it, kept beside it
+            kept = terms_path(hb, key).with_name(f"{terms_path(hb, key).stem}.wall{n_wall}.json")
+            kept.write_bytes(terms_path(hb, key).read_bytes())
+            w["terms"] = dict(path=str(kept.relative_to(hb)), sha=TT["sha"], ceiling=TT["ceiling"]["closes"],
+                              closing=[" + ".join(r["moved"]) or "no term" for r in TT["closing"]])
+            w["changes"] = w["terms"]["closing"]
+        g.setdefault("walls", []).append(w)
         L.dirty = True
     print(f"wrote Q{qn} into {qf.name} from the ledger ({len(ev)} event(s)). {key} is closed until rev > {rev} "
           f"answers Q{qn} or its parts move.")
@@ -993,7 +1297,17 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="the budget table, without KiCad (route.py budget is the same)")
-    ap.add_argument("--board", default=".")
-    ap.add_argument("group", nargs="?")
+    ap.add_argument("--board", default=".", help="the board folder, or boardN (default: here)")
+    ap.add_argument("group", nargs="*", metavar="[terms] GROUP",
+                    help="a group: its record. `terms GROUP`: check routing/terms/GROUP.json as the wall will")
     a_ = ap.parse_args()
-    sys.exit(cmd_budget(a_.board, a_.group))
+    bd_ = a_.board
+    if re.fullmatch(r"board\d+", bd_) and sorted(KP.glob(bd_ + "_*")):
+        bd_ = str(sorted(KP.glob(bd_ + "_*"))[0])
+    elif bd_ == "." and home(".") is None and session_board() is not None:
+        bd_ = str(session_board())
+    if a_.group[:1] == ["terms"]:
+        if len(a_.group) != 2:
+            ap.error("terms GROUP")
+        sys.exit(cmd_terms(bd_, a_.group[1]))
+    sys.exit(cmd_budget(bd_, a_.group[0] if a_.group else None))
