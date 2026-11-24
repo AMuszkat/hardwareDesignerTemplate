@@ -98,7 +98,12 @@ layer is a crossing with no second layer there; the term to look for is what
 shuts the other layers at that place. A static count (crossing pairs, lanes)
 ranks a rung only after it has predicted a race: two ladders once went out on
 a crossing count that fell from 64 pairs to 50 while the race went from 82
-cells to 97.
+cells to 97. Two lines it prints settle a wall without a term: `PAIR TWICE` (one
+pair knotted an even number of times on a layer crosses and crosses back --
+the two paths are exchanged by hand between the knots, no via) and `VIA PAIR`
+(contested vias nearer than the separation, which a knot table of two-net
+clusters drops). A router that plateaus on either is answered with hand-laid
+fixed copper and another race, not with an allowance.
 
 **A question about a route** (pair order, which side a bus leaves, a
 crossing, an escape) is never answered from pin order alone. Before an
