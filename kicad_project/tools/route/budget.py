@@ -94,9 +94,17 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
                  {"moved": ["T3"],             "closes": null,  "left": null, "evidence": "tmpWork/R4_terms/t3/netgroup.log",
                   "note": "no answer in the window: 4 knots at it 170"}]}
 
-  "kind": placement, rule, swap or layer.  "closes": true (every net of the group, gates
-  clean on the copy), false ("left": the nets it did not close), or null (no answer in the
-  window).  "evidence": the variant's result, a file of the board folder written in this
+  "kind": placement, rule, swap or layer.  "closes": true (every net of the group), false
+  ("left": the nets it did not close), or null (no answer in the window).  A row that closes
+  says HOW it is known, "proof": "check" (the variant's plan passed `route.py check` on the
+  copy: it is the copper once granted), "router" (every net routed and none overlapping, the
+  plan not yet through the gate: shape and DRC findings are still to fix) or "count" (a
+  counting model says the nets fit; there is no plan).  The wall prints the level beside each
+  row and calls a row that is not "check" a LEAD: granted, it still owes its gated plan, and
+  whoever grants knows that before granting.  (board1, 2026-11-24: a runner scored a routed
+  ceiling whose raw plan failed the gate as `LEFT 33` -- its 33 findings, read as nets, a
+  DOES NOT FIT wall for a group that routes; another table marked channel counts "closes".)
+  "evidence": the variant's result, a file of the board folder written in this
   epoch -- a table counted for an earlier wall is refused.  A row with "moved": [] is the
   published terms as they stand (more effort only).  `budget.py terms <group>` checks the
   table; `route.py wall` refuses to write without it -- for a tier B or C group from its
@@ -186,6 +194,10 @@ EXIT = 76                    # BUDGET SPENT
 ENV_IN = "HW_BUDGET_IN"      # set by a tool that logs its children's cost itself
 ENV_JOB = "HW_BUDGET_JOB"    # a job id: set by bgwait.py --group for its command; the job owns the time
 CHANGES = ("placement", "rule", "swap", "layer")          # the fixed order of cost
+# how a closing row of a terms table is known: (the table's word, the wall's word)
+PROOFS = {"check": ("yes", "PROVED: `route.py check` PASS on the copy"),
+          "router": ("routes, plan not gated", "A LEAD: every net routed, its plan has not passed `route.py check`"),
+          "count": ("counts, no plan", "A LEAD: a counting model closes it, no plan exists yet")}
 BALL = re.compile(r"^[A-Z]{1,2}\d{1,2}$")
 PAIR = re.compile(r"^(.*?)(_P|_N|_DP|_DN|_DM|\+|-)$")
 HALF = {"_P": "_N", "_N": "_P", "_DP": ("_DN", "_DM"), "_DN": "_DP", "_DM": "_DP", "+": "-", "-": "+"}
@@ -949,6 +961,10 @@ def read_terms(hb, key, since=0.0):
             errs.append(f"{name}: \"closes\" is true, false, or null (no answer in the window)")
         elif c is True and not (left == 0 and left is not False):
             errs.append(f"{name}: it closes with \"left\": {left!r}? closed is every net of the group: 0 left")
+        elif c is True and r.get("proof") not in PROOFS:
+            errs.append(f"{name}: it closes -- known how? \"proof\": \"check\" (its plan passed route.py check on "
+                        f"the copy), \"router\" (every net routed, the plan not through the gate yet) or \"count\" "
+                        f"(a counting model, no plan). The wall prints it: a row that is not \"check\" is a lead")
         elif c is False and not (isinstance(left, int) and not isinstance(left, bool) and left > 0):
             errs.append(f"{name}: \"left\": how many nets it did not close -- the wall quotes the number")
         ev = str(r.get("evidence") or "")
@@ -989,7 +1005,7 @@ def terms_lines(TT):
         mv, c = r["moved"], r["closes"]
         what = (f"every term ({', '.join(mv)}): the ceiling" if set(mv) == allt and len(allt) > 1 else
                 " + ".join(mv) if mv else "no term: the published terms as they stand")
-        out.append(f"| {what} | {'yes' if c is True else 'NO' if c is False else 'no answer in the window'} | "
+        out.append(f"| {what} | {PROOFS[r['proof']][0] if c is True else 'NO' if c is False else 'no answer in the window'} | "
                    f"{r['left'] if r.get('left') is not None else '?'} | `{r['evidence']}`"
                    + (f": {str(r['note']).replace('|', bs + '|')}" if r.get("note") else "") + " |")
     out += ["", "**The terms:**", ""]
@@ -1009,16 +1025,17 @@ def closing_lines(TT, key):
                 + ". No routing term is left to ask for: what moves next is the design's -- a part out of the "
                 "group's field, a layer, a net -- and the user's, with the ceiling's evidence above "
                 "(RELAY_PROTOCOL.md section 5)."]
-    out = ["", "**The changes that close it, cheapest first** -- each is a row above that CLOSED on a scratch copy, "
-           "and its plan is the copper once granted (placement, rule, swap, layer is the order of cost; grant one, "
-           "or say the last rung allowed):", ""]
+    out = ["", "**The changes that close it, cheapest first** -- each is a row above that CLOSED on a scratch copy "
+           "(placement, rule, swap, layer is the order of cost; grant one, or say the last rung allowed). PROVED: "
+           "its plan passed `route.py check` and is the copper once granted. A LEAD: it closed for the router or "
+           "for a count only, and the reopened group owes its gated plan before any copper:", ""]
     for i, r in enumerate(TT["closing"]):
         mv = r["moved"]
         kinds = sorted({TT["terms"][m]["kind"] for m in mv}, key=CHANGES.index)
         out.append(f"{i + 1}. **{' + '.join(kinds) if kinds else 'no term'}** — "
                    + (f"{' + '.join(mv)}: " + "; ".join(str(TT["terms"][m]["text"]).strip() for m in mv) if mv else
                       "more router effort only: the count closed on the published terms, and the budget ran out first")
-                   + f" (`{r['evidence']}`)")
+                   + f" (`{r['evidence']}`) -- {PROOFS[r['proof']][1]}")
     return out
 
 

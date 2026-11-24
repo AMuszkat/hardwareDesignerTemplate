@@ -201,15 +201,15 @@ class TermsTable(unittest.TestCase):
         self.assertTrue(any("no CEILING row" in e for e in errs), errs)
 
     def test_a_closing_ceiling_needs_every_term_counted(self):
-        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0), dict(moved=["T1"], closes=False, left=3)]
+        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0, proof="check"), dict(moved=["T1"], closes=False, left=3)]
         TT, errs = self.read(TERMS3, rows)
         self.assertIsNone(TT)
         self.assertEqual(sum("has no row of its own" in e for e in errs), 2, errs)      # T2 and T3
 
     def test_alone_or_left_out_both_count(self):
-        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0),
+        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0, proof="check"),
                 dict(moved=["T1"], closes=False, left=3),
-                dict(moved=["T1", "T3"], closes=True, left=0),            # every term but T2
+                dict(moved=["T1", "T3"], closes=True, left=0, proof="check"),            # every term but T2
                 dict(moved=["T3"], closes=None, left=None, note="no answer")]
         TT, errs = self.read(TERMS3, rows)
         self.assertEqual(errs, [])
@@ -222,22 +222,33 @@ class TermsTable(unittest.TestCase):
 
     def test_one_term_is_its_own_ceiling(self):
         one = {"T1": TERMS3["T1"]}
-        TT, errs = self.read(one, [dict(moved=["T1"], closes=True, left=0)])
+        TT, errs = self.read(one, [dict(moved=["T1"], closes=True, left=0, proof="check")])
         self.assertEqual(errs, [])
         self.assertEqual(len(TT["closing"]), 1)
 
     def test_cheapest_first(self):
-        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0),
-                dict(moved=["T3"], closes=True, left=0),                  # layer
-                dict(moved=["T1"], closes=True, left=0),                  # rule
-                dict(moved=["T2"], closes=True, left=0),                  # placement
-                dict(moved=[], closes=True, left=0)]                      # no term: more effort only
+        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0, proof="check"),
+                dict(moved=["T3"], closes=True, left=0, proof="check"),                  # layer
+                dict(moved=["T1"], closes=True, left=0, proof="check"),                  # rule
+                dict(moved=["T2"], closes=True, left=0, proof="check"),                  # placement
+                dict(moved=[], closes=True, left=0, proof="check")]                      # no term: more effort only
         TT, errs = self.read(TERMS3, rows)
         self.assertEqual(errs, [])
         self.assertEqual([r["moved"] for r in TT["closing"]], [[], ["T2"], ["T1"], ["T3"], ["T1", "T2", "T3"]])
 
+    def test_a_closing_row_says_how_it_is_known(self):
+        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0)]
+        TT, errs = self.read(TERMS3, rows)
+        self.assertTrue(any('"proof"' in e for e in errs), errs)
+        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0, proof="looks fine")]
+        TT, errs = self.read(TERMS3, rows)
+        self.assertTrue(any('"proof"' in e for e in errs), errs)
+        rows = [dict(moved=["T1", "T2", "T3"], closes=False, left=4)]            # a row that does not close needs none
+        TT, errs = self.read(TERMS3, rows)
+        self.assertEqual(errs, [])
+
     def test_closed_means_nothing_left(self):
-        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=2)]
+        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=2, proof="check")]
         TT, errs = self.read(TERMS3, rows)
         self.assertTrue(any("0 left" in e for e in errs), errs)
 
@@ -246,11 +257,11 @@ class TermsTable(unittest.TestCase):
         self.assertTrue(any("how many nets" in e for e in errs), errs)
 
     def test_a_term_has_a_kind_and_a_text(self):
-        TT, errs = self.read({"T1": {"kind": "effort", "text": "more rounds"}}, [dict(moved=["T1"], closes=True, left=0)])
+        TT, errs = self.read({"T1": {"kind": "effort", "text": "more rounds"}}, [dict(moved=["T1"], closes=True, left=0, proof="check")])
         self.assertTrue(any("term T1" in e for e in errs), errs)
 
     def test_a_row_moves_only_named_terms(self):
-        TT, errs = self.read({"T1": TERMS3["T1"]}, [dict(moved=["T1"], closes=True, left=0),
+        TT, errs = self.read({"T1": TERMS3["T1"]}, [dict(moved=["T1"], closes=True, left=0, proof="check"),
                                                      dict(moved=["T9"], closes=False, left=1)])
         self.assertTrue(any("T9 is not in" in e for e in errs), errs)
 
@@ -269,9 +280,9 @@ class TermsTable(unittest.TestCase):
 
 
 class Wall(unittest.TestCase):
-    CLOSING = [dict(moved=["T1", "T2", "T3"], closes=True, left=0),
+    CLOSING = [dict(moved=["T1", "T2", "T3"], closes=True, left=0, proof="check"),
                dict(moved=["T1"], closes=False, left=3),
-               dict(moved=["T2"], closes=True, left=0),
+               dict(moved=["T2"], closes=True, left=0, proof="check"),
                dict(moved=["T3"], closes=None, left=None, note="4 knots at it 170")]
 
     def test_a_big_groups_first_wall_needs_the_table(self):
@@ -325,6 +336,23 @@ class Wall(unittest.TestCase):
             self.assertTrue(w["terms"]["ceiling"])
             self.assertEqual((hb / w["terms"]["path"]).read_bytes(), p.read_bytes())
             self.assertIn("ring: ", said)
+
+    def test_a_row_that_only_routed_or_counted_is_a_lead(self):
+        rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0, proof="router"),
+                dict(moved=["T1"], closes=False, left=3),
+                dict(moved=["T2"], closes=True, left=0, proof="count"),
+                dict(moved=["T3"], closes=True, left=0, proof="check")]
+        with board(group(job(1, 60.0, t=time.time() - 100), tier="C")) as hb:
+            table(hb, TERMS3, rows)
+            r, said = quiet(B.cmd_wall, hb, "G", "U1's field is full: 3 nets have no via site", [])
+            self.assertEqual(r, 0, said)
+            q = (hb / "QUESTIONS.md").read_text()
+            self.assertIn("| every term (T1, T2, T3): the ceiling | routes, plan not gated | 0 |", q)
+            self.assertIn("| T2 | counts, no plan | 0 |", q)
+            self.assertIn("| T3 | yes | 0 |", q)
+            self.assertRegex(q, r"1\. \*\*placement\*\* — T2: .* -- A LEAD: a counting model")
+            self.assertRegex(q, r"2\. \*\*layer\*\* — T3: .* -- PROVED: `route.py check` PASS")
+            self.assertRegex(q, r"3\. \*\*placement \+ rule \+ layer\*\* — T1 \+ T2 \+ T3: .* -- A LEAD: every net routed")
 
     def test_a_ceiling_that_does_not_close_is_a_capacity_wall(self):
         with board(group(job(1, 60.0, t=time.time() - 100), tier="C")) as hb:
