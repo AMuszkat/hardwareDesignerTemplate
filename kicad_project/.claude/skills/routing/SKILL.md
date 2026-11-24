@@ -317,6 +317,14 @@ turn and before a worker is briefed.
 - **A group that closes is not a group that is done** — ask what the next group
   is left with (via sites for the caps still to come, a channel the bus needs).
   Reserve a later group's copper in a `netgroup.py` spec with `reserve_*`.
+- **A router does not see a BGA's exit lanes unless its spec says so.**
+  Copper in the courtyard strip on the free lane of a ball outside the group
+  passes KiCad's DRC and fails `route.py check`'s exitlane gate. So a
+  `netgroup.py` / `race.py` spec routed beside a BGA in
+  `routing/prelayout.json` "exit_lanes" carries `"exit_lanes": "prelayout"`
+  (or the `block` list from `exitlane.py --spec-blocks`). Board1 NORTHGAP
+  r10, 2026-11-24: nine rounds converged on site vias north of U1 that the
+  check refused with 14 exitlane items.
 - **Moving parts** to make a group routable goes through `place.py check`, one
   Konnect call, is named in the report, and is reviewed with the group (in
   release mode, at the fab release). Whether
