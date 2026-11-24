@@ -101,22 +101,36 @@ the next term is concept's (or the user's) to move, not yours to keep
 searching for.
 **The tools hold that line now: every routing group has an effort budget
 by its size (`tools/route/budget.py`; `route.py budget`), and at `BUDGET
-SPENT` the one move is `route.py wall <group>` -- the question, written from
-the ledger -- and then the next group.**
+SPENT` what is left is the terms count, its table, and `route.py wall
+<group>` -- the question, written from the ledger and the table -- and then
+the next group.**
 
-**And the question carries the next terms, already counted.** You know what
-binds -- a spacing, a layer the nets may not use, a part that cannot shift,
-a via allowed no further out. Before you ask, name every such term that
-could move and count each one, and the cheapest pairs, SIDE BY SIDE on
-scratch copies: one variant a copy (`par.cmap`, `race.py`, a `board-worker`
-each), all at once -- the cores are idle while a question travels. The
-question then holds a table, `term moved -> closes / does not, at what
-count`, and concept or the user grants from it; you still choose none. When
-an answer comes back as a LADDER (several terms in order of cost, with a
-last rung), count every rung at once and lay the cheapest that closes: a
-rung is not a question each. One bus was relaxed one term a question -- nine
-terms, nine decisions, five days -- where one afternoon of the machine
-counts nine variants.
+**And the question carries the next terms, already counted -- the tool
+refuses a wall without them.** You know what binds -- a spacing, a layer the
+nets may not use, a part that cannot shift, a via allowed no further out.
+Before you ask, name every such term that could move and count them SIDE BY
+SIDE on scratch copies, the loose end first: the CEILING (every term moved at
+once), then one variant per term (the term alone, or every term but it) --
+one variant a copy (`bgwait.py run --group G --terms`, a `board-worker`
+each), all at once, in the group's terms window (20, 45 or 90 minutes by
+tier, no round): the cores are idle while a question travels. The results
+are `<board>/routing/terms/<group>.json` (`tools/route/budget.py terms
+<group>` checks it; the docstring has the format), and `route.py wall` writes
+the question from it: the changes it offers are the rows that CLOSED,
+cheapest first, and concept or the user grants from them; you still choose
+none. **A ceiling that does not close is not a question about a term**: the
+wall is titled `DOES NOT FIT`, and what moves next -- a part out of the
+group's field, a layer, a net -- is the user's at once. **A reopen is not a
+refill**: an answered wall reopens its group with half of the tier's budget,
+a later one with a quarter -- enough to re-prove and lay the plan the table
+closed, never to search again. When an answer comes back as a LADDER
+(several terms in order of cost, with a last rung), count every rung at once
+and lay the cheapest that closes: a rung is not a question each. One bus was
+relaxed one term a question -- nine terms, nine decisions, five days --
+where one afternoon of the machine counts nine variants; one board wrote 28
+walls on five groups in 32 hours, each offering changes nobody had counted
+and each answer a full budget again, and one group reached its tenth wall
+with no net on copper.
 
 ## End your turn only for what is not yours
 

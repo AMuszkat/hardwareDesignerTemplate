@@ -75,7 +75,9 @@ chain of relays was reported as routing with no `route.py check` behind it.
    (board1 NORTHGAP r11, 2026-11-24: three 22 s DRCs started without `--gate`
    spent the group's budget before its last check could run.)
 4. **Stop at the STOP condition, and at the first of these:** the task's terms
-   cannot be met (hand back the count, do not relax a term); a tool is wrong
+   cannot be met (hand back the count and EVERY term that could move, each with
+   the edit that moves it on a scratch copy -- the session's terms table is made
+   of them -- and do not relax one yourself); a tool is wrong
    (fix it only if the brief says tools are yours to change, else name the defect);
    you have used about forty tool calls without the result getting nearer.
 5. **A router's ROUTED and a model's FITS are not proofs.** A plan you report as

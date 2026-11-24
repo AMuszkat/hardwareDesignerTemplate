@@ -182,10 +182,36 @@ blocks, and the changes that would unblock it in the order of their cost:
 placement, rule, swap, layer -- and the board rings `boardN Qn not blocking —
 WALL <group>: …` and takes its next group. The board's tools refuse the
 group until a handoff revision after the wall carries that `## Qn` in
-`07_answers.md`, or one of the group's parts has moved. Concept answers a
-wall as a ladder, in ONE revision: the rungs it may grant alone (a placement
-the handoff already allows, a fact that was missing), and the user's
-decision for the rest. **A group's second wall** (its title says so) **is a
+`07_answers.md`, or one of the group's parts has moved.
+
+**A wall carries its count, and is answered from it.** The tool refuses a
+wall without `routing/terms/<group>.json` (a small group's first wall
+excepted): every term that could move, the CEILING -- all of them moved at
+once -- counted first, then one variant per term, side by side on scratch
+copies in the group's terms window. The wall quotes the table, and the
+changes it offers are the rows that CLOSED, cheapest first. So:
+
+- **Concept grants from the closing rows, and nothing else.** A term no row
+  moved has not been counted: granting it is the linear search this rule
+  ends (one term an answer, a full budget each, the next round showing it
+  was not enough). If the row concept would grant is not there, the answer
+  is the count that is missing, not a term.
+- **A wall titled `DOES NOT FIT` is the user's at once.** Its ceiling did not
+  close: no routing term is left, and what moves is the design's -- a part
+  out of the group's field, a layer, a net. Concept does not answer it
+  alone, and does not answer it with a term.
+- **An answer reopens a share, not a budget**: half of the tier's rounds and
+  time after a group's first wall, a quarter after every later one. That is
+  enough to re-prove and lay the plan a closing row already holds; an answer
+  that needs a search to use it was granted without its count.
+- **"The rounds that finish it are the group's own" is not an answer to a
+  wall.** If nothing in the design has to change, the closing row is the one
+  that moved no term, the tool ranks it first, and the reopen it buys is the
+  share above.
+
+Concept answers a wall as a ladder, in ONE revision: the rungs it may grant
+alone (a placement the handoff already allows, a fact that was missing), and
+the user's decision for the rest. **A group's second wall** (its title says so) **is a
 design problem**: two budgets spent on one group. Concept answers it alone
 only when NO offered change adds a term to the design -- more router effort
 (a round, a search limit, an order between groups), the board's own copper

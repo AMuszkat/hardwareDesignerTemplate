@@ -131,14 +131,41 @@ turn and before a worker is briefed.
   would change if it does. A run that confirms it is the last run: declare
   the wall then, with rounds in hand.
 - **`BUDGET SPENT` (exit 76) means the design has to change, not the spec.**
-  The one command left is `route.py wall <group> --blocks "…" --change
-  "placement: …" [--change "rule: …"] [--change "swap: …"] [--change
-  "layer: …"]`: it writes the question from the ledger -- every round, how
-  it ended, the changes cheapest first -- and prints the ring. Ring it (or
-  tell the user, relay off) and **take the next group**; the tools refuse
-  this one until a handoff revision answers that question or its parts move.
-  A second wall of the same group is a design problem and says so: concept
-  answers it alone only when no change you offer adds a term to the design.
+  What is left is the terms count, its table, and `route.py wall <group>
+  --blocks "…"`: it writes the question from the ledger and the table --
+  every round, how it ended, the changes that closed, cheapest first -- and
+  prints the ring. Ring it (or tell the user, relay off) and **take the next
+  group**; the tools refuse this one until a handoff revision answers that
+  question or its parts move. A second wall of the same group is a design
+  problem and says so: concept answers it alone only when no change you
+  offer adds a term to the design.
+- **The wall carries its count; the tool refuses it without** (tier B and C
+  from the first wall, any group from its second; a tier A first wall may
+  still name its changes with `--change`). In this order:
+  1. **Name every term that could move** -- a part's position, a spacing, a
+     layer the nets may not use, a reserve held for another group, a pin
+     swap -- each with the edit that moves it on a scratch copy.
+  2. **Count the CEILING first**: one variant with every term moved at once.
+     It answers the only question that matters before any other: can the
+     board, as loose as it can be made, take this group at all?
+  3. **With it, side by side, one variant per term** (the term alone, or
+     every term but it): `bgwait.py run --group G --terms --name V -- …`, a
+     `board-worker` each, all started together. The group's terms window is
+     20, 45 or 90 minutes by tier from the first of them, costs no round,
+     and ends every variant still running: that one is `"closes": null`.
+  4. **Write `routing/terms/<group>.json`** -- each term, each row with what
+     moved, whether it closed, how many nets it left and the file that proves
+     it -- and run `tools/route/budget.py terms <group>` until `TERMS OK`.
+  5. **`route.py wall`**: the changes it offers are the closing rows. A
+     ceiling that does not close makes the wall `DOES NOT FIT`: stop offering
+     routing terms; the placement or the stack-up is the question, and it is
+     the user's at once.
+  **A reopen is not a refill**: half of the tier's budget after the first
+  wall, a quarter after every later one -- lay the plan the table closed.
+  (board1, 2026-11-23 and 24: 28 walls on five groups in 32 hours, each
+  offering changes nobody had counted, each answer one term and a full
+  budget; one group of 33 nets reached its tenth wall with 13.5 h of tool
+  time and no net on copper.)
   **A run that ended before its first negotiation costs no round** (BLOCKED
   at leg 1, a spec the set-up refused; three an epoch, the time counts), and
   the router searches once without `--limit` before it calls a net walled --
