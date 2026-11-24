@@ -854,6 +854,11 @@ its docstring. What the spec has to be told:
   --x x0,x1 --y y1,y2,...` lists, per line, the runs where a track's centre may lie and what is there now. Read the runs, not
   the total: "8 more fit" was a corridor behind three other legs plus two dead-end slots beside a via, and the strait took
   one net fewer than wanted. Count a strait lane by lane before a plan sends one more net through it.
+  **Inner layers only: it sees tracks and vias, not pads, zones or pours**, so a count on F.Cu or B.Cu under a part (or
+  across a poured inner layer) reads lanes that are a pad or a plane. TRAP (board1 NORTHGAP r13, 2026-11-24): the race's
+  knot under U100 read "F and B open" and lanecount agreed; the F copper there is U100's exposed pad and no via can stand.
+  WORKED: list every item near the window by layer from pcbnew (pads, zones and footprints included) before calling a
+  layer open.
 - **Parallel 45-degree runs between two obstacles are counted in x - y** (or x + y): n runs need (n - 1) x 0.2874 mm of it at
   4 mil spacing, 0.318 on a 0.0455 grid (7 cells, 0.225 mm apart), plus each obstacle's own keep-out x 1.414. Six runs
   wanted 1.59 between two vias 1.50 apart: one via site moved 0.14 mm, by hand, before any router ran.
