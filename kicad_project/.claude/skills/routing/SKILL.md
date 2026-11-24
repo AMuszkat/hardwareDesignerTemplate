@@ -392,6 +392,17 @@ turn and before a worker is briefed.
   old. R_EMMC had since re-sited C34 with two in-pad vias in the corner
   link the count read free. On today's copper every row read 9-18 lines
   short. Re-dumped with C34 out, the table held to the line).
+  The board as it stands is not the whole state, though. A rung already
+  granted counts as applied, even before the schematic catches up: the
+  parts it deletes come off the copy, the balls it leaves unconnected come
+  off their nets (they then have no exit lane), and the pins it moves are
+  moved. Every term in the model cites the handoff rule that asks for it;
+  a term with no rule behind it (a stitch via not owed to that net class) is
+  left out (board1 NORTHGAP r10c, 2026-11-24, Q121: the copy still carried
+  six boot straps and eight BOOT_CFG nets that rungs 2-3 had removed, and
+  the model charged a 1.4 mm GND stitch owed only by the DRAM channel. It
+  read 4 of 8 and asked for a term. Corrected, it read 7 of 8 on the
+  board's own copper.)
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
