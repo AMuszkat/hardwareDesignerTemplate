@@ -364,6 +364,17 @@ turn and before a worker is briefed.
   copper blocked 4 of 6 CK/DQS pairs; with them it fails exactly those four
   and passes the pairs drawn before bii -- the selftest that proves the
   terms).
+  The line order on a layer is the model's choice, not an earlier plan's.
+  Fix the order only where the board fixes it: a pad row's own order, lines
+  sharing one via column. Choose the rest per layer, the order with the
+  fewest fails. Then, before a round, measure the floor with every movable
+  via taken out. What still fails there is a floor no via search clears:
+  name each line and what holds it. That table is the next count, or the
+  wall's evidence, and the round is not spent (board1 R1, 2026-11-24: with
+  the negotiated plan's order fixed, bii read 134 line fails, In5 18 where
+  another order had drawn 11/11. With the order free, In5 read 0 and In7 1,
+  and F's floor came down to 8 lines at U1's two corners, each held by a
+  named via or land).
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
