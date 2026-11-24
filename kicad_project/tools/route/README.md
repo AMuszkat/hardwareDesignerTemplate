@@ -2061,6 +2061,14 @@ has moved. `budget.py`'s docstring is the manual; in short:
   - **Set-up gates before the queue, two variants a job.** A dry check started while four variants hold
     the memory runs threefold slower; past the gate's 5 minutes it is charged as a round.
   - **A term the runner cannot move is still named**: the wall's text lists it as uncounted.
+  - **A `count` row is built as a plan and put through `planclr` before it is offered** (seconds, no
+    round): a counting model tests what its author thought of. TRAP (board1 R1, Q126 / D136,
+    2026-11-24): a via-site model tested each signal via against the other vias and never against
+    the pads beside it; its closing row stood three vias on resistors' pads, the wall offered it,
+    concept granted it, and the first worker to lay it found the pads in four seconds. WAY AROUND:
+    the row's state -> a plan (vias and rips only) -> `planclr` on a scratch copy; a row with a
+    finding is `closes: null` with the finding in its note, and the model gets the missing test
+    before the next count. PROOF: planclr's item list is empty for the row's plan.
 - **A closing row whose only term is a part's place is not a wall yet.** A lifted part is an upper bound,
   and where the handoff lets a part move inside its own rule the move is the group's: list what the
   converged plan lays over the part's old place, look for a site inside the part's rule that the plan
