@@ -872,6 +872,11 @@ its docstring. What the spec has to be told:
   and hidden (board1 D115: 74 via_dangling). Prove they predate the plan (the same items on the
   before copy, past the cap: DRC on the copy with the plan's area masked) and accept them in the
   plan with that reason; never accept a new kind. A rip plan, like any plan, carries a "group" key.
+- **A DRC diff of your own (kicad-cli on a before and an after copy) runs `--refill-zones` on both.**
+  Without it the after copy's zones keep their old fill, and every moved via reads as a via-to-zone
+  clearance hit that a refill would clear (board1 NORTHGAP r7: 33 false clearance violations from six
+  re-sited J1 fan vias). PROOF: the same pair of copies with `--refill-zones` read 0 new clearance or
+  hole violations (tmpWork/NORTHGAP/r7/drc7f.txt).
 - **Via sites for a fan of track ends: least total length, then uncross.**
   Giving each end of one layer the nearest free site by squared length handed
   board1's In3 three knots of crossing nets, and no amount of banning sites
