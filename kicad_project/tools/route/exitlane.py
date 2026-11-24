@@ -52,6 +52,28 @@ THE SPEC, <board>/routing/prelayout.json (each entry names its handoff line):
   entry whose courtyard a plan's copper comes near, on the board before and with the plan, and fails a ball
   the plan leaves without a lane it had (RULE exitlane:); `route.py audit` prints an `exitlane` line.
 
+THE LANES AS A ROUTER'S BLOCKS (--spec-blocks NETS [--track-width W] [--out BLOCKS.json]):
+    tools/kpy tools/route/exitlane.py --board COPY --spec-blocks routing/X_spec.json --out X_lanes.json
+  netgroup.py and race.py do not read "exit_lanes": a spec routed near a BGA models the courtyard strip
+  WITHOUT the free lanes of the balls outside its group, and the race converges on copper route.py check's
+  exitlane rule refuses (board1 NORTHGAP r10, 2026-11-24: the strip vias north of U1 failed with 14 exitlane
+  items; nine races had modelled the strip without the term).  This writes, for every prelayout entry (or
+  --ref), the lanes that are still FREE of the balls whose nets are NOT in NETS, as a netgroup spec's
+  "block" entries (paste them into "block", or give the spec "exit_lanes": "prelayout" and netgroup.py reads
+  them itself).  NETS: a netgroup spec (its "nets"; the track width its "width" / the nets' "width"), a JSON
+  list, a text file one net a line, or A,B,C.  Which lanes follow the gate: assign -- every ring-1 straight
+  lane and each ring-2 ball's lane in the gate's own matching; plan -- ring-1, the plan's ring-2 lanes, the
+  rest matched round them; strict -- every candidate.  Lanes already blocked by copper are not free: printed
+  (SHUT, with what blocks them), not written.  Per lane (key) two rects, the lane's segment (ball, or half
+  way to ring 1, to the courtyard line) grown on every side by
+    need = width/2 + clearance (the gate's own numbers, the stricter clearance against the group's nets):
+    {"rect": segment +- (need + W/2), "layers": [exit layer], "vias": false}   a track's centre stays out;
+    {"rect": segment +- need, "layers": [exit layer], "vias": true}            netgroup adds the via radius.
+  Beside the lane that is the gate exactly; at its courtyard end the square rect reaches a little further
+  than the gate's round end (never less).  The output: {"block": [...], "lanes": [...], "shut": [...]}.
+  Exit 0 when written (whatever the gate reads now), 2 on a bad net list or spec.
+  Proof: tools/kpy tools/route/test_exitlane_blocks.py (a via on a block fails the gate, one beside passes).
+
 Exit 0: PASS; 1: a ball is blocked (under the gate); 2: usage (no such part, not a lattice, a bad spec).
 Reads only.
 """
@@ -471,7 +493,7 @@ def judge(B, ref, plan=None, side=None, width=None, clearance=None, power=None, 
         add("strict", h)
     gate_balls = ev["gate_balls"]
     gate_items = {g: [e for e in by.values() if g in e["gates"]] for g in GATES}
-    return dict(ref=ref, layer=lname, pitch=P, lattice=(NX, NY), courtyard=cy, rings=rings, kind_rule=kind_rule,
+    return dict(ref=ref, layer=lname, layer_std=pn.BOARD.GetStandardLayerName(layer), pitch=P, lattice=(NX, NY), courtyard=cy, rings=rings, kind_rule=kind_rule,
                 rules=rules.source, balls=balls, judged=judged, ring1=r1, ring2=r2, routed=drop, corners=sorted(corners),
                 offside=sorted(offside), lanes=lanes, hits=hits, fail1=fail1, fail2=fail2, assign=own, opts=opts,
                 gate=gate, gate_balls=gate_balls, gate_items=gate_items, rule=rules, blocked=blocked,
@@ -612,6 +634,205 @@ def plan_touches(B, ref, plan):
     return any(bx[0] <= x <= bx[2] and bx[1] <= y <= bx[3] for x, y in pts)
 
 
+# ----------------------------------------------------------------------------- the lanes as a router's blocks
+def spec_width(S):
+    """A netgroup spec's widest track: its "width" (netgroup's default 0.2) or a net's own "width"."""
+    return max([float(S.get("width", 0.2))] + [float(q["width"]) for q in (S.get("nets") or {}).values()
+                                                 if isinstance(q, dict) and q.get("width") is not None])
+
+
+def read_nets(arg):
+    """--spec-blocks NETS -> (names, the spec's track width or None, where they came from)."""
+    p = Path(arg)
+    if p.is_file():
+        txt = p.read_text()
+        try:
+            d = json.loads(txt)
+        except ValueError:
+            d = None
+        if isinstance(d, dict) and isinstance(d.get("nets"), dict):
+            return list(d["nets"]), spec_width(d), str(p)
+        if isinstance(d, list):
+            return [str(x) for x in d], None, str(p)
+        if d is not None:
+            raise Usage(f"{p}: not a netgroup spec (no \"nets\"), a JSON list or a text list of nets")
+        return [ln.split("#")[0].strip() for ln in txt.splitlines() if ln.split("#")[0].strip()], None, str(p)
+    names = [x.strip() for x in arg.split(",") if x.strip()]
+    if not names:
+        raise Usage(f"--spec-blocks {arg!r}: no such file, and no net names")
+    return names, None, "the command line"
+
+
+def board_nets(B, names):
+    """The board's net names for NAMES (a full name, or the leaf a spec uses); a name not on the board fails."""
+    allnets = [str(n) for n in B.b.GetNetsByName().keys() if str(n)]
+    have, leaf = set(allnets), collections.defaultdict(list)
+    for n in allnets:
+        leaf[short(n)].append(n)
+    out, missing = set(), []
+    for n in names:
+        if n in have:
+            out.add(n)
+        elif leaf.get(short(n)):
+            out.update(leaf[short(n)])
+        else:
+            missing.append(n)
+    if missing:
+        raise Usage(f"--spec-blocks: not on the board: {', '.join(missing[:8])}")
+    return sorted(out)
+
+
+def ring2_lanes(r):
+    """ball -> the ring-2 lane key it keeps under R's gate.  assign: the gate's own matching.  plan: the
+    plan's lane where it is free, the other balls matched round those (an exact matching, as evaluate())."""
+    if r["gate"] == "assign":
+        return dict(r["assign"])
+    routed = set(r["routed"])
+    opts, plan = collections.defaultdict(list), {}
+    for L in r["lanes"]:
+        if L["ring"] != 2 or L["ball"] in routed or (L["ball"], L["key"]) in r["blocked"]:
+            continue
+        if L["key"] not in opts[L["ball"]]:
+            opts[L["ball"]].append(L["key"])
+        if L["tag"] == "plan":
+            plan.setdefault(L["ball"], L["key"])
+    match = {}
+    for b, k in sorted(plan.items()):
+        match.setdefault(k, b)
+    fixed = set(match)
+
+    def aug(b, seen):
+        for kk in opts[b]:
+            if kk in seen or kk in fixed:
+                continue
+            seen.add(kk)
+            if kk not in match or aug(match[kk], seen):
+                match[kk] = b
+                return True
+        return False
+
+    for b in sorted(opts):
+        if b not in match.values():
+            aug(b, set())
+    return {b: k for k, b in match.items()}
+
+
+def _out(v, up):
+    """Round a rect edge OUTWARD to 1e-4 mm: a block is never narrower than the gate's band."""
+    return (math.ceil if up else math.floor)(round(v * 1e4, 6)) / 1e4
+
+
+def spec_blocks(r, group, track_width=None, why=None):
+    """judge() result R -> netgroup spec "block" entries keeping the FREE exit lanes of every judged, unrouted
+    ball whose net is not in GROUP (board net names), the lanes chosen by R's gate (assign: ring-1 + the
+    matched ring-2 lane; plan: ring-1 + the plan's ring-2 lane, the rest matched; strict: every candidate).
+    Per lane key two rects: tracks (centre) out of segment +- (need + W/2) on the exit layer, vias (centre,
+    netgroup grows the rect by its via radius) out of segment +- need, where need = the gate's width/2 +
+    the stricter clearance against the group's nets and W = TRACK_WIDTH (default: the group's widest rule).
+    Returns dict(block, kept, shut, nolane, ...); shut lanes (already blocked by copper) are not written."""
+    rule, gate, layer = r["rule"], r["gate"], r.get("layer_std") or r["layer"]
+    grp, routed = set(group), set(r["routed"])
+    r2 = ring2_lanes(r) if gate != "strict" else {}
+
+    def clr(lnet):
+        return max([rule.clearance(lnet, g) for g in grp] or [rule.clearance(lnet, "")])
+
+    tw_grp = track_width if track_width is not None else (max(rule.width(g) for g in grp) if grp else None)
+    hits = collections.defaultdict(list)
+    for h in r["hits"]:
+        hits[(h["lane"]["ball"], h["lane"]["key"])].append(h)
+    keep, shut, r2balls, r2have = collections.OrderedDict(), [], set(), set()
+    for L in r["lanes"]:
+        b, k = L["ball"], L["key"]
+        if b in routed or L["net"] in grp:
+            continue
+        if L["ring"] == 2:
+            r2balls.add(b)
+            if gate != "strict" and not (r2.get(b) == k or (gate == "plan" and L["tag"] == "plan")):
+                continue
+            r2have.add(b)
+        if (b, k) in r["blocked"]:
+            shut.append(dict(lane=L, by=hits[(b, k)]))
+        else:
+            keep.setdefault(k, []).append(L)
+    blocks, kept = [], []
+    for k, Ls in keep.items():
+        segs = [L["seg"] for L in Ls]
+        x0, x1 = min(min(s[0], s[2]) for s in segs), max(max(s[0], s[2]) for s in segs)
+        y0, y1 = min(min(s[1], s[3]) for s in segs), max(max(s[1], s[3]) for s in segs)
+        need = max(rule.width(L["net"]) / 2 + clr(L["net"]) for L in Ls)
+        tw = tw_grp if tw_grp is not None else max(rule.width(L["net"]) for L in Ls)
+
+        def rect(g):
+            return [_out(x0 - g, False), _out(y0 - g, False), _out(x1 + g, True), _out(y1 + g, True)]
+        who = ", ".join(f"{L['ball']} {short(L['net'])} ring-{L['ring']} {L['tag']}" for L in Ls)
+        base = (f"{r['ref']} exit lane {k[0]} {'x' if k[0] in 'NS' else 'y'} {k[1]:.3f} ({who}): free, kept for "
+                f"exitlane --gate {gate}" + (f" ({why})" if why else ""))
+        blocks.append(dict(rect=rect(need + tw / 2), layers=[layer], vias=False,
+                           why=f"{base}; tracks: width/2 + clearance + track/2 = {need + tw / 2:.4f}"))
+        blocks.append(dict(rect=rect(need), layers=[layer], vias=True,
+                           why=f"{base}; vias: width/2 + clearance = {need:.4f} (+ the via radius)"))
+        kept.append(dict(key=list(k), balls=[L["ball"] for L in Ls], nets=[short(L["net"]) for L in Ls],
+                         ring=Ls[0]["ring"], tag=Ls[0]["tag"], seg=[x0, y0, x1, y1], need=round(need, 4),
+                         track=round(tw, 4)))
+    nolane = sorted(r2balls - r2have) if gate != "strict" else []
+    return dict(ref=r["ref"], layer=layer, gate=gate, block=blocks, kept=kept, shut=shut, nolane=nolane,
+                group=len(grp), track_width=tw_grp)
+
+
+def spec_blocks_report(res):
+    out = [f"{res['ref']} lanes kept as blocks (--gate {res['gate']}, exit layer {res['layer']}, group of "
+           f"{res['group']} net(s), track {res['track_width'] if res['track_width'] is not None else 'per lane'}): "
+           f"{len(res['kept'])} lane(s), {len(res['block'])} rect(s); {len(res['shut'])} shut; "
+           f"ring-2 without a lane {len(res['nolane'])}"]
+    for kp in res["kept"]:
+        s = kp["seg"]
+        out.append(f"  KEEP {kp['key'][0]} {'x' if kp['key'][0] in 'NS' else 'y'} {kp['key'][1]:.3f} "
+                   f"{' '.join(f'{b} {n}' for b, n in zip(kp['balls'], kp['nets']))} ring-{kp['ring']} {kp['tag']} "
+                   f"({s[0]:.3f}, {s[1]:.3f})-({s[2]:.3f}, {s[3]:.3f}) need {kp['need']:.4f}")
+    for sh in res["shut"]:
+        L = sh["lane"]
+        out.append(f"  SHUT {L['side']} {L['key'][1]:.3f} {L['ball']} {short(L['net'])} ring-{L['ring']} {L['tag']}: "
+                   + "; ".join(f"{item_text(h['item'])} edge {h['edge']:.3f} < {h['need']:.3f}" for h in sh["by"][:3]))
+    if res["nolane"]:
+        out.append(f"  NO LANE (ring-2, unmatched on the board as it is): {', '.join(res['nolane'][:16])}")
+    return out
+
+
+def blocks_json(results, names, src, track_width):
+    return dict(nets=names, nets_from=src, track_width=track_width,
+                block=[b for res in results for b in res["block"]],
+                lanes=[dict(kp, ref=res["ref"], gate=res["gate"]) for res in results for kp in res["kept"]],
+                shut=[dict(ref=res["ref"], ball=s["lane"]["ball"], net=short(s["lane"]["net"]),
+                           key=list(s["lane"]["key"]), ring=s["lane"]["ring"], tag=s["lane"]["tag"],
+                           by=[item_text(h["item"]) for h in s["by"]]) for res in results for s in res["shut"]],
+                nolane={res["ref"]: res["nolane"] for res in results if res["nolane"]})
+
+
+def netgroup_blocks(board_dir, S):
+    """netgroup.py's opt-in spec key "exit_lanes": "prelayout" (every routing/prelayout.json entry) or
+    ["U1", ...] (those entries): (the "block" entries for the spec's nets and widest track, report lines)."""
+    import route as R
+    B = R.RBoard(Path(board_dir))
+    entries = load_spec(B.dir)
+    want = S.get("exit_lanes")
+    if not entries:
+        raise Usage(f"the spec asks for \"exit_lanes\" and {SPEC} has none")
+    if isinstance(want, list):
+        entries = [e for e in entries if e["ref"] in want]
+        if not entries:
+            raise Usage(f"\"exit_lanes\": {want} names no entry of {SPEC}")
+    elif want != "prelayout":
+        raise Usage("\"exit_lanes\" takes \"prelayout\" or a list of refs")
+    group = board_nets(B, list(S["nets"]))
+    blocks, lines = [], []
+    for e in entries:
+        res = spec_blocks(judge_entry(B, e), group, spec_width(S), e.get("why"))
+        blocks += res["block"]
+        lines += spec_blocks_report(res)
+    return blocks, lines
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--board", help="boardN, the folder name or a path (route.py's rule)")
@@ -626,6 +847,11 @@ def main():
     ap.add_argument("--all", action="store_true", help="judge routed balls too")
     ap.add_argument("--out", help="write the result (items, lanes, assignment) as JSON")
     ap.add_argument("--max", type=int, default=None, help="print at most this many BLOCK lines a part")
+    ap.add_argument("--spec-blocks", metavar="NETS",
+                    help="a netgroup spec, a net list file or A,B,C: write the free exit lanes of the balls whose "
+                         "nets are NOT these as netgroup spec \"block\" rects (to --out); see the docstring")
+    ap.add_argument("--track-width", type=float,
+                    help="with --spec-blocks: the router's track width (default: the spec's, else the nets' rule)")
     a = ap.parse_args()
     sys.path[:0] = [str(Path(__file__).resolve().parent)]
     import route as R
@@ -642,7 +868,11 @@ def main():
             for e in entries:
                 if a.gate:
                     e["gate"] = a.gate
-        results, ok = [], True
+        if a.spec_blocks:
+            names, sw, src = read_nets(a.spec_blocks)
+            group = board_nets(B, names)
+            tw = a.track_width if a.track_width is not None else sw
+        results, ok, sb = [], True, []
         for e in entries:
             r = judge_entry(B, e, a.all)
             print("\n".join(report(r, n=a.max)))
@@ -650,9 +880,19 @@ def main():
                 print(f"   ({e['why']})")
             ok &= r["ok"]
             results.append(r)
+            if a.spec_blocks:
+                sb.append(spec_blocks(r, group, tw, e.get("why")))
+                print("\n".join(spec_blocks_report(sb[-1])))
     except Usage as ex:
         print(f"exitlane: {ex}", file=sys.stderr)
         return 2
+    if a.spec_blocks:
+        if a.out:
+            Path(a.out).write_text(json.dumps(blocks_json(sb, names, src, tw), indent=1))
+        print(f"SPECBLOCKS {sum(len(x['kept']) for x in sb)} free lane(s) of balls outside the {len(group)} net(s) of "
+              f"{src} -> {sum(len(x['block']) for x in sb)} block rect(s)" + (f" in {a.out}" if a.out else " (no --out)")
+              + f"; {sum(len(x['shut']) for x in sb)} lane(s) already shut")
+        return 0
     if a.out:
         def js(r):
             return dict(ref=r["ref"], layer=r["layer"], gate=r["gate"], ok=r["ok"], rules=r["rules"],

@@ -1053,6 +1053,20 @@ its docstring. What the spec has to be told:
   `exitlane_dump.load(OUT)["U1"]` and `shut_by(r, items)` in plain python -- same lanes, blocked set, width and
   clearance. TRAP (board1 R1-0, 2026-11-23): a channel via model with no lane term reported 'closes' that
   pretest failed on 10 U1 balls; with the dump's term it finds those same 10.
+  A ROUTER does not read `"exit_lanes"`: `netgroup.py` / `race.py` model a BGA's courtyard strip as free copper
+  unless told. TRAP (board1 NORTHGAP r10, 2026-11-24): nine rounds converged on site vias north of U1 that
+  `route.py check` then refused, 14 exitlane items, on the lanes of balls OUTSIDE the group. WAY AROUND:
+  `tools/kpy tools/route/exitlane.py --board COPY --spec-blocks SPEC.json|nets.txt|A,B,C --out BLOCKS.json`
+  writes, per prelayout entry, the still-free lanes of the signal balls whose nets are not the list's, as spec
+  `"block"` rects on the exit layer (ring-2 by the gate: assign the matched lane, plan the plan's, strict every
+  candidate; a lane copper already shuts is printed SHUT, not emitted) -- two per lane: tracks at width/2 +
+  clearance + track/2, vias at width/2 + clearance (netgroup adds its via radius), so netgroup's centre-cell
+  block is the gate's edge distance; paste `block` into the spec. Or opt in in the spec, `"exit_lanes":
+  "prelayout"` (or `["U1"]`): netgroup blocks the same rects itself (without the key, nothing changes). PROOF:
+  `tools/kpy tools/route/test_exitlane_blocks.py` -- U1's nine north ring-1 lanes are emitted; a real via / track
+  on each block's edge fails exactly the balls whose blocks hold it, 0.004 beside passes; 30,000 via centres
+  outside every block in the courtyard band shut no ball outside the group; without the flag the output is
+  byte for byte the old tool's.
 - **A pair's own gap is a custom DRC rule, and an in-memory pretest does not run it.** TRAP (board1 R3b_fix43,
   2026-11-23): one line of a pair moved 0.09 to clear an aggressor passed pretest (angles, exitlane, areaclear,
   shape, vialink) and failed `route.py check` 25 minutes later on 'fab: a pair's own gap' (0.104 < 0.15). WAY

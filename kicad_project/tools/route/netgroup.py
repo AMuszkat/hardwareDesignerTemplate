@@ -50,6 +50,11 @@ WHAT IS BLOCKED, beyond the board's own copper:
   * every drilled pad's hole (NPTH, or PTH where its pad is not), on every layer,
     at drill / 2 + Board Setup's copper-to-hole; a new via at the hole-to-hole;
   * the spec's "block": [{"rect": [x0, y0, x1, y1], "layers": [...], "vias": true}];
+  * with "exit_lanes": "prelayout" (or a list of refs), the free exit lanes of
+    every BGA's outer balls whose nets are not this spec's, as exitlane.py
+    --spec-blocks writes them (routing/prelayout.json "exit_lanes", its gate,
+    width/2 + clearance): copper there passes DRC and fails route.py check's
+    exitlane gate.  Off by default;
   * the spec's "extra_tracks"/"extra_vias" (the group's ground and supply
     vias and pad links), which go into the plan as they are;
   * the spec's "reserve_tracks"/"reserve_vias": a later group's copper, kept
@@ -1109,6 +1114,18 @@ def main():
         G.block(r.get("layers", LAYERS), G.rect(*r["rect"]))
         if r.get("vias", True):
             G.block(["via"], G.rect(*r["rect"], maze.VIA_R))
+    if S.get("exit_lanes"):                           # opt-in: the lanes route.py check's exitlane gate keeps
+        import exitlane
+        try:
+            xb, xl = exitlane.netgroup_blocks(a.board, S)
+        except exitlane.Usage as ex:
+            sys.exit(f"netgroup: spec \"exit_lanes\": {ex}")
+        print("\n".join(xl))
+        for r in xb:
+            G.mark(f"exit lane: {r['why']}")
+            G.block([l for l in r["layers"] if l in LAYERS], G.rect(*r["rect"]))
+            if r["vias"]:
+                G.block(["via"], G.rect(*r["rect"], maze.VIA_R))
 
     # sources: the free end of each net's own copper, and the heading it arrives with
     src = {}
