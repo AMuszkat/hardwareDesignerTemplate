@@ -354,6 +354,16 @@ turn and before a worker is briefed.
   still a row to search, not a result: write "pruned, not searched" and
   search it before the wall (board1 d177: two such rows closed the next
   round).
+  A differential pair counted as one lane is not a pair: test each pair at
+  its own vias. A via inside the pair's span splits it into two lines, each
+  counted at every cut. A via in the margin (within the pair rule outside the
+  span) may be passed or split around, whichever fails less. A split that
+  encloses another pair's via, or a single's, fails. An exit is a stub AND
+  its continuation, clear of vias, pads and tracks, not a stub alone (board1
+  R1 bii: the count without these tests passed, and the sites it put on
+  copper blocked 4 of 6 CK/DQS pairs; with them it fails exactly those four
+  and passes the pairs drawn before bii -- the selftest that proves the
+  terms).
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
