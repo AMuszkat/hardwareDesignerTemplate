@@ -547,6 +547,13 @@ its docstring. What the spec has to be told:
   Netgroup still settles the order: count the inversions between the two ends
   first (the routing skill), and fix it with `to_xy` lane legs when a crossing
   needs a layer swap -- negotiation does not find one.
+- **Another net's filled pour on a routing layer is a static obstacle, never a `plane`.** TRAP
+  (board1 J1S_pre, 2026-11-24): with In5 in the spec's layers, the In5 VDD_GPU_VPU_DRAM pour shut
+  five nets outright (BLOCKED SOURCE). And a `block` whose layer is not in the spec's `layers`
+  raises KeyError 'F.Cu' in maze.block, where it should be skipped. WORKED: dump the pour's zone
+  (outline and layer) first. Read the handoff's term for that layer before offering it: a power
+  layer carries a signal only as far as the handoff says (board1 #31: In5 only from a field fan via
+  to the first site past the courtyard), and a run that crosses the pour cuts the rail.
 - **A series part on a pair's lane (an AC cap) is measured by its pad span ACROSS the lane.**
   An 0402 turned to sit on a vertical lane presents its pads' LENGTH sideways: 0.46 mm across,
   not the 0.25-0.30 of a straight line, so its centre needs half that plus the clearance plus
