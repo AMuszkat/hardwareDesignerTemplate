@@ -148,7 +148,7 @@ def main():
             key = f"{ref}.{info[k][0]}"
             if key in pin:
                 x, y = pin[key]
-                if not W_.via_ok(x, y, [r]):
+                if not W_.via_ok(x, y, [r], net=info[k][1]):
                     P.die(f"{key}: the pinned via site ({x}, {y}) is not legal")
                 v = (S.rect_dist(x, y, *r), x, y)
                 if not S.on_axis(r, x, y):

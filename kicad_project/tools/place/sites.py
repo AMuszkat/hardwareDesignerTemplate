@@ -94,6 +94,19 @@ DIAG = "last resort"                 # the guide's "45-degree via link": last re
 AXIS = True                          # candidates on the pad's axes (then diagonals); False: any angle
 AXSTEP = 0.01                        # step along an axis ray, from the pad's centre
 LINKW = 0.15                         # the link's width when a caller names none: its copper keeps CLR too
+H2H = 0.25                           # Board Setup's minimum hole to hole (drill edge to drill edge), any nets
+
+
+class _Item(tuple):
+    """a World track or via -- the same tuple as ever (callers unpack 3), plus its net (short name) and,
+    for a via, its drill.  A tuple a caller adds without them (xvias, decap's stubs) is foreign copper."""
+    net, drill = None, None
+
+    @classmethod
+    def of(cls, t, net=None, drill=None):
+        o = cls(t)
+        o.net, o.drill = net, drill
+        return o
 
 
 def board_rules(board_dir):
@@ -110,14 +123,27 @@ def board_rules(board_dir):
     return float(d["via_diameter"]), float(d.get("via_drill") or d["via_diameter"] / 2), float(clr)
 
 
+def board_h2h(board_dir):
+    """Board Setup's minimum hole to hole from the .kicad_pro (design_settings.rules), or None."""
+    import json
+    pro = next(Path(board_dir).glob("*.kicad_pro"), None)
+    if not pro:
+        return None
+    v = json.loads(pro.read_text()).get("board", {}).get("design_settings", {}).get("rules", {}).get("min_hole_to_hole")
+    return float(v) if v is not None else None
+
+
 def configure(B, via=None, clr=None, own=None, reach=None, gates=None, axis=True):
     """Set VIA/DRILL/CLR/OWN/REACH from the board, then any explicit override.  `gates` (route.load_gates,
     an RBoard's .gates) gives the guide's via-link row: the own-pad distance is then at least the via's
     radius + its gap (vialink.py's via-touch test), and its 45-degree policy.  axis=False: any angle."""
-    global VIA, DRILL, CLR, OWN, REACH, GAP, DIAG, AXIS
+    global VIA, DRILL, CLR, OWN, REACH, GAP, DIAG, AXIS, H2H
     r = board_rules(B.dir)
     if r:
         VIA, DRILL, CLR = r
+    h = board_h2h(B.dir)
+    if h is not None:
+        H2H = h
     if via:
         VIA, DRILL = (float(v) for v in str(via).split(","))
     if clr is not None:
@@ -292,12 +318,13 @@ class World:
                 self.pads.append((ref, p.GetNumber(), self.short(p.GetNetname()),
                                   mm(bb.GetLeft()), mm(bb.GetTop()), mm(bb.GetRight()), mm(bb.GetBottom())))
         for t in B.b.GetTracks():
+            n = self.short(t.GetNetname())
             if t.Type() == pcbnew.PCB_VIA_T:
-                self.vias.append((mm(t.GetPosition().x), mm(t.GetPosition().y),
-                                  mm(t.GetBoundingBox().GetWidth()) / 2))
+                self.vias.append(_Item.of((mm(t.GetPosition().x), mm(t.GetPosition().y),
+                                           mm(t.GetBoundingBox().GetWidth()) / 2), n, mm(t.GetDrillValue())))
             else:
-                self.tracks.append(((mm(t.GetStart().x), mm(t.GetStart().y)),
-                                    (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth())))
+                self.tracks.append(_Item.of(((mm(t.GetStart().x), mm(t.GetStart().y)),
+                                             (mm(t.GetEnd().x), mm(t.GetEnd().y)), mm(t.GetWidth())), n))
 
     CELL = 1.0                                             # mm: the obstacle index's grid
 
@@ -337,33 +364,51 @@ class World:
                         out[k].extend(g[k])
         return out
 
-    def via_ok(self, x, y, own_rects=()):
+    def via_ok(self, x, y, own_rects=(), net=None):
+        """a through via at (x, y) keeps CLR from foreign copper.  With `net` (the via's own net, full or
+        short) its OWN net's copper is judged by the same-net rules instead: a pad of its net at OWN from the
+        via's centre (never via-in-pad: the guide's via-to-pad gap and the hole outside the mask opening), a
+        track of its net may touch it, a via of its net keeps Board Setup's hole to hole (H2H, drill edges).
+        Without `net` every item is foreign -- the old, net-blind test, which refused a GND via 0.48 mm c-c
+        from another GND via that KiCad's DRC and the fab both pass (board1 R1d134b, 2026-11-24)."""
         o = self.outline
         if min(x - o[0], o[2] - x, y - o[1], o[3] - y) - VIA / 2 < self.edge:
             return False                                   # off the board, or inside copper-to-edge
         for L, T, R, Bo in own_rects:                      # never via-in-pad, but its own pad is not foreign
             if rect_dist(x, y, L, T, R, Bo) < OWN:
                 return False
-        pads, tracks, vias = self._near(x, y, VIA / 2 + CLR + 1e-6)
-        for _r, _n, _net, L, T, R, Bo in pads:
-            if rect_dist(x, y, L, T, R, Bo) - VIA / 2 < CLR:
+        sn = self.short(net) if net else None
+        pads, tracks, vias = self._near(x, y, VIA / 2 + max(CLR, H2H) + 1e-6)
+        for _r, _n, pnet, L, T, R, Bo in pads:
+            if sn and pnet == sn:
+                if rect_dist(x, y, L, T, R, Bo) < OWN:
+                    return False
+            elif rect_dist(x, y, L, T, R, Bo) - VIA / 2 < CLR:
                 return False
-        for a, b, w in tracks:
+        for t in tracks:
+            a, b, w = t
+            if sn and getattr(t, "net", None) == sn:
+                continue                                   # its own net's track may touch it
             if seg_dist((x, y), a, b) - w / 2 - VIA / 2 < CLR:
                 return False
-        for vx, vy, r in vias:
-            if math.dist((x, y), (vx, vy)) - r - VIA / 2 < CLR:
+        for v in vias:
+            vx, vy, r = v
+            d = math.dist((x, y), (vx, vy))
+            if d - ((getattr(v, "drill", None) or DRILL) + DRILL) / 2 < H2H - 1e-6:
+                return False                               # hole to hole, whatever the nets (at H2H exactly: legal)
+            if not (sn and getattr(v, "net", None) == sn) and d - r - VIA / 2 < CLR:
                 return False
         return True
 
-    def via_free(self, x, y):
+    def via_free(self, x, y, net=None):
         """via_ok against the BOARD only, memoised -- the obstacles never move (a list a caller grew
-        rebuilds the index and clears the memo)."""
+        rebuilds the index and clears the memo).  `net`: via_ok's same-net rules."""
         self._index()
-        k = (round(x, 4), round(y, 4))
+        sn = self.short(net) if net else None
+        k = (round(x, 4), round(y, 4), sn)
         v = self._memo.get(k)
         if v is None:
-            v = self._memo[k] = self.via_ok(x, y)
+            v = self._memo[k] = self.via_ok(x, y, net=sn)
         return v
 
     @staticmethod
@@ -451,7 +496,7 @@ class World:
                     continue
                 if any(rect_dist(x, y, *r) - VIA / 2 < CLR for r in others):
                     continue
-                if self.via_free(x, y) and (kind == "any" or self.link_free(rect, x, y, others, net, lw)):
+                if self.via_free(x, y, net) and (kind == "any" or self.link_free(rect, x, y, others, net, lw)):
                     if self.lanes and net is not None:
                         k = self.lanes.via_keys(x, y, net, VIA / 2)
                         bad = self.lanes.shut(held if held is not None else {}, k) if k else []
