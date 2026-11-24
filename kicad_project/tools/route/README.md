@@ -48,6 +48,21 @@ typed, else inside the board folder (`routing/R1.json`).
   board), places vias in boxes beside a pad (`--boxes NET@box:N`), counts net-tied polygons as copper, and
   `--ignore-refs` asks what a part move would free. A via on the bottom of a 0.4 mm board-to-board connector's span
   is only legal between its two pad rows: map before choosing a pin's via.
+- **`sitesolve.py` -- how many nets of a set can drop a via in a region AT ONCE: an exact count, not a capped
+  search.** TRAP (board1 NORTHGAP r10, 2026-11-24): a depth-first site search capped at 400k nodes stopped with
+  "no set", and that was read as a wall; it found 3 of 8 nets where the exact count found 4 of 8 (and proved 8 of 8
+  infeasible). A capped search cannot prove "no set". `tools/kpy tools/route/sitesolve.py gen --board COPY
+  SPEC.json CANDS.json.gz [--pull NAME:D] [--drop NAME] [--line NAME]` lists every site on the spec's grid (each
+  net's ends -- pad or stubs -- links straight or straight + one 45, the board's class clearances and hole rules or a
+  flat model clearance, the exit lanes each item shuts by exitlane.py's own judge, GND stitch sites in the pour,
+  every pairwise conflict); `tools/.venv/bin/python tools/route/sitesolve.py solve CANDS OUT.json [--free B,..]
+  [--freeany] [--gnd new|old|off] [--need N]` is CP-SAT under the board's exit gate: OPTIMAL, INFEASIBLE, or
+  FEASIBLE-at-limit (said so). `table --board COPY SPEC ROWS.json --out DIR` runs a what-if table in parallel
+  (`table.tsv`: terms | sited/N | failing nets | cost). The spec format is the tool's docstring. PROOF:
+  `tools/kpy tools/route/test_sitesolve.py` (a synthetic board counted by hand: 1 of 6, 2 of 6 with a polygon
+  pulled, INFEASIBLE when N > slots; `--board-test` adds board1's identity with the r10c count). Its pair index
+  found 1557 conflicts the r10c script's index had missed (cells inflated by the via radius only): the counts held,
+  but a candidate pair is queried at 2 x via radius + clearance.
 - **The shape gate judges a net on a layer only once it has a track there** (`shape.py`: 'a net with no track on this
   layer has only pads'). A plan that gives a net its FIRST track on a layer can be failed for a notch that was there
   before (board1: a ring capacitor's unlinked power via 0.10 mm from its pad, shown when C63's link went in). Fix the
