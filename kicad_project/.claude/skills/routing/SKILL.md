@@ -338,6 +338,18 @@ turn and before a worker is briefed.
   via just off it, reads as room: count each cut at x and 0.4 mm either
   side and take the least (board1 Q113: F at x 37.05 read 0 short, 1 short
   at 36.65).
+  A pitch count is not the whole cut: where a line has to pass between two
+  vias that are each held by an anchor (a stitch reach, another layer's
+  full lane count), count that slot at its own two vias, c-c against
+  via + 2 gaps + line. Then name the via that can move and the anchor that
+  holds it. A finer track rule does not open a slot that is short by more
+  than the rule saves (board1 R1: DMI1_A's slot was 0.522 c-c, needing
+  0.705, or 0.667 at 3.5 mil. Every 3.5-mil row read short; moving the CA
+  lines off the anchored layer freed a lane, the via moved 0.2 mm and the
+  group closed with no new term). A variant pruned at the best score is
+  still a row to search, not a result: write "pruned, not searched" and
+  search it before the wall (board1 d177: two such rows closed the next
+  round).
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
