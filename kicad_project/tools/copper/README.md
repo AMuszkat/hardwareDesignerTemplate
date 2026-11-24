@@ -176,3 +176,8 @@ Exceptions to the via rule live in `<board>/routing/vialink_exceptions.json`
   `tools/kpy tools/copper/guardblock.py BOARD --parts Y100,C122,C123 --nets PMIC_XTAL_IN,PMIC_XTAL_OUT --layers
   F.Cu,In1.Cu,...,In6.Cu --own GND --clr 0.1016 [--zones]`. It exits 1 and prints a line per intrusion. Zones are
   tested only with `--zones`, because a whole plane under the block may be what the rule asks for.
+  When the handoff grants an exception that names nets and a layer ("In2 open to these nets under the block, tracks
+  only"), pass `--waive '<nets>@<layer>'` (nets comma-separated, the layer as `In2.Cu`; `;` between grants): each such TRACK prints `WAIVED` with its length inside the block and is not
+  counted; a via of a waived net is never waived. Do not drop the layer from `--layers` instead, because that hides
+  every other net's In2 copper too. Proof: a planted In2 track and via go from FAIL 2 to WAIVED 0.760 mm + FAIL 1
+  (board1 NORTHGAP r9, D133 rung 7, 2026-11-24).

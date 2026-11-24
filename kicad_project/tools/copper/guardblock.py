@@ -9,7 +9,9 @@ know the block.
         --layers F.Cu,In1.Cu,In2.Cu,In3.Cu,In4.Cu,In5.Cu,In6.Cu --own GND --clr 0.1016 [--zones]
 
 Prints one line per intrusion (net, kind, layer, where, overlap) and `GUARDBLOCK PASS` / `GUARDBLOCK FAIL n`;
-exit 0 / 1.  Zone fills are tested only with --zones (a whole plane under a block may be what the rule wants).
+exit 0 / 1.  --waive NET,NET@LAYER[;...] names tracks the handoff grants under the block (an exception that names
+the nets and the layer): each such TRACK is listed as `WAIVED`, with its centreline length inside the block, and is
+not counted; a via of a waived net is never waived.  Zone fills are tested only with --zones (a whole plane under a block may be what the rule wants).
 """
 import argparse, sys
 import pcbnew
@@ -19,6 +21,7 @@ ap.add_argument("board"); ap.add_argument("--parts", required=True); ap.add_argu
 ap.add_argument("--layers", default="F.Cu"); ap.add_argument("--outline-layer", default="F.Cu")
 ap.add_argument("--own", default="GND"); ap.add_argument("--clr", type=float, default=0.1016)
 ap.add_argument("--zones", action="store_true")
+ap.add_argument("--waive", default="", help="NET,NET@LAYER[;...]: tracks (never vias) of these nets on LAYER are waivers")
 a = ap.parse_args()
 b = pcbnew.LoadBoard(a.board); FM = pcbnew.FromMM; mm = pcbnew.ToMM; E = FM(0.002)
 leaf = lambda n: n.rsplit('/', 1)[-1]
@@ -36,7 +39,14 @@ for t in b.GetTracks():
 blk.Simplify()
 if not blk.OutlineCount(): sys.exit("guardblock: the block is empty (parts / nets named wrong?)")
 layers = [b.GetLayerID(n) for n in a.layers.split(",")]
-bad = 0
+W = {}
+for w in filter(None, a.waive.split(";")):
+    ns, wl = w.rsplit("@", 1); W.setdefault(b.GetLayerID(wl), set()).update(x for x in ns.split(",") if x)
+def inlen(t):
+    s0, e0 = t.GetStart(), t.GetEnd(); k = max(2, int(mm(t.GetLength()) / 0.005))
+    hit_n = sum(blk.Contains(pcbnew.VECTOR2I(int(s0.x + (e0.x - s0.x) * (i + .5) / k), int(s0.y + (e0.y - s0.y) * (i + .5) / k))) for i in range(k))
+    return mm(t.GetLength()) * hit_n / k
+bad = waived = 0; wlen = 0.0
 def hit(s):
     s.BooleanIntersection(blk)
     return sum(abs(s.Outline(i).Area()) for i in range(s.OutlineCount())) / 1e12 if s.OutlineCount() else 0
@@ -51,6 +61,9 @@ for t in b.GetTracks():
             kind = "via" if t.Type() == pcbnew.PCB_VIA_T else "track"
             p0 = t.GetPosition() if kind == "via" else t.GetStart(); p1 = t.GetEnd()
             where = f"({mm(p0.x):.3f},{mm(p0.y):.3f})" + ("" if kind == "via" else f"-({mm(p1.x):.3f},{mm(p1.y):.3f})")
+            if kind == "track" and n in W.get(L, ()):
+                ln = inlen(t); waived += 1; wlen += ln
+                print(f"WAIVED    {n:20s} track {b.GetLayerName(L):7s} {where}  {ln:.3f} mm inside the block"); break
             print(f"IN BLOCK  {n:20s} {kind:5s} {b.GetLayerName(L):7s} {where}  overlap {ar:.4f} mm2"); bad += 1
             break
 if a.zones:
@@ -64,5 +77,6 @@ if a.zones:
 bb = blk.BBox()
 print(f"block bbox ({mm(bb.GetLeft()):.3f},{mm(bb.GetTop()):.3f})-({mm(bb.GetRight()):.3f},{mm(bb.GetBottom()):.3f}), "
       f"{blk.OutlineCount()} outline(s), layers {a.layers}")
+if W: print(f"waived: {waived} track(s), {wlen:.3f} mm inside the block ({a.waive})")
 print("GUARDBLOCK", "PASS" if not bad else f"FAIL {bad}")
 sys.exit(1 if bad else 0)
