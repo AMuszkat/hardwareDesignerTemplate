@@ -148,15 +148,29 @@ turn and before a worker is briefed.
   2. **Count the CEILING first**: one variant with every term moved at once.
      It answers the only question that matters before any other: can the
      board, as loose as it can be made, take this group at all?
-  3. **With it, side by side, one variant per term** (the term alone, or
-     every term but it): `bgwait.py run --group G --terms --name V -- …`, a
+  3. **With it, side by side, one variant per term** (the term alone AND
+     every term but it, when the cores allow -- one small set converged in
+     nine minutes where three supersets of it were cut at fifteen): `bgwait.py run --group G --terms --name V -- …`, a
      `board-worker` each, all started together. The group's terms window is
      20, 45 or 90 minutes by tier from the first of them, costs no round,
      and ends every variant still running: that one is `"closes": null`.
   4. **Write `routing/terms/<group>.json`** -- each term, each row with what
      moved, whether it closed, how many nets it left and the file that proves
      it -- and run `tools/route/budget.py terms <group>` until `TERMS OK`.
-  5. **`route.py wall`**: the changes it offers are the closing rows. A
+     A row that closes says HOW it is known, `"proof"`: `check` (its plan
+     passed `route.py check` on the copy), `router` (every net routed, not
+     gated) or `count` (a counting model, no plan). Build the rows from the
+     runner's own fields (converged, nets left, check), never from one
+     `LEFT n` line; read a BLOCKED variant before scoring it (a second leg
+     walled by the first legs of the same run is the spec's leg order, not
+     the term: re-stage and count it again).
+  5. **`route.py wall`**: the changes it offers are the closing rows, each
+     PROVED (`check`) or A LEAD that owes its gated plan before copper. A
+     closing row that moves only what the handoff already lets the group
+     move (a part inside its own rule) is no wall: find the sites the
+     converged plan leaves free, else race gated placements in the round
+     that is left. Once written, the wall closes the group to every job,
+     gates too: polish a lead before the wall or after its answer. A
      ceiling that does not close makes the wall `DOES NOT FIT`: stop offering
      routing terms; the placement or the stack-up is the question, and it is
      the user's at once.

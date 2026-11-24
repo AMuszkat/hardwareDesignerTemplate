@@ -191,6 +191,11 @@ once -- counted first, then one variant per term, side by side on scratch
 copies in the group's terms window. The wall quotes the table, and the
 changes it offers are the rows that CLOSED, cheapest first. So:
 
+- **A closing row is PROVED or A LEAD, and the wall says which.** PROVED: its
+  plan passed `route.py check` on the copy and is the copper once granted. A
+  LEAD: it closed for the router or for a count only. Concept may grant a
+  lead, and says in the answer that the gated plan is owed: if the plan does
+  not pass, the wall comes back with what failed, on the reopen's share.
 - **Concept grants from the closing rows, and nothing else.** A term no row
   moved has not been counted: granting it is the linear search this rule
   ends (one term an answer, a full budget each, the next round showing it

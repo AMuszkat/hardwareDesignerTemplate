@@ -110,15 +110,23 @@ refuses a wall without them.** You know what binds -- a spacing, a layer the
 nets may not use, a part that cannot shift, a via allowed no further out.
 Before you ask, name every such term that could move and count them SIDE BY
 SIDE on scratch copies, the loose end first: the CEILING (every term moved at
-once), then one variant per term (the term alone, or every term but it) --
-one variant a copy (`bgwait.py run --group G --terms`, a `board-worker`
+once), then one variant per term (the term alone AND every term but it,
+when the cores allow: the router is not monotonic inside a window, and the
+smallest set that closes is the row to find) -- one variant a copy (`bgwait.py run --group G --terms`, a `board-worker`
 each), all at once, in the group's terms window (20, 45 or 90 minutes by
 tier, no round): the cores are idle while a question travels. The results
 are `<board>/routing/terms/<group>.json` (`tools/route/budget.py terms
 <group>` checks it; the docstring has the format), and `route.py wall` writes
 the question from it: the changes it offers are the rows that CLOSED,
 cheapest first, and concept or the user grants from them; you still choose
-none. **A ceiling that does not close is not a question about a term**: the
+none. **A closing row says how it is known** (`"proof"`: `check`, its plan
+passed `route.py check` on the copy; `router`, every net routed and the plan
+not gated; `count`, a counting model and no plan): the wall calls anything
+but `check` A LEAD, and the reopened group owes its gated plan before any
+copper. **A closing row that moves only what the handoff already lets you
+move** (a part inside its own rule, a layer no row binds) **is not a
+question**: find the sites, lay it, and keep the wall for the part that finds
+no place. **A ceiling that does not close is not a question about a term**: the
 wall is titled `DOES NOT FIT`, and what moves next -- a part out of the
 group's field, a layer, a net -- is the user's at once. **A reopen is not a
 refill**: an answered wall reopens its group with half of the tier's budget,
