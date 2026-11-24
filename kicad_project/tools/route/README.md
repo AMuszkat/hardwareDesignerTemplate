@@ -237,6 +237,11 @@ breach, a pair broken and opened at the edge, a pair broken and not opened, pair
   2026-11-23): 5 pre-existing escape vias of other nets appeared. Prove the claim before
   accepting it: a masked before/after DRC with only the plan's nets and the named ones kept
   (far under the cap), `new` = the plan's own vias only.
+  Or uncapped, in one step: `tools/kpy tools/route/viadangle.py list BOARD OUT.json` on the copy
+  before and after the plan (pcbnew's own TestTrackEndpointDangling after a refill), then
+  `python3 tools/route/viadangle.py diff BEFORE.json AFTER.json` -> `DANGLE PASS` (no via newly
+  dangling, by UUID). Board1 R1d134c p3, 2026-11-24: 247 -> 246, the "new" SPI_CE0 via dangled
+  before; the accept's `why` cites the diff.
 
 That indirection is the whole point. A hand-written clearance test that uses
 *the track's own* net class misses that KiCad enforces the **stricter of the two
