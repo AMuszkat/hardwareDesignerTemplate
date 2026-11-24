@@ -1941,7 +1941,12 @@ has moved. `budget.py`'s docstring is the manual; in short:
 - **What counts, with no flag to set:** `netgroup.py` (its `--timeout` is cut to what the group has left),
   `race.py`, `route.py check`, `bgwait.py run --group G` (one round and its time, however many scripts
   it runs; a router run inside it is not charged twice; six to a round), `bgwait.py run --group G
-  --count` and `prelayout.py`'s `count` (the feasibility count, ended at 30 min). On a scratch copy
+  --count` and `prelayout.py`'s `count` (the feasibility count, ended at 30 min). `bgwait.py run --group
+  G --gate` is a job that only CHECKS the board (a DRC diff, a preflight, a dry run stopped before the
+  race): its time is the group's, its round is not, while it runs no router or race and ends within 5
+  min (`GATE_S`); past that it is a round. A search of your own (a count script, a site solver) is never
+  a gate. (board1 NORTHGAP r8, 2026-11-24: two DRC jobs of 12 s and 19 s and a 7 s dry run were charged
+  three of its four rounds; `tools/route/test_budget_gate.py` is the proof.) On a scratch copy
   inside the board folder too: it is charged to the board. **Never counted or refused:** `apply`, `rip`,
   `audit`, `status`, `render`.
 - **Which group a run belongs to is decided by its nets, not its name**: `routing/groups.json`'s entry
@@ -2026,10 +2031,12 @@ either session goes through it -- but the router is where the waiting happens:
     python3 tools/bgwait.py kill R2_b                        # its whole process group
     python3 tools/bgwait.py run --name emmc_c1 --group routing/R_emmc_spec.json -- tools/kpy build/emmc_try.py   # charged to the group
     python3 tools/bgwait.py run --name emmc_fit --group R_emmc --count -- tools/kpy build/emmc_sites.py         # its ONE feasibility count: ended at 30 min
+    python3 tools/bgwait.py run --name emmc_drc --group R_emmc --gate -- kicad-cli pcb drc --refill-zones ...    # a check: its time, no round (up to 5 min)
 
 - **A job that works for a routing group says so: `--group <id | its spec | its plan>`.** It is then one
   round of that group's effort budget and its wall-clock time (`budget.py`, above), refused with exit 76
-  when the group is spent; `--count` makes it the group's one feasibility count, ended at 30 minutes.
+  when the group is spent; `--count` makes it the group's one feasibility count, ended at 30 minutes;
+  `--gate` a job that only checks (DRC, preflight, dry run): its time, no round, up to 5 minutes.
   A job of no group still runs, and is listed by `route.py budget` as time outside every group: a
   what-if for one group started without `--group` is the day that produced the budget.
 - **`run` makes the job a (pid, start time) pair with a recorded exit code.** The command runs detached in

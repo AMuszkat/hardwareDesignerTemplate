@@ -8,7 +8,7 @@ limit -- for both session types (the concept side calls it by path).
     python3 tools/bgwait.py kill NAME ...
     python3 tools/bgwait.py clean NAME ... | --all-ended
 
-    python3 tools/bgwait.py run --name N --group GROUP|SPEC|PLAN [--count] [--board boardN] -- <command>
+    python3 tools/bgwait.py run --name N --group GROUP|SPEC|PLAN [--count | --gate] [--board boardN] -- <command>
 
 A JOB FOR A ROUTING GROUP SAYS SO.  `--group` (the group's id in
 routing/groups.json or the ledger, or its spec or plan file) charges the job
@@ -16,7 +16,11 @@ to that group's effort budget (tools/route/budget.py): one round and its
 wall-clock time, whatever it runs inside; refused with exit 76 when the group
 is spent (`route.py wall` is then the one move).  `--count` makes it the
 group's ONE feasibility count: ended at 30 minutes, and no answer by then is
-the answer "it does not fit".  A job of no group still runs; one of a minute
+the answer "it does not fit".  `--gate` says the job only CHECKS the group's
+board -- a DRC diff, a preflight, a dry run that stops before the race: its
+time is the group's, its round is not counted while it runs no router or race
+and ends within 5 minutes (budget.py GATE_S); longer, it is a round.  A search
+of your own is never a gate.  A job of no group still runs; one of a minute
 or more is listed by `route.py budget` as time outside every group.
 
 WHY IT EXISTS.  A board session started three router runs in the background
@@ -785,6 +789,10 @@ def budget_gate(a):
     is spent.  --count: the group's ONE feasibility count, ended at its 30 minutes."""
     if a.count and not a.group:
         die("run: --count goes with --group G: whose feasibility count is it?")
+    if a.gate and not a.group:
+        die("run: --gate goes with --group G: a job of no group is charged to none already")
+    if a.gate and a.count:
+        die("run: --gate or --count, not both: a feasibility count searches")
     if not a.group:
         return None
     B = _budget()
@@ -808,7 +816,8 @@ def budget_gate(a):
         die("run --group: which board? run it from the board folder, or add --board boardN")
     jid = f"{a.name}@{int(time.time())}"
     tok = B.gate(bdir, name, nets, kind="count" if a.count else "job", matched=matched,
-                 label=f"{a.name}: " + " ".join(a.cmd)[:140], jid=jid)
+                 label=("gate " if a.gate else "") + f"{a.name}: " + " ".join(a.cmd)[:140], jid=jid,
+                 is_gate=bool(a.gate))
     if not tok:
         return None                                          # a board with no budget (a fixture)
     return dict(tok.detach(), jid=jid, count=bool(a.count))
@@ -1237,6 +1246,9 @@ def main(argv=None):
                         "spent (tools/route/budget.py). A group id, or its spec / plan file")
     p.add_argument("--count", action="store_true",
                    help="with --group: the group's ONE feasibility count -- ended at 30 min, and no answer is 'no'")
+    p.add_argument("--gate", action="store_true",
+                   help="with --group: the job only checks the board (DRC, preflight, dry run): its time is the "
+                        "group's, no round while it runs no router or race and ends within 5 min")
     p.add_argument("--board", help="with --group: boardN or a board folder (default: this session's board)")
     p.add_argument("cmd", nargs=argparse.REMAINDER, help="-- the command and its arguments")
     p.set_defaults(fn=cmd_run)

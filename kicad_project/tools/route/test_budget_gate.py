@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""A gate job (`bgwait.py run --group G --gate`) costs time and no round; everything else as before.
+
+    python3 tools/route/test_budget_gate.py        # OK, exit 0
+
+Standard library only (budget.py is): tally() on in-memory groups, close() on a ledger in a
+temporary folder.  The case it was written for: board1 NORTHGAP, 2026-11-24 -- two DRC jobs
+(12 s, 19 s) and a 7 s dry run were charged three of its four rounds.
+"""
+import json
+import os
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import budget as B  # noqa: E402
+
+T0 = 1_800_000_000.0
+
+
+def job(i, s, gate=False, t=None):
+    e = dict(id=i, kind="job", name="G", epoch=1, label=f"j{i}", t=t or T0 + i, s=s, jid=f"j{i}@1")
+    if gate:
+        e["gate"] = True
+    return e
+
+
+def inner(i, kind, jid, **kw):
+    return dict(dict(id=i, kind=kind, name="G", epoch=1, t=T0 + i, s=5.0, job=jid), **kw)
+
+
+def group(*events, tier="C"):
+    return dict(names=["G"], nets=[], tier=tier, basis="", epoch=1, events=list(events), walls=[])
+
+
+class GateJob(unittest.TestCase):
+    def rounds(self, *ev):
+        return B.tally(group(*ev), now=T0 + 10_000)["rounds"]
+
+    def test_plain_job_is_still_a_round(self):
+        self.assertEqual(self.rounds(job(1, 12.0)), 1)
+
+    def test_gate_job_is_no_round_but_its_time_counts(self):
+        t = B.tally(group(job(1, 12.0, gate=True)), now=T0 + 10_000)
+        self.assertEqual(t["rounds"], 0)
+        self.assertAlmostEqual(t["seconds"], 12.0)
+
+    def test_gate_over_its_limit_is_a_round(self):
+        self.assertEqual(self.rounds(job(1, B.GATE_S + 1, gate=True)), 1)
+        self.assertEqual(self.rounds(job(1, B.GATE_S, gate=True)), 0)
+
+    def test_race_inside_a_gate_is_counted(self):
+        self.assertEqual(self.rounds(job(1, 60.0, gate=True), inner(2, "race", "j1@1", variants=4)), 1)
+
+    def test_router_run_inside_a_gate_is_counted(self):
+        self.assertEqual(self.rounds(job(1, 60.0, gate=True), inner(2, "run", "j1@1")), 1)
+
+    def test_check_inside_a_gate_counts_as_in_any_job(self):
+        a = B.tally(group(job(1, 60.0, gate=True), inner(2, "check", "j1@1")), now=T0 + 10_000)
+        b = B.tally(group(job(1, 60.0), inner(2, "check", "j1@1")), now=T0 + 10_000)
+        self.assertEqual((a["rounds"], a["checks"]), (b["rounds"], b["checks"]))
+
+    def test_northgap_r8(self):
+        """three gates and the race job: one round, not four."""
+        ev = [job(49, 12.4, gate=True), job(50, 19.4, gate=True), job(51, 7.1, gate=True),
+              job(52, 1800.0), inner(53, "race", "j52@1", variants=4)]
+        t = B.tally(group(*ev), now=T0 + 10_000)
+        self.assertEqual(t["rounds"], 1)
+        self.assertEqual(t["left_rounds"], 3)
+        self.assertAlmostEqual(t["seconds"], 12.4 + 19.4 + 7.1 + 1800.0)
+        ev_plain = [dict(e) for e in ev]
+        for e in ev_plain:
+            e.pop("gate", None)
+        self.assertEqual(B.tally(group(*ev_plain), now=T0 + 10_000)["rounds"], 4)   # as before the flag
+
+    def test_running_gate(self):
+        now = time.time()
+        e = job(1, None, gate=True, t=now - 10)
+        e.update(limit=3600, pid=os.getpid())
+        self.assertEqual(B.tally(group(e), now=now)["rounds"], 0)
+        e["t"] = now - (B.GATE_S + 60)
+        self.assertEqual(B.tally(group(e), now=now)["rounds"], 1)
+
+    def test_close_marks_a_gate_over_its_limit(self):
+        with tempfile.TemporaryDirectory() as d:
+            hb = Path(d)
+            (hb / "routing").mkdir()
+            g = group(job(1, None, gate=True), job(2, None, gate=True))
+            B.ledger_path(hb).write_text(json.dumps({"groups": {"G": g}, "home": str(hb)}))
+            B.close(hb, "G", 1, 15.0, "exit 0", ok=True)
+            B.close(hb, "G", 2, B.GATE_S + 30, "exit 0", ok=True)
+            ev = {e["id"]: e for e in json.loads(B.ledger_path(hb).read_text())["groups"]["G"]["events"]}
+            self.assertNotIn("gate_over", ev[1])
+            self.assertIn("a round", ev[2]["gate_over"])
+            self.assertEqual(B.tally(json.loads(B.ledger_path(hb).read_text())["groups"]["G"])["rounds"], 1)
+
+
+class GatePath(unittest.TestCase):
+    def test_gate_writes_the_flag_bgwait_asks_for(self):
+        """budget.gate(..., is_gate=True) -- what `bgwait.py run --group G --gate` calls."""
+        with tempfile.TemporaryDirectory() as d:
+            hb = Path(d)
+            old = os.environ.get("HW_BUDGET_BOARD")
+            os.environ["HW_BUDGET_BOARD"] = str(hb)
+            try:
+                for i, g_ in enumerate((True, False)):
+                    tok = B.gate(hb, "G", ["NET_A"], kind="job", label=f"t{i}", jid=f"t{i}@1", is_gate=g_)
+                    B.close(tok.home, tok.key, tok.detach()["event"], 3.0, "exit 0", ok=True)
+            finally:
+                if old is None:
+                    os.environ.pop("HW_BUDGET_BOARD", None)
+                else:
+                    os.environ["HW_BUDGET_BOARD"] = old
+            g = json.loads(B.ledger_path(hb).read_text())["groups"]["G"]
+            self.assertEqual([bool(e.get("gate")) for e in g["events"]], [True, False])
+            self.assertEqual(B.tally(g)["rounds"], 1)                 # the plain job only
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=1)

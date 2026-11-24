@@ -81,6 +81,16 @@ together are freed only when each of them ended that way.  (board1, 2026-11-23: 
 granted round ended in 41 s on two walled-in sources, and NORTHGAP's on a spec defect; each
 went back to the user as a second wall with nothing measured.)
 
+A GATE IS NOT A ROUND.  `bgwait.py run --group G --gate` is a job that checks the group's
+board and searches nothing -- a DRC diff, a preflight, a dry run that stops before the race.
+Its time is the group's; its round is not counted, as long as no router run or race starts
+inside it and it ends within GATE_S (5 min).  A gate that runs longer, or runs the router, is
+a round like any job, and its event says why.  `route.py check` inside it counts as a check, as
+in any job.  A search of your own (a count script, a site solver) is never a gate: it is the
+effort the budget is there to bound.  (board1, 2026-11-24: NORTHGAP's three gate jobs -- two
+DRC runs of 12 s and 19 s and a 7 s dry run -- were charged three of its four rounds; the user
+credited them back and asked for this flag.)
+
 NOT COUNTED, NEVER REFUSED: `route.py apply` (copper is the point), `rip`, `audit`, `status`,
 `render`; a check that ends in a usage error; the round of a run that never negotiated (above).  HW_BUDGET_IN is set by race.py and prelayout.py
 for the processes THEY start, whose cost they log themselves; setting it by hand is skipping
@@ -109,6 +119,7 @@ RACE = 6                     # variants, or runs in flight together, that are on
 DEAD_S = 600                 # charged for a run that died without a word (killed -9)
 FREE = 3                     # runs an epoch that ended before any negotiation and cost no round
 UNGROUPED_S = 60             # a background job of no group shorter than this is not worth a line
+GATE_S = 300                 # a --gate job that ends within this, running no router or race, costs no round
 EXIT = 76                    # BUDGET SPENT
 ENV_IN = "HW_BUDGET_IN"      # set by a tool that logs its children's cost itself
 ENV_JOB = "HW_BUDGET_JOB"    # a job id: set by bgwait.py --group for its command; the job owns the time
@@ -367,6 +378,8 @@ def tally(g, now=None):
                 rounds, checks = rounds + math.ceil((n - f) / RACE), 0
             elif f or v:
                 pass                                     # all it did ended before it began: no round
+            elif e.get("gate") and s <= GATE_S:
+                pass                                     # a gate: it checked the board and searched nothing
             elif not in_checks.get(e.get("jid")):
                 rounds, checks = rounds + 1, 0
         else:
@@ -542,6 +555,11 @@ def close(hb, key, eid, seconds, result=None, ok=None, pending=None, **facts):
         if ok is not None:
             e["ok"] = bool(ok)
         L.dirty = True
+        if e.get("gate"):
+            if e["s"] > GATE_S:
+                e["gate_over"] = f"ran {dur(e['s'])}, over the gate's {dur(GATE_S)}: a round"
+            print(f"budget: {key} -- gate job: " + (e.get("gate_over") or
+                  f"{dur(e['s'])}, no round (a router run or race inside it is counted on its own)"))
         if e.get("free") and e["kind"] == "check":
             print(f"budget: {key} -- this check was refused as stale and checked nothing: on the record, no round for it")
         elif e.get("free"):
@@ -551,10 +569,12 @@ def close(hb, key, eid, seconds, result=None, ok=None, pending=None, **facts):
                   f"Round {t['rounds']} of {t['allow_rounds']}.")
 
 
-def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, label="", variants=1, jid=None):
+def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, label="", variants=1, jid=None,
+         is_gate=False):
     """Count one thing against its group, or refuse it (exit 76).  -> a Token (false on a board
     with no budget).  kind: run (the router), race, check, job, count, worker, before (`variants`
-    rounds that were run before the ledger existed)."""
+    rounds that were run before the ledger existed).  is_gate (a job only): it checks and searches
+    nothing -- no round while it runs no router or race and ends within GATE_S."""
     global CURRENT
     if os.environ.get(ENV_IN):
         return Token()
@@ -629,7 +649,9 @@ def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, labe
         joins = None
         if kind == "job":                                 # a round, unless the route tools inside it say otherwise
             e["jid"] = jid
-            if t["left_rounds"] <= 0:
+            if is_gate:
+                e["gate"] = True
+            if t["left_rounds"] <= 0 and not is_gate:
                 print(f"budget: {key} has no round left, {CHECKS - t['checks']} check(s): this job may run "
                       f"`route.py check` and nothing else -- a router run in it is refused, and a job that "
                       f"runs neither spends the group")
@@ -660,6 +682,8 @@ def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, labe
         t2 = tally(g, now)
     print(f"budget: {key} tier {g['tier']} -- round {t2['rounds']} of {T['rounds']}"
           + (" (joins the round in flight)" if joins is not None else "")
+          + (f" (a gate: no round unless it runs past {dur(GATE_S)} or starts a router run or race)"
+             if is_gate and kind == "job" else "")
           + f", {dur(max(0, t2['left_seconds']))} of {dur(T['seconds'])} left"
           + (f"; this {kind} may take {dur(lim)}" if lim < (limit or 9e9) or kind in ("job", "race") else ""))
     if kind != "job":
