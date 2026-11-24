@@ -859,6 +859,11 @@ its docstring. What the spec has to be told:
   knot under U100 read "F and B open" and lanecount agreed; the F copper there is U100's exposed pad and no via can stand.
   WORKED: list every item near the window by layer from pcbnew (pads, zones and footprints included) before calling a
   layer open.
+  **A cut counts free lanes at one line, not whether they join the next cut.** A diagonal track between two cuts splits
+  a lane into a pocket: free at both lines, through at neither. TRAP (board1 NORTHGAP r15, 2026-11-24): the via-row cut
+  under U100 read In2 1 free, but PMIC_RST_B's diagonal In2 leg closed it to the north -- 0 joined. WORKED: count at
+  cuts closer together than the shortest track between them (0.2 mm), and call a lane through only when it is free at
+  every cut from end to end.
 - **Parallel 45-degree runs between two obstacles are counted in x - y** (or x + y): n runs need (n - 1) x 0.2874 mm of it at
   4 mil spacing, 0.318 on a 0.0455 grid (7 cells, 0.225 mm apart), plus each obstacle's own keep-out x 1.414. Six runs
   wanted 1.59 between two vias 1.50 apart: one via site moved 0.14 mm, by hand, before any router ran.
