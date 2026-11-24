@@ -390,6 +390,14 @@ turn and before a worker is briefed.
   another order had drawn 11/11. With the order free, In5 read 0 and In7 1,
   and F's floor came down to 8 lines at U1's two corners, each held by a
   named via or land).
+  A search that moves one unit at a time misses a coupled move whose first
+  half alone scores worse: a pair's vias and the GND stitch that serves
+  them, a via and the via beside it. After a round that does not close,
+  and before the wall, count each holder moved TOGETHER with its own anchor
+  (its stitch, its partner) as fixed states. A pair that lowers the score
+  seeds the next round and becomes one joint unit in its move set (board1
+  R1 r186, 2026-11-24: the CK_A pair 0.1 mm S read 6 alone and 3 with its
+  stitch; two such moves took the round's best from 4 to 2, all in rule).
   The copper a count holds fixed is dumped from the board as it stands.
   Dump it again after every group is applied. The count names its dump's
   date and refuses a dump older than the newest `routing/*.applied.json`.
