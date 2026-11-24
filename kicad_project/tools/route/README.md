@@ -2033,6 +2033,42 @@ has moved. `budget.py`'s docstring is the manual; in short:
   answers were "no new term" -- the wall had been the only way to get another budget -- and the term
   counts that were run sat outside every budget (82 ungrouped jobs, 5.7 h).
   WORKED: nothing yet -- this is the rule that replaces it; the proof is `tools/route/test_budget_terms.py`.
+- **A closing row says how it is known**: `"proof": "check"` (the variant's plan passed `route.py check` on
+  the copy), `"router"` (every net routed, the plan not through the gate) or `"count"` (a counting model,
+  no plan). The wall prints the level in its table and calls anything but `check` A LEAD: the reopened
+  group owes its gated plan before copper. **A count runner scores the router and the gate apart** --
+  `converged`, `nets_left` and `check` are three fields of a variant's result, and the table is built
+  from them, never from one `LEFT n` line.
+  TRAP (board1, 2026-11-24): a runner wrote `LEFT 33` for a ceiling whose every net had routed -- 33 was
+  the raw plan's check findings, read as nets, the makings of a `DOES NOT FIT` wall for a group that
+  routes; another table marked channel counts on a fixed state `closes: true` and the wall called them
+  the copper once granted. WORKED: `tools/route/test_budget_terms.py` (the two proof cases); board1's
+  Q126 was reprinted with both closing rows as leads, and its answer asked for the gated plan.
+- **What the first pass of a count needs, beside the ceiling** (board1 NORTHGAP, 2026-11-24: nine terms,
+  27 variants in one 90-minute window; what the first pass missed was found in its last half hour):
+  - **Every term ALONE, beside every term left out.** The negotiated router is not monotonic inside a
+    window: one placement term alone converged in 541 s while three supersets of it were cut at 900 s
+    two to six nets short, and the all-but-it rows could not show it. The smallest closing set is the
+    row a wall offers first -- or the row that needs no wall at all.
+  - **A BLOCKED variant is read before it is scored.** `BLOCKED SOURCE ... walled by <nets>' fixed copper
+    (prelaid, or an earlier leg of this run)` on a net's SECOND leg is the spec's leg order, not the
+    term: two variants read "necessary" for that reason. One leg of a net per stage (two at one stage
+    are refused), so the re-stage is: the multi-leg nets' first legs alone at stage 0, every other leg
+    together at stage 1 -- and the variant is counted again before the table calls the term necessary.
+  - **A term's finer form is read from the plans that converged** (which nets use the opened layer, and
+    for how long), not from the nets left without it: the nets left are where the search stopped, not
+    what the term carried. Print the layer use of every converged plan before building a second pass.
+  - **Set-up gates before the queue, two variants a job.** A dry check started while four variants hold
+    the memory runs threefold slower; past the gate's 5 minutes it is charged as a round.
+  - **A term the runner cannot move is still named**: the wall's text lists it as uncounted.
+- **A closing row whose only term is a part's place is not a wall yet.** A lifted part is an upper bound,
+  and where the handoff lets a part move inside its own rule the move is the group's: list what the
+  converged plan lays over the part's old place, look for a site inside the part's rule that the plan
+  leaves free (then no router run at all), else race a few gated placements in the remaining round.
+  The wall is for the part that finds no place, and its table is already counted.
+- **A wall closes its group to every job** until a later handoff revision answers it (`budget.py`
+  refuses a gate too): a lead polished to CHECK PASS is polished before the wall is written or after
+  its answer, never beside it.
 - **A reopen is not a refill.** A reopened group gets half of its tier's budget after its first wall and
   a quarter after every later one (never less than one round and 15 min): the wall's table holds a plan
   that closed, so the new epoch re-proves and lays it. The share is on the ledger's reopen event; an
