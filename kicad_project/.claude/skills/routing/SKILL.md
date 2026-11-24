@@ -375,6 +375,15 @@ turn and before a worker is briefed.
   another order had drawn 11/11. With the order free, In5 read 0 and In7 1,
   and F's floor came down to 8 lines at U1's two corners, each held by a
   named via or land).
+  The copper a count holds fixed is dumped from the board as it stands.
+  Dump it again after every group is applied. The count names its dump's
+  date and refuses a dump older than the newest `routing/*.applied.json`.
+  A part one group re-sites is counted against every group not yet routed
+  before it is applied: an in-pad via is a through via on every layer
+  (board1 R1, 2026-11-24, Q120: the wall's table read a region two days
+  old. R_EMMC had since re-sited C34 with two in-pad vias in the corner
+  link the count read free. On today's copper every row read 9-18 lines
+  short. Re-dumped with C34 out, the table held to the line).
 - **Routing is headless**: `route.py apply`, `rip`, `audit` and the copper
   tools run on the closed board. Close KiCad yourself only with the standing
   permission (`kicad_project/project.json` `close_kicad`, printed in the
