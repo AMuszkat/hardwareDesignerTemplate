@@ -68,7 +68,12 @@ chain of relays was reported as routing with no `route.py check` behind it.
    (its wait costs nothing; yours re-reads your whole context each time you look,
    and re-caches it after five idle minutes) and sends a fresh worker with
    `STATE.md` when the job ends. A job under about three minutes you may wait for:
-   `bgwait.py wait <N> --timeout 170`.
+   `bgwait.py wait <N> --timeout 170`. **A job that only checks the board** (a DRC,
+   a `route.py check`, a dry run) under the brief's `--group G` is started
+   `--group G --gate`; without the flag the ledger charges it as a round. A count
+   or a solver of your own is never a gate (`tools/route/budget.py`'s docstring).
+   (board1 NORTHGAP r11, 2026-11-24: three 22 s DRCs started without `--gate`
+   spent the group's budget before its last check could run.)
 4. **Stop at the STOP condition, and at the first of these:** the task's terms
    cannot be met (hand back the count, do not relax a term); a tool is wrong
    (fix it only if the brief says tools are yours to change, else name the defect);
