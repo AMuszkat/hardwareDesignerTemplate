@@ -148,7 +148,11 @@ turn and before a worker is briefed.
 - **A job for a group carries `--group`** (`bgwait.py run --name N --group
   routing/X_spec.json -- …`), a what-if count `--group X --count` (one per
   placement, ended at 30 minutes). A count that does not answer in that
-  time has answered.
+  time has answered. A job that only CHECKS the board -- a DRC diff, a
+  preflight, a dry run stopped before the race -- carries `--group X
+  --gate`: its time is the group's, its round is not (up to 5 minutes, no
+  router run or race inside). A search of your own is never a gate (board1
+  NORTHGAP r8: three such checks without `--gate` took three of four rounds).
 - **A worker gets the group's budget, not its own**: `route.py budget
   <group> --worker "<its task>"` prints the lines for its brief -- what is
   left, and that it stops at the first `BUDGET SPENT` and hands back what
