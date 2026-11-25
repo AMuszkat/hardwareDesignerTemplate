@@ -159,7 +159,9 @@ DRC runs of 12 s and 19 s and a 7 s dry run -- were charged three of its four ro
 credited them back and asked for this flag.)
 
 NOT COUNTED, NEVER REFUSED: `route.py apply` (copper is the point), `rip`, `audit`, `status`,
-`render`; a check that ends in a usage error; the round of a run that never negotiated (above).  HW_BUDGET_IN is set by race.py and prelayout.py
+`render` -- also as a `--gate` job, whatever its length: apply re-runs the full check before it
+writes, which can pass GATE_S on a big board, and it searches nothing (board1 R1, 2026-11-25: the
+6-min apply of a checked plan was charged R1's last round and the next proven plan was refused); a check that ends in a usage error; the round of a run that never negotiated (above).  HW_BUDGET_IN is set by race.py and prelayout.py
 for the processes THEY start, whose cost they log themselves; setting it by hand is skipping
 a gate.
 
@@ -399,6 +401,23 @@ def alive(pid):
     return True
 
 
+COPPER_ONLY = ("apply", "rip", "audit", "status")
+
+
+def copper_only(e):
+    """A job whose one command is `route.py apply|rip|audit|status` (its label, as bgwait writes it:
+    '[gate ]NAME: CMD'): it writes or reads proven copper and searches nothing.  A compound command
+    or a script is not one -- what it runs is not known here."""
+    lab = e.get("label") or ""
+    cmd = lab.split(": ", 1)[1] if ": " in lab else lab
+    if any(c in cmd for c in ("&&", "||", ";", "|", "`", "$(")):
+        return False
+    w = cmd.split()
+    while w and (w[0].endswith("kpy") or os.path.basename(w[0]).startswith("python")):
+        w = w[1:]
+    return len(w) >= 2 and os.path.basename(w[0]) == "route.py" and w[1] in COPPER_ONLY
+
+
 def cost(e, now):
     """Seconds an event has cost: its own, or for one with no end its age up to its limit
     (still running) or DEAD_S (its process is gone and never said how it ended)."""
@@ -473,8 +492,9 @@ def tally(g, now=None):
                 rounds, checks = rounds + math.ceil((n - f) / RACE), 0
             elif f or v:
                 pass                                     # all it did ended before it began: no round
-            elif e.get("gate") and s <= GATE_S:
+            elif e.get("gate") and (s <= GATE_S or copper_only(e)):
                 pass                                     # a gate: it checked the board and searched nothing
+                #                                          (an apply / rip / audit: whatever its length)
             elif not in_checks.get(e.get("jid")):
                 rounds, checks = rounds + 1, 0
         else:
@@ -664,7 +684,7 @@ def close(hb, key, eid, seconds, result=None, ok=None, pending=None, **facts):
             e["ok"] = bool(ok)
         L.dirty = True
         if e.get("gate"):
-            if e["s"] > GATE_S:
+            if e["s"] > GATE_S and not copper_only(e):
                 e["gate_over"] = f"ran {dur(e['s'])}, over the gate's {dur(GATE_S)}: a round"
             print(f"budget: {key} -- gate job: " + (e.get("gate_over") or
                   f"{dur(e['s'])}, no round (a router run or race inside it is counted on its own)"))

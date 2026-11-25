@@ -74,6 +74,24 @@ class GateJob(unittest.TestCase):
         t = B.tally(group(inner(1, "check", "j2@1"), job(2, B.GATE_S + 1, gate=True)), now=T0 + 10_000)
         self.assertEqual(t["rounds"], 1)
 
+    def test_apply_gate_over_its_limit_is_no_round(self):
+        """board1 R1, 2026-11-25: route.py apply of a checked plan ran 6 min as a --gate job."""
+        e = job(1, 339.3, gate=True)
+        e["label"] = "gate r1Fesc_apply: tools/kpy tools/route/route.py apply routing/R1_Fesc.json --board board1"
+        self.assertEqual(self.rounds(e), 0)
+        for lab in ("gate x: tools/kpy tools/route/route.py apply a.json && tools/kpy tools/route/netgroup.py b.json",
+                    "gate x: bash run.sh", "gate x: tools/kpy tools/route/route.py check a.json"):
+            f = dict(e, label=lab)
+            self.assertEqual(self.rounds(f), 1, lab)              # a compound, a script, a long check: a round
+        g = dict(e)
+        g.pop("gate")
+        self.assertEqual(self.rounds(g), 1)                       # not a gate: as before
+
+    def test_apply_gate_with_a_race_inside_is_counted(self):
+        e = job(1, 600.0, gate=True)
+        e["label"] = "gate x: tools/kpy tools/route/route.py apply a.json"
+        self.assertEqual(self.rounds(e, inner(2, "race", "j1@1", variants=4)), 1)
+
     def test_northgap_r192(self):
         """the hand-move gate (199 s, a check inside) and the dry gate: the race after them is round 1."""
         ev = [job(245, 199.0, gate=True), job(246, 24.4, gate=True), inner(247, "check", "j245@1"),
