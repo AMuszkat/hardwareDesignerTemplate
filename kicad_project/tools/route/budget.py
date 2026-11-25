@@ -128,7 +128,10 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   router refuses a spent group's run outside one (BUDGET SPENT), so a "plain job, no --group"
   pre-check cannot run.  Pre-check every spec before the variants -- a race that ends BLOCKED
   or unconverged counts nothing (board1 R1 r194: the first launch's six jobs were all void, a
-  window edge on a pad and a lane field at the wrong width).
+  window edge on a pad and a lane field at the wrong width).  A pre-check passes on exit 0
+  alone: NO SOLUTION, STUCK or any other non-zero exit of a net routed alone is a void spec,
+  not only BLOCKED GOAL / SOURCE -- and a field box must hold its sources (an edge at y 14.205
+  past lane sources at 14.2 hemmed two nets; board1 R1 r195).
   COPPER ENDS A WINDOW: when the group lays copper after its window (an apply no rip has
   undone), the board the table describes is gone -- every row counted before that copper is
   stale, and the window is over with it: the next --terms job opens a new one, on today's
