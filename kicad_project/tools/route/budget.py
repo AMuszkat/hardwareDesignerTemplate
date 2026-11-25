@@ -124,6 +124,11 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   B 45 min, C 90 min); every variant started in it is ended at its end, and one that gave no
   answer by then is "closes": null.  Start them together -- the cores are idle while a
   question travels, and a window used one variant at a time is a window wasted.
+  A spent group's PRE-CHECK (each spec's nets alone, shut ends = 0) is a --terms job too: the
+  router refuses a spent group's run outside one (BUDGET SPENT), so a "plain job, no --group"
+  pre-check cannot run.  Pre-check every spec before the variants -- a race that ends BLOCKED
+  or unconverged counts nothing (board1 R1 r194: the first launch's six jobs were all void, a
+  window edge on a pad and a lane field at the wrong width).
   COPPER ENDS A WINDOW: when the group lays copper after its window (an apply no rip has
   undone), the board the table describes is gone -- every row counted before that copper is
   stale, and the window is over with it: the next --terms job opens a new one, on today's
