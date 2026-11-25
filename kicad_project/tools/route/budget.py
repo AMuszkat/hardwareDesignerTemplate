@@ -161,7 +161,9 @@ credited them back and asked for this flag.)
 NOT COUNTED, NEVER REFUSED: `route.py apply` (copper is the point), `rip`, `audit`, `status`,
 `render` -- also as a `--gate` job, whatever its length: apply re-runs the full check before it
 writes, which can pass GATE_S on a big board, and it searches nothing (board1 R1, 2026-11-25: the
-6-min apply of a checked plan was charged R1's last round and the next proven plan was refused); a check that ends in a usage error; the round of a run that never negotiated (above).  HW_BUDGET_IN is set by race.py and prelayout.py
+6-min apply of a checked plan was charged R1's last round and the next proven plan was refused).
+Run an apply as a plain job (`bgwait.py run --name N -- tools/kpy tools/route/route.py apply ...`,
+no --group): a --group job, a gate too, is refused at the door once the group is spent; a check that ends in a usage error; the round of a run that never negotiated (above).  HW_BUDGET_IN is set by race.py and prelayout.py
 for the processes THEY start, whose cost they log themselves; setting it by hand is skipping
 a gate.
 
