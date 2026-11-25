@@ -2434,6 +2434,10 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **A via moved or re-netted in a what-if keeps its net only if it is free.** pcbnew re-nets a via no
+  track touches from the copper under it (a zone, a touching track) on save and on load: a DMI1_B via came
+  back GND or DATA9_B. Remove that copper first, `via.SetIsFree(True)` before saving, and read the net
+  back after a reload. (board1 R1 r197: two site runs void on it.)
 - **An inner stage with no vias: open both layers to every net.** netgroup with each net pinned to one
   inner layer gave NO SOLUTION where both layers open converged in 4 s (board1 R1 r197, two re-sited DQ
   lines). Pin a layer only where the handoff assigns one.
