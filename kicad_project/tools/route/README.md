@@ -2434,6 +2434,10 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **`route.py check`'s DRC diff keys on the PAIR of items, so a pre-existing violation KiCad pairs with
+  other segments of the same tracks reads as NEW.** Before fixing a 'new' error on copper the plan never
+  touched, look for it in the base's DRC (`.drc_cache/`) by geometry: same nets, same place. (board1 R1
+  r198: In7 CA1_B x NCS0_B, already on the base, re-paired.)
 - **A field box's narrow floor is the published area's outline, read from the board, never a box typed
   over it.** A rule area with a step in its edge (y 13.225 west of a corner, y 12.725 east of it) typed as
   one rectangle grants width and gap the handoff never gave; every count on it is off published terms and
