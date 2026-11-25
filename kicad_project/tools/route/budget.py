@@ -1379,6 +1379,10 @@ def cmd_budget(board_dir, arg=None, worker=None, before=None):
               f"the ledger counts -- not your wall-clock), and the tools count every run you start -- on your "
               f"scratch copy too."
               + (f" A LAY is open: {t['lay_left']} check(s) to gate its row, no router run, no race." if t.get('lay') else "")
+              + f"\n  A `--gate` job is ONE command (one route.py check, or one place.py check / drc): chain "
+              f"nothing in it -- a gate past {GATE_S // 60} min or a compound one is charged a round, and a "
+              f"rehearsal apply on a copy is a job of its own with no --group (board1 R1 r194: check + apply + drc "
+              f"in one gate ran 7 min and spent the group's only round on a placement step)."
               + f"\n  STOP at the first `BUDGET SPENT`, or when one round has shown what blocks: "
               f"hand back what blocks (parts, vias, nets) and EVERY term that could move, each with the edit that "
               f"moves it on a scratch copy -- the terms count's variants (budget.py, THE WALL CARRIES ITS COUNT); "
