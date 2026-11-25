@@ -2267,6 +2267,8 @@ either session goes through it -- but the router is where the waiting happens:
   how many ran at once, then the machine's average -- and names the scripts that left most of it idle.
   Read it at the end of a routing day: board1's said 12.8 of 24 cores busy over 15 h, a router at one
   core a run and 2.8 runs at once.
+- **A running job reads its bash script as it goes: never edit it.** bash reads a script in pieces, so an
+  edit lands mid-run and the job runs garbage. Change a copy (`run2.sh`) and start that. (board1 R1 r197.)
 
 ## An integer program: `tools/cpsat_milp.py` -- scipy's `milp` call, on every core
 
@@ -2432,6 +2434,9 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **An inner stage with no vias: open both layers to every net.** netgroup with each net pinned to one
+  inner layer gave NO SOLUTION where both layers open converged in 4 s (board1 R1 r197, two re-sited DQ
+  lines). Pin a layer only where the handoff assigns one.
 
 ## `corners.py` — the angle rule for a polyline
 
