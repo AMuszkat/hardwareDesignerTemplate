@@ -2119,6 +2119,17 @@ has moved. `budget.py`'s docstring is the manual; in short:
   reserves) moved too. TRAP (board1 NORTHGAP, Q128 / D138, 2026-11-25): the ceiling plateaued with 4
   nets in two knots, each with a free layer and an unshut via; the wall said DOES NOT FIT and the
   answer was to hand-lay two layer changes -- one round trip lost.
+- **The table says what stops its ceiling, and a part that stops it is a term.** A table with no
+  closing row whose ceiling is `"closes": false` carries on that row `"blocked_by": [{"what": "pad
+  C12.1 over the lane end (3.2, 4.1)", "part": "C12"}, {"what": "the via site reserved at (1.0, 2.0)",
+  "part": null}]`, as measured; `budget.py terms` and `wall` refuse it when a part named there is in no
+  term's text and the table has no `"fixed": {"C12": "<the handoff rule that keeps it there>"}` for it --
+  a part the handoff lets move is a placement term, counted in the ceiling. A count its window cut is
+  `"closes": null`, never false: its wall is titled `NO ANSWER IN ITS WINDOW`, shows no misfit, and is
+  answered with the count that is missing. TRAP (board1 R1, Q132, 2026-11-25): an eighth wall titled
+  DOES NOT FIT, pad C100.1 named as what shut a lane and C100 in none of the seven terms (the board's own
+  notes read "what would free it: C100 re-sited (not counted)"), the ceiling `false` with "the F race was
+  stopped by the window" in its note -- one more round trip, no term.
 - **A clear site is one the hop can REACH, not one inside a radius.** Before a hand-lay or a lead
   that moves the group's own via is briefed, count the sites with every knot net's partial freed and
   trace each hop from its net's copper to the site on the hop layer; a site the holder needs is not

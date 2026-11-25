@@ -79,7 +79,7 @@ def ledger(hb):
     return json.loads(B.ledger_path(hb).read_text())["groups"]["G"]
 
 
-def table(hb, terms, rows, key="G", touch=True):
+def table(hb, terms, rows, key="G", touch=True, blocked=None, extra=None):
     """Write routing/terms/<key>.json and an evidence file per row."""
     p = B.terms_path(hb, key)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -92,8 +92,11 @@ def table(hb, terms, rows, key="G", touch=True):
                 f = hb / r["evidence"]
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text("{}")
+        if (blocked is not False and set(r.get("moved") or []) == set(terms) and r.get("closes") is not True
+                and "blocked_by" not in r):
+            r["blocked_by"] = blocked or [{"what": "the lane end is boxed by a via site", "part": None}]
         full.append(r)
-    p.write_text(json.dumps({"terms": terms, "rows": full}))
+    p.write_text(json.dumps(dict({"terms": terms, "rows": full}, **(extra or {}))))
     return p
 
 
@@ -214,6 +217,36 @@ class TermsTable(unittest.TestCase):
         TT, errs = self.read(TERMS3, rows)
         self.assertEqual(errs, [])
         self.assertEqual(TT["ceiling"]["moved"], ["T1", "T2", "T3"])
+
+    def test_a_ceiling_that_does_not_close_says_what_stops_it(self):
+        row = dict(moved=["T1", "T2", "T3"], closes=False, left=1)
+        TT, errs = self.read(TERMS3, [row], blocked=False)
+        self.assertIsNone(TT)
+        self.assertIn("does not say what stops it", errs[0])
+        self.assertIn("no row closes", errs[0])
+        # a part that stops it and that no term moves: the count is missing (board1 R1, 2026-11-25)
+        by = [{"what": "pad C100.1 over the lane end (33.5, 14.2)", "part": "C100"}, {"what": "a via site", "part": None}]
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=by)])
+        self.assertIsNone(TT)
+        self.assertIn("C100 stops the ceiling", errs[0])
+        self.assertIn("EVERY TERM THAT COULD MOVE", errs[0])
+        # ... unless a rule keeps it there, and the wall says so
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=by)], extra={"fixed": {"C100": "10_layout #9: at its pin"}})
+        self.assertEqual(errs, [])
+        self.assertIn("- pad C100.1 over the lane end (33.5, 14.2) -- C100 stays: 10_layout #9: at its pin",
+                      B.closing_lines(TT, "G"))
+        # ... or a term moves it
+        terms = dict(TERMS3, T4={"kind": "placement", "text": "C100 moves 0.5 mm west"})
+        TT, errs = self.read(terms, [dict(row, moved=["T1", "T2", "T3", "T4"], blocked_by=by)])
+        self.assertEqual(errs, [])
+        # a blocker that reads like a reference says whether it is a part
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=[{"what": "pad R66.1 north of the lane"}])])
+        self.assertIn("it names R66", errs[0])
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=[{"what": "DRAM_DATA9_B's lane end on In7.Cu"}])])
+        self.assertEqual(errs, [])
+        # a ceiling that closes owes none
+        TT, errs = self.read({"T1": TERMS3["T1"]}, [dict(moved=["T1"], closes=True, left=0, proof="check")], blocked=False)
+        self.assertEqual(errs, [])
 
     def test_a_ceiling_that_does_not_close_is_a_whole_table(self):
         TT, errs = self.read(TERMS3, [dict(moved=["T3", "T2", "T1"], closes=False, left=5)])
@@ -366,6 +399,18 @@ class Wall(unittest.TestCase):
             w = ledger(hb)["walls"][0]
             self.assertEqual(w["terms"]["closing"], [])
             self.assertIs(w["terms"]["ceiling"], False)
+            self.assertIn("**What stops the ceiling**", q)
+            self.assertIn("- the lane end is boxed by a via site", q)
+
+    def test_a_ceiling_its_window_cut_is_not_a_capacity_wall(self):
+        with board(group(job(1, 60.0, t=time.time() - 100), tier="C")) as hb:
+            table(hb, TERMS3, [dict(moved=["T1", "T2", "T3"], closes=None, left=None)], blocked=False)
+            r, said = quiet(B.cmd_wall, hb, "G", "no via band south of U200", [])
+            self.assertEqual(r, 0, said)
+            q = (hb / "QUESTIONS.md").read_text()
+            self.assertIn("WALL G -- NO ANSWER IN ITS WINDOW: no via band south of U200", q)
+            self.assertNotIn("DOES NOT FIT:", q)
+            self.assertIn("**The count did not end.**", q)
 
     def test_a_table_from_before_this_epoch_is_refused(self):
         g = group(dict(kind="reopen", epoch=2, t=time.time() + 50, frac=0.5), job(2, 60.0, ep=2, t=time.time() + 60),

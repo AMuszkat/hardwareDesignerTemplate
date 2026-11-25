@@ -104,6 +104,12 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   whoever grants knows that before granting.  (board1, 2026-11-24: a runner scored a routed
   ceiling whose raw plan failed the gate as `LEFT 33` -- its 33 findings, read as nets, a
   DOES NOT FIT wall for a group that routes; another table marked channel counts "closes".)
+  A TABLE WITH NO CLOSING ROW SAYS WHAT STOPS ITS CEILING: that row carries "blocked_by": [{"what":
+  "pad C12.1 over the lane end (3.2, 4.1)", "part": "C12"}, {"what": "the via site reserved
+  at (1.0, 2.0)", "part": null}], as measured, and every part named there is moved by a term
+  or kept by a rule the table names -- "fixed": {"C12": "the handoff rule"}.  A blocker no
+  term moved is a count that is missing; the table is refused.  (board1 R1, 2026-11-25: an
+  eighth wall titled DOES NOT FIT on a pad of a capacitor that was in none of its seven terms.)
   "evidence": the variant's result, a file of the board folder written in this
   epoch -- a table counted for an earlier wall is refused.  A row with "moved": [] is the
   published terms as they stand (more effort only).  `budget.py terms <group>` checks the
@@ -1072,12 +1078,78 @@ def read_terms(hb, key, since=0.0):
             if not any(set(r["moved"]) in ({tid}, allt - {tid}) for r in rows):
                 errs.append(f"term {tid} has no row of its own: the ceiling closes, so count {tid} ALONE or every "
                             f"term BUT {tid} -- which terms the group needs is the question")
+    errs += ceiling_blockers(D, terms, ceiling, rows)
     if errs:
         return None, errs
     rows.sort(key=lambda r: r is not ceiling)             # the ceiling first, the rest as written
     closing = sorted((r for r in rows if r["closes"] is True), key=lambda r: rank(r["moved"]))
     return dict(D, terms=terms, rows=rows, ceiling=ceiling, closing=closing, path=str(rel),
                 sha=hashlib.sha256(raw).hexdigest()[:12]), []
+
+
+_REFLIKE = re.compile(r"(?<![A-Za-z0-9_])([A-Z]{1,4}[0-9]{1,4})(?![A-Za-z0-9_])")
+
+
+def ceiling_blockers(D, terms, ceiling, rows):
+    """A TABLE WITH NO CLOSING ROW SAYS WHAT STOPS ITS CEILING, AND A PART THAT STOPS IT IS A TERM.
+    (A table with a row that closes offers that row: it owes none of this.)  The ceiling row carries "blocked_by": [{"what": "pad C12.1 over the lane end (3.2, 4.1)",
+    "part": "C12"}, {"what": "the via site reserved at (1.0, 2.0)", "part": null}] -- what stands
+    in the way of the nets left, as measured.  Every "part" is moved by one of the terms (its
+    reference in the term's text), or the table says what keeps it there: "fixed": {"C12": "the
+    handoff rule that fixes it"}.  An entry whose text names something reference-like says
+    "part" outright, null if it is none.  (board1 R1, 2026-11-25: an eighth wall titled DOES NOT
+    FIT, pad C100.1 named as what shut a lane, C100 in none of the seven terms the ceiling
+    moved -- and a part may move without asking.  A ceiling is every term that could move.)
+    -> the errors."""
+    if ceiling is None or ceiling["closes"] is not False or any(r["closes"] is True for r in rows):
+        return []                                         # a ceiling the window cut is null: it proves nothing
+    by, errs = ceiling.get("blocked_by"), []
+    ok = isinstance(by, list) and by and all(isinstance(b, dict) and str(b.get("what") or "").strip() for b in by)
+    if not ok:
+        return ["no row closes and the CEILING does not say what stops it: on that row, \"blocked_by\": "
+                "[{\"what\": \"pad C12.1 over the lane end (3.2, 4.1)\", \"part\": \"C12\"}, {\"what\": \"the via "
+                "site reserved at (1.0, 2.0)\", \"part\": null}] -- what stands in the way of the nets left, as "
+                "measured (a probe, a flood fill, the router's own blocked-goal line), each part by its reference. (A count its window cut before it ended is \"closes\": null, never false: "
+                "it shows no blocker, and its wall is not DOES NOT FIT)"]
+    text = " ".join(str(x.get("text") or "") for x in terms.values())
+    fixed = D.get("fixed") if isinstance(D.get("fixed"), dict) else {}
+    for b in by:
+        what = str(b["what"]).strip()
+        if "part" not in b:
+            m = _REFLIKE.search(what)
+            if m:
+                errs.append(f"blocked_by \"{what[:60]}\": it names {m.group(1)} -- a part? say \"part\": "
+                            f"\"<its reference>\", or \"part\": null if it is none")
+            continue
+        ref = b["part"]
+        if ref is None:
+            continue
+        ref = str(ref).strip()
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(ref)}(?![A-Za-z0-9_])", text):
+            continue
+        if str(fixed.get(ref) or "").strip():
+            continue
+        errs.append(f"{ref} stops the ceiling (\"{what[:60]}\") and no term moves it: THE CEILING IS EVERY TERM THAT "
+                    f"COULD MOVE. A part the handoff lets move is a term -- add it (kind placement, its move in the "
+                    f"text) and count the ceiling again -- or say what keeps it there: \"fixed\": {{\"{ref}\": "
+                    f"\"the handoff rule that fixes it\"}}. A wall whose blocker was never moved is a count that "
+                    f"is missing, not a group that does not fit")
+    return errs
+
+
+def blockers_lines(TT):
+    """What stops the ceiling, as the wall quotes it."""
+    c = TT["ceiling"]
+    if c["closes"] is True or not c.get("blocked_by"):
+        return []
+    fixed = TT.get("fixed") if isinstance(TT.get("fixed"), dict) else {}
+    out = ["", "**What stops the ceiling** (every term moved, as measured):"]
+    for b in c["blocked_by"]:
+        ref = b.get("part")
+        out.append(f"- {str(b['what']).strip()}"
+                   + (f" -- {ref} stays: {str(fixed[ref]).strip()}" if ref and str(fixed.get(ref) or "").strip() else
+                      f" -- {ref} is moved by a term above" if ref else ""))
+    return out
 
 
 def terms_lines(TT):
@@ -1102,12 +1174,15 @@ def closing_lines(TT, key):
     """What the wall offers: the rows that closed, cheapest first -- or that nothing did."""
     if not TT["closing"]:
         c = TT["ceiling"]
-        return ["", "**No change the board can name closes it.** With every term above moved at once the count "
-                + (f"left {c['left']} net(s) open: {key} does not fit this placement and stack-up as they stand"
-                   if c["closes"] is False else
-                   f"gave no answer in its window: as loose as the board can make it, {key} still does not close "
-                   "in the time a group may cost")
-                + ". No routing term is left to ask for: what moves next is the design's -- a part out of the "
+        if c["closes"] is not False:                      # cut by its window: no evidence either way
+            return ["", f"**The count did not end.** With every term above moved at once it gave no answer in its "
+                    f"window, so it shows neither that {key} fits nor that it does not, and no row is a term to "
+                    "grant. This wall is NOT `DOES NOT FIT`: what is missing is the count -- fewer nets a race, on "
+                    "the copper the race before laid, or the ceiling's knots hand-laid as gates (README, 'DOES NOT "
+                    "FIT is read from the ceiling's knots') -- and concept answers it with that, never with a term."]
+        return blockers_lines(TT) + ["", "**No change the board can name closes it.** With every term above moved "
+                f"at once the count left {c['left']} net(s) open: {key} does not fit this placement and stack-up as "
+                "they stand. No routing term is left to ask for: what moves next is the design's -- a part out of the "
                 "group's field, a layer, a net -- and the user's, with the ceiling's evidence above "
                 "(RELAY_PROTOCOL.md section 5)."]
     out = ["", "**The changes that close it, cheapest first** -- each is a row above that CLOSED on a scratch copy "
@@ -1397,8 +1472,9 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
         head = blocks.strip().splitlines()[0][:110]
         second = n_wall >= 2
         title = (f"WALL {key}" + (f", the {ordinal(n_wall)}" if second else "") + f": {head}")
-        if TT and not TT["closing"]:
-            title = title.replace(": ", " -- DOES NOT FIT: ", 1)
+        if TT and not TT["closing"]:                      # a ceiling the window cut (null) proves no misfit
+            title = title.replace(": ", " -- DOES NOT FIT: " if TT["ceiling"]["closes"] is False else
+                                  " -- NO ANSWER IN ITS WINDOW: ", 1)
         # the layers the epoch's rounds could use, and the board's others: a layer no round opened
         # is the change nobody priced (board1 R_PMIC, 2026-11-23: two walls on three layers, with
         # four more the handoff's own terms allowed)
