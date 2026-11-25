@@ -442,6 +442,8 @@ def tally(g, now=None):
         elif j and e["kind"] == "check":
             d_ = in_void if e.get("free") else in_checks  # a check refused as stale checked nothing
             d_[j] = d_.get(j, 0) + 1
+    gate_ok = {e.get("jid") for e in ev if e["kind"] == "job" and e.get("gate") and not in_runs.get(e.get("jid"))
+               and cost(e, now) <= GATE_S}               # a gate's own checks open no round (board1 NORTHGAP r192)
     rounds = checks = free = 0                           # free: runs that never negotiated, their round left out
     secs = count_s = last = 0.0
     counts, terms, on_copper, t_apply = [], [], {}, 0.0
@@ -481,6 +483,12 @@ def tally(g, now=None):
                 secs += s
             if k == "check" and e.get("free"):
                 pass                                     # refused as stale inside a job: on the record, no check
+            elif k == "check" and e.get("job") in gate_ok:
+                if rounds and checks < CHECKS:           # after a round: one of that round's checks
+                    checks += 1
+                # before any round, or past its checks: a gate checked a hand fix and searched nothing -- no
+                # round. TRAP (board1 NORTHGAP r192, 2026-11-25): the hand-move gate's check opened round 1,
+                # and the one round the handoff granted after it was refused at the door.
             elif k == "check":
                 if rounds == 0 or checks >= CHECKS:
                     rounds, checks = rounds + 1, 1

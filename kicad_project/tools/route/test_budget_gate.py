@@ -58,10 +58,29 @@ class GateJob(unittest.TestCase):
     def test_router_run_inside_a_gate_is_counted(self):
         self.assertEqual(self.rounds(job(1, 60.0, gate=True), inner(2, "run", "j1@1")), 1)
 
-    def test_check_inside_a_gate_counts_as_in_any_job(self):
-        a = B.tally(group(job(1, 60.0, gate=True), inner(2, "check", "j1@1")), now=T0 + 10_000)
-        b = B.tally(group(job(1, 60.0), inner(2, "check", "j1@1")), now=T0 + 10_000)
-        self.assertEqual((a["rounds"], a["checks"]), (b["rounds"], b["checks"]))
+    def test_check_inside_a_gate_opens_no_round(self):
+        a = B.tally(group(inner(1, "check", "j2@1"), job(2, 60.0, gate=True)), now=T0 + 10_000)
+        self.assertEqual((a["rounds"], a["checks"]), (0, 0))
+        b = B.tally(group(inner(1, "check", "j2@1"), job(2, 60.0)), now=T0 + 10_000)
+        self.assertEqual((b["rounds"], b["checks"]), (1, 1))          # a plain job's check: as before
+
+    def test_check_inside_a_gate_after_a_round_is_one_of_its_checks(self):
+        ev = [job(1, 600.0), inner(2, "race", "j1@1", variants=4), inner(3, "check", "j4@1"),
+              job(4, 60.0, gate=True)]
+        t = B.tally(group(*ev), now=T0 + 10_000)
+        self.assertEqual((t["rounds"], t["checks"]), (1, 1))
+
+    def test_check_inside_a_gate_over_its_limit_counts(self):
+        t = B.tally(group(inner(1, "check", "j2@1"), job(2, B.GATE_S + 1, gate=True)), now=T0 + 10_000)
+        self.assertEqual(t["rounds"], 1)
+
+    def test_northgap_r192(self):
+        """the hand-move gate (199 s, a check inside) and the dry gate: the race after them is round 1."""
+        ev = [job(245, 199.0, gate=True), job(246, 24.4, gate=True), inner(247, "check", "j245@1"),
+              job(248, 1500.0), inner(249, "race", "j248@1", variants=1)]
+        t = B.tally(group(*ev), now=T0 + 10_000)
+        self.assertEqual(t["rounds"], 1)
+        self.assertEqual(B.tally(group(*ev[:3]), now=T0 + 10_000)["rounds"], 0)
 
     def test_northgap_r8(self):
         """three gates and the race job: one round, not four."""
