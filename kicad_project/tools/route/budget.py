@@ -137,6 +137,9 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   on -- a pair that fails alone is a void spec.  (board1 R1 rev 197: DATA8_B/DATA9_B lane
   ends 0.2000 apart against 0.2032 north of the thin field; every north count for a day ran on
   it, each net alone passing.)
+  A ROUND HOLDS AT MOST RACE ROUTER RUNS: a pre-check of more subsets than that is a --terms
+  job from the start, never the round's job -- the rest exit BUDGET SPENT and the round is gone.
+  (board1 R1 r197: 30 pre-check runs in the reopen's one round job, 6 ran, the round spent.)
   COPPER ENDS A WINDOW: when the group lays copper after its window (an apply no rip has
   undone), the board the table describes is gone -- every row counted before that copper is
   stale, and the window is over with it: the next --terms job opens a new one, on today's
