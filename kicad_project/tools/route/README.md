@@ -1164,6 +1164,11 @@ its docstring. What the spec has to be told:
 - **A goal via off the grid**: end the leg with `"to_path": [[x, y], [x, y]]`
   (the cells within 0.151 of the via), not `"to_xy"` -- that rounds to one
   cell, which may lie in a neighbour's halo.
+- **A source off the grid kills a race slot in seconds**: netgroup refuses a leg whose source is off
+  the window's grid (0.025), and a dry gate does not catch it. A variant that adds a net to the group
+  (a neighbour's track ripped and re-routed inside the plan) snaps that net's source and goal to the
+  grid in the spec before the race. TRAP (board1 NORTHGAP r190, 2026-11-25): PMIC_RST_B's source at
+  (27.645, 5.008) killed the ceiling slot at 5 s; it was re-raced in a later slot at (27.65, 5.0).
 - **Plans checked one at a time on one copy are not proven together.** `check` judges a plan
   against the board as it stands, so plans made side by side each pass and still collide when
   applied: a through via one plan lays (an in-pad via for a net changing layer) crosses another
