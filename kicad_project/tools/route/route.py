@@ -21,7 +21,9 @@
           holding a pad or via cut off from its net (pournet), and every
           breach of the class clearance by copper running out of an area a
           .kicad_dru rule relaxes (areaclear.py: DRC judges such a segment
-          by the area's number over its whole length).  Read-only.
+          by the area's number over its whole length), and every review
+          finding (handoff/findings.json) that holds before and fails with
+          the plan -- a pour neck DRC passes.  Read-only.
   apply   check, then write to the real board (KiCad closed, backup first),
           read back, and record every UUID in <board>/routing/<group>.applied.json
           so the group can be ripped out again.
@@ -1451,6 +1453,17 @@ def cmd_check(a, quiet=False, gate=True):
                 bad.append(f"pournet: {c['pour']} island {c['area']:.2f} mm2 at ({c['at'][0]:.1f}, {c['at'][1]:.1f}) "
                            f"holds {', '.join(c['items'][:6])} and is cut off from the rest of its net"
                            + (f" (reaches only {', '.join(c['beyond'][:4])})" if c["beyond"] else "") + " (pour.py)")
+        # a review finding this plan opens again: every gate above and DRC pass a power pour the plan's
+        # vias and tracks narrow below its IPC width, and `audit --findings` saw it only after apply
+        # (board1 NORTHGAP T2, 2026-11-25: RV64.1 VDD_ARM In4 and RV64.2 VDD_GPU In5, CHECK PASS on the copy)
+        f_rows = guide.findings_rows(P.board_dir_arg(a.board))
+        if f_rows:
+            f0, f1 = findings_failing(B, f_rows), findings_failing(S, f_rows)
+            f_new = [fid for fid in f1 if fid not in f0]
+            copper_notes.append(f"findings: {len(f0)} of {len(f_rows)} review finding(s) open before, {len(f1)} "
+                                f"with this plan ({len(f_new)} new) (handoff/{guide.FINDINGS_JSON})")
+            bad += [f"finding: {fid} ({f1[fid][0]}) holds before and fails with this plan: {f1[fid][1]}"
+                    for fid in f_new]
         rep = drc_report(scratch, cache=False)
         base = drc_done(base_run)
         angle_note = "angles: the guide has no 'joints' row, not checked"
@@ -1786,6 +1799,20 @@ def cmd_rules(a):
           f"layers\" ({NFP_SPEC} \"nfp_vias\": {nfp['source']})" if nfp else
           f"  non-functional pads: not run -- {NFP_SPEC} has no \"nfp_vias\"")
     return 0
+
+
+def findings_failing(B, rows):
+    """{finding id: (rule, its first site)} for each review finding (guide.findings_rows) that fails on
+    RBoard B as it is in memory -- a plan's scratch board too (the pour rules refill its zones)."""
+    geo, classes_of, full_width = CK.for_board(B)
+    out = {}
+    for fid, rule, val, src in rows:
+        G = {}
+        CK.parse(rule, val, {"source": src or fid}, G)
+        (_name, _key, _rule, sites), = CK.run(G, geo, classes_of, full_width)
+        if sites:
+            out[fid] = (rule, sites[0])
+    return out
 
 
 def cmd_findings(a):

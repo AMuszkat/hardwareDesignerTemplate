@@ -331,7 +331,12 @@ under its verdict — and the handoff publishes them all as
 runs every one on the board as it is, one `PASS|FAIL` line per finding id
 with the sites, and ends `FINDINGS PASS` or `FINDINGS FAIL (...)` (exit 1).
 Closed findings are run too, which is the point: the one that comes back
-fails here in a second, not in the next review. Both lines — `AUDIT` and
+fails here in a second, not in the next review. `route.py check` runs them too, before
+and with the plan: a finding that holds before and fails with the plan fails
+the check (`finding: RVn ...`). TRAP (board1 NORTHGAP T2, 2026-11-25): a
+plan's vias narrowed two power pours below their IPC width (RV64.1, RV64.2);
+DRC and every other gate passed on the copy, and the audit found it only
+after apply. Both lines — `AUDIT` and
 `FINDINGS` — go in every pcb review request, and the review snapshot runs
 both itself. A check does not replace DRC (copper under the minimum) or
 `fanout.py layers`' `pad_gap` (padded vias of an inner-layer pair): neither
