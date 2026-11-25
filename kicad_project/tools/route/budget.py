@@ -132,6 +132,11 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   alone: NO SOLUTION, STUCK or any other non-zero exit of a net routed alone is a void spec,
   not only BLOCKED GOAL / SOURCE -- and a field box must hold its sources (an edge at y 14.205
   past lane sources at 14.2 hemmed two nets; board1 R1 r195).
+  A net alone cannot see two lane ends too close for each other: PRE-CHECK ADJACENT LANES AS
+  PAIRS, then each half of a fan (the west lanes, the east lanes), on the spec the race runs
+  on -- a pair that fails alone is a void spec.  (board1 R1 rev 197: DATA8_B/DATA9_B lane
+  ends 0.2000 apart against 0.2032 north of the thin field; every north count for a day ran on
+  it, each net alone passing.)
   COPPER ENDS A WINDOW: when the group lays copper after its window (an apply no rip has
   undone), the board the table describes is gone -- every row counted before that copper is
   stale, and the window is over with it: the next --terms job opens a new one, on today's
