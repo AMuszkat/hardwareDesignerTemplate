@@ -2115,6 +2115,12 @@ has moved. `budget.py`'s docstring is the manual; in short:
   free to another net. TRAP (board1 NORTHGAP r192, 2026-11-25): a radius test offered three leads
   (a pocket 'held only by the group's own via'); the hand-lay worker found 7 sites for 8 hops, the
   pocket fenced off on its layer, and no lead closed -- one worker spent (`leads/cu.py sites`).
+- **A terms pool stops the rest only on the ceiling's knots, never on a cut search.** A pool that runs
+  the variants in memory slots and ends the count when the ceiling 'does not close' must read WHY: a
+  ceiling cut at its limit, or one whose knots have a layer OPEN, is not DOES NOT FIT -- its knots are
+  hand-laid as gates and the other variants still run. TRAP (board1 NORTHGAP r192, 2026-11-25): CEIL
+  was cut at 1200 s with one knot (three layers OPEN); the pool killed 10 variants as DOES NOT FIT and
+  they were re-run in what was left of the window.
 - **A reopen is not a refill.** A reopened group gets half of its tier's budget after its first wall and
   a quarter after every later one (never less than one round and 15 min): the wall's table holds a plan
   that closed, so the new epoch re-proves and lays it. The share is on the ledger's reopen event; an
