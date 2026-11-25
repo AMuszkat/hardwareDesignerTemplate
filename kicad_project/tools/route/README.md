@@ -2081,7 +2081,12 @@ has moved. `budget.py`'s docstring is the manual; in short:
   ceiling does not close, read that variant's `knots.txt`: a knot whose line reads `OPEN here` on any
   layer, or `via here: no term shuts it`, is a crossing with a free layer, hand-laid on the partial
   (one net changes layer once at the knot) and gated (planclr, the copper gates, `route.py check`:
-  gates, not a round). DOES NOT FIT is shown only when every knot of the last partial has each other
+  gates, not a round). Those two lines judge the knot against TERMS only, never copper: before the
+  hand-lay is owed (and before a wall names the knot), test the via sites within about 1.6 mm of the
+  crossing against every copper item on every layer, for each net's hop (board1
+  `tmpWork/NORTHGAP/d138/knotsites.py`); a knot with no copper-clear site on either side is shut by
+  the copper that blocks it, and that copper's owner (a net's own route, another group's polygon) is
+  the term. DOES NOT FIT is shown only when every knot of the last partial has each other
   layer and its via shut by a NAMED term, with the plan's own terms (each net's layers, exit lanes,
   reserves) moved too. TRAP (board1 NORTHGAP, Q128 / D138, 2026-11-25): the ceiling plateaued with 4
   nets in two knots, each with a free layer and an unshut via; the wall said DOES NOT FIT and the
