@@ -2434,6 +2434,11 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **A rung that widens a rule area is drawn by MERGING it into the area's outline, never as a second
+  rectangle.** A segment spanning two outlines lies wholly in neither: `route.py check` flags it
+  (area-clear) while the router's floor fields passed it. (board1 R1 r199: 26 findings at x 36.275.)
+- **Parallel `netgroup.py --only` runs of one spec race on its partial's .tmp** (named after the spec's
+  plan): FileNotFoundError. Give each run its own spec copy.
 - **`route.py check`'s DRC diff keys on the PAIR of items, so a pre-existing violation KiCad pairs with
   other segments of the same tracks reads as NEW.** Before fixing a 'new' error on copper the plan never
   touched, look for it in the base's DRC (`.drc_cache/`) by geometry: same nets, same place. (board1 R1
