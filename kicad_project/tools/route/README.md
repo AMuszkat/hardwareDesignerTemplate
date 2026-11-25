@@ -1871,6 +1871,11 @@ is not modelled.
   to U1, 1.0 A, 10 K, 35 um, min width 1.5 mm` fails at 1.336 mm (x 30.51-30.91, y 13.30-13.70);
   the same row with `, source disc 0.75 mm` before the width passes. A feed via not joined solid is
   named in the failure line.
+- **Comparing variants, read the raw raster cut, not the reported one: the reported least cut is
+  not monotonic in removing a via.** TRAP (board1 NORTHGAP r192, 2026-11-25): VDD_ARM In4 read 2.197
+  with one via out and 2.160 with three out, while the raw raster figure rose 1.992 -> 1.999. A
+  variant table built on the reported figure ranks a better variant as worse. WORKED: rank on the
+  raw figure, and judge PASS/FAIL on the reported one as the finding does.
 - **A ball field's load is `REF.balls`, never the field's box or the courtyard.** TRAP (board1
   RV64.2, D129, 2026-11-23): `to (22.5, 15.0)-(35.5, 28.0)`, U1's field, read 3.01 PASS for
   VDD_GPU_VPU_DRAM -- every copper cell of the net inside the box is load, and three lobes of the
