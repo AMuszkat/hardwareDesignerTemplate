@@ -128,6 +128,21 @@ postponed.  The full budget that every answer used to restore is what let one gr
 four budgets and reach ten walls.  The share is written into the ledger's reopen event; an
 epoch opened before this rule keeps what it had.
 
+A CLOSING ROW THE HANDOFF ALREADY ALLOWS IS LAID, NOT ASKED (kicad_project/CLAUDE.md: "a closing
+row that moves only what the handoff already lets you move is not a question").  A term the
+handoff already lets the group move carries the rule that lets it, in the table:
+
+      "T2": {"kind": "placement", "text": "PDM_DATA1 re-laid on In7 through x 30.2",
+             "handoff_allows": "PDM_DATA1 is the group's own net, on a layer of its own spec"}
+
+When a spent group's table (checked, this epoch) has a row that closes with "proof" "check" or
+"router" and moves only such terms, `budget.py lay <group>` puts that row on the ledger, and the
+epoch gets LAY_CHECKS more checks to gate it -- its reserve gates and a hand fix of what they
+find -- and nothing else: no router run, no race, no count, no more time.  Once per epoch, and
+only from a table `budget.py terms` passes.  A row that needs any other term is the wall's.
+(board1 NORTHGAP r192, 2026-11-25: T2, the group's own net re-laid, closed by hand on the copy
+after the round and its three checks were spent; its reserve gates were refused at the door.)
+
 THE BUDGET REOPENS ONLY WHEN THE INPUT CHANGES: the handoff answers the wall's question in a
 later revision (handoff/07_answers.md carries its `## Qn`), or one of the group's own parts
 has moved on the board.  Not by a new name, a new seed or a new day -- and then to a share of
@@ -189,6 +204,7 @@ TERMS_S = {"A": 20 * 60, "B": 45 * 60, "C": 90 * 60}     # the terms count a wal
 REOPEN = (0.5, 0.25)         # the share of its tier's budget a reopened group gets: after its first wall, after any later
 MIN_S = 15 * 60              # ... and never less time than this
 CHECKS = 3                   # checks a round carries: its first, and two after a hand fix
+LAY_CHECKS = 3               # checks a spent group gets to LAY a closing row the handoff already allows (`lay`)
 RACE = 6                     # variants, or runs in flight together, that are one round
 DEAD_S = 600                 # charged for a run that died without a word (killed -9)
 FREE = 3                     # runs an epoch that ended before any negotiation and cost no round
@@ -465,7 +481,8 @@ def tally(g, now=None):
             d_[j] = d_.get(j, 0) + 1
     gate_ok = {e.get("jid") for e in ev if e["kind"] == "job" and e.get("gate") and not in_runs.get(e.get("jid"))
                and cost(e, now) <= GATE_S}               # a gate's own checks open no round (board1 NORTHGAP r192)
-    rounds = checks = free = 0                           # free: runs that never negotiated, their round left out
+    rounds = checks = free = lays = 0                    # free: runs that never negotiated, their round left out
+    lay = None                                           # the `lay` event of this epoch: LAY_CHECKS checks after it
     secs = count_s = last = 0.0
     counts, terms, on_copper, t_apply = [], [], {}, 0.0
     for e in g.get("events", []):                        # copper is a fact of the board, whatever the epoch
@@ -481,6 +498,8 @@ def tally(g, now=None):
             count_s += s
         elif k == "terms":                               # the count a wall carries: its own window, no round, not the group's time
             terms.append(e)
+        elif k == "lay":
+            lay = lay or e
         elif k in ("reopen", "worker", "apply", "rip"):
             pass
         elif k == "job":                                 # the job owns its time; what ran inside it says what it was
@@ -505,6 +524,8 @@ def tally(g, now=None):
                 secs += s
             if k == "check" and e.get("free"):
                 pass                                     # refused as stale inside a job: on the record, no check
+            elif k == "check" and lay:
+                lays += 1                                # one of the lay's checks: no round, none of the round's
             elif k == "check" and e.get("job") in gate_ok:
                 if rounds and checks < CHECKS:           # after a round: one of that round's checks
                     checks += 1
@@ -527,11 +548,12 @@ def tally(g, now=None):
     copper = set().union(*on_copper.values()) if on_copper else set()
     nets_applied = len(copper & set(g.get("nets", []))) if g.get("nets") else len(copper)
     complete = bool(copper) and set(g.get("nets", [])) <= copper
-    no_more = left_s <= 0 or left_r < 0 or (left_r <= 0 and checks >= CHECKS)
+    lay_left = LAY_CHECKS - lays if lay else 0
+    no_more = left_s <= 0 or left_r < 0 or (left_r <= 0 and checks >= CHECKS and lay_left <= 0)
     state = ("wall" if wall else "applied" if copper and t_apply >= last else "spent" if no_more else "open")
     return dict(rounds=rounds, seconds=secs, checks=checks, free=free, counts=counts, count_s=count_s, complete=complete,
                 nets_applied=nets_applied, left_rounds=left_r, left_seconds=left_s, state=state, wall=wall,
-                no_more=no_more, allow_rounds=T["rounds"], allow_seconds=T["seconds"], frac=T["frac"], terms=terms,
+                no_more=no_more, lay=lay, lay_left=lay_left, allow_rounds=T["rounds"], allow_seconds=T["seconds"], frac=T["frac"], terms=terms,
                 terms_end=(min(e["t"] for e in terms) + TERMS_S[g.get("tier", "A")]) if terms else None)
 
 
@@ -803,7 +825,9 @@ def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, labe
             if is_gate:
                 e["gate"] = True
             if t["left_rounds"] <= 0 and not is_gate:
-                print(f"budget: {key} has no round left, {CHECKS - t['checks']} check(s): this job may run "
+                print(f"budget: {key} has no round left, "
+                      f"{t['lay_left'] if t['lay'] else CHECKS - t['checks']} check(s)"
+                      f"{' (the lay of a closing row)' if t['lay'] else ''}: this job may run "
                       f"`route.py check` and nothing else -- a router run in it is refused, and a job that "
                       f"runs neither spends the group")
         elif job:                                         # inside a job: the job is the round, six runs to a round
@@ -967,6 +991,8 @@ def read_terms(hb, key, since=0.0):
     for tid, x in terms.items():
         if not isinstance(x, dict) or x.get("kind") not in CHANGES or not str(x.get("text") or "").strip():
             errs.append(f"term {tid}: {{\"kind\": one of {', '.join(CHANGES)}, \"text\": \"the change, with its numbers\"}}")
+        elif "handoff_allows" in x and not (isinstance(x["handoff_allows"], str) and x["handoff_allows"].strip()):
+            errs.append(f"term {tid}: \"handoff_allows\" names the rule that already lets it move, or is left out")
     if errs:
         return None, errs
     allt = set(terms)
@@ -1088,6 +1114,59 @@ def cmd_terms(board_dir, key):
     print("\n".join(terms_lines(TT) + closing_lines(TT, key)))
     print(f"\nTERMS OK -- {len(TT['rows'])} row(s), {len(TT['closing'])} close(s): `route.py wall {key} --blocks \"...\"` "
           f"writes the question from it")
+    return 0
+
+
+def lay_rows(TT):
+    """The closing rows of a checked table that move only what the handoff already allows (every
+    moved term carries "handoff_allows"), proved by a gated plan or a routed one -- cheapest first."""
+    return [r for r in TT["closing"] if r.get("proof") in ("check", "router")
+            and all(str(TT["terms"][m].get("handoff_allows") or "").strip() for m in r["moved"])]
+
+
+def cmd_lay(board_dir, key):
+    """`budget.py lay <group>`: a spent group lays the closing row the handoff already allows."""
+    hb = home(board_dir)
+    if hb is None:
+        print(f"{board_dir}: not a session's board: no budget", file=sys.stderr)
+        return 2
+    with Ledger(hb) as L:
+        g = L.group(key) or next((x for x in L.d["groups"].values() if key in x.get("names", [])), None)
+        if g is None:
+            print(f"lay: {key} is not in the ledger", file=sys.stderr)
+            return 2
+        key = next(k for k, x in L.d["groups"].items() if x is g)
+        t = tally(g)
+        if t["lay"]:
+            print(f"LAY REFUSED -- {key}: this epoch's lay is on the ledger already ({t['lay_left']} of its "
+                  f"{LAY_CHECKS} check(s) left); a second is the wall's", file=sys.stderr)
+            return EXIT
+        if t["state"] != "spent":
+            print(f"LAY REFUSED -- {key} is {t['state']}, not spent: gate the row with the round's own checks",
+                  file=sys.stderr)
+            return 2
+        TT, errs = read_terms(hb, key, epoch_start(g))
+        if errs:
+            print(f"LAY REFUSED -- {terms_path(hb, key).relative_to(hb)}:\n  " + "\n  ".join(errs), file=sys.stderr)
+            return 1
+        ok = lay_rows(TT)
+        if not ok:
+            print(f"LAY REFUSED -- {key}: no closing row moves only terms that carry \"handoff_allows\" "
+                  f"(proof check or router): every closing row needs a term granted -- `route.py wall {key}`",
+                  file=sys.stderr)
+            return 1
+        r = ok[0]
+        ep = g.get("epoch", 1)
+        g["events"].append(dict(t=time.time(), kind="lay", name=key, epoch=ep, id=len(g["events"]) + 1, s=0,
+                                label="lay " + (" + ".join(r["moved"]) or "no term"), table=TT["path"], sha=TT["sha"],
+                                moved=r["moved"], proof=r["proof"], evidence=r.get("evidence"),
+                                allows={m: TT["terms"][m]["handoff_allows"] for m in r["moved"]}))
+        L.dirty = True
+    print(f"budget: {key} -- LAY {' + '.join(r['moved']) or 'no term'} ({r['proof']}, {r.get('evidence')}): "
+          f"{LAY_CHECKS} check(s) to gate it, its reserve gates among them (`bgwait.py run --group {key} --gate`); "
+          f"no router run, no race. Then apply as a plain job.")
+    for m in r["moved"]:
+        print(f"  {m}: {TT['terms'][m]['handoff_allows']}")
     return 0
 
 
@@ -1346,7 +1425,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="the budget table, without KiCad (route.py budget is the same)")
     ap.add_argument("--board", default=".", help="the board folder, or boardN (default: here)")
     ap.add_argument("group", nargs="*", metavar="[terms] GROUP",
-                    help="a group: its record. `terms GROUP`: check routing/terms/GROUP.json as the wall will")
+                    help="a group: its record. `terms GROUP`: check routing/terms/GROUP.json as the wall will. "
+                         "`lay GROUP`: a spent group lays its closing row the handoff already allows")
     a_ = ap.parse_args()
     bd_ = a_.board
     if re.fullmatch(r"board\d+", bd_) and sorted(KP.glob(bd_ + "_*")):
@@ -1357,4 +1437,8 @@ if __name__ == "__main__":
         if len(a_.group) != 2:
             ap.error("terms GROUP")
         sys.exit(cmd_terms(bd_, a_.group[1]))
+    if a_.group[:1] == ["lay"]:
+        if len(a_.group) != 2:
+            ap.error("lay GROUP")
+        sys.exit(cmd_lay(bd_, a_.group[1]))
     sys.exit(cmd_budget(bd_, a_.group[0] if a_.group else None))

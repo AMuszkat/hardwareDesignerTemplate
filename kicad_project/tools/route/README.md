@@ -2121,6 +2121,13 @@ has moved. `budget.py`'s docstring is the manual; in short:
   hand-laid as gates and the other variants still run. TRAP (board1 NORTHGAP r192, 2026-11-25): CEIL
   was cut at 1200 s with one knot (three layers OPEN); the pool killed 10 variants as DOES NOT FIT and
   they were re-run in what was left of the window.
+- **A closing row the handoff already allows is laid, not asked: `budget.py lay <group>`.** A term the
+  handoff already lets the group move carries `"handoff_allows"` (the rule that lets it) in the terms
+  table; when a spent group's table has a row that closes (`proof` check or router) moving only such
+  terms, `lay` puts it on the ledger and the epoch gets 3 more checks (LAY_CHECKS) to gate it -- its
+  reserve gates and a hand fix of what they find -- and no router run, race or count. Once an epoch.
+  TRAP (board1 NORTHGAP r192, 2026-11-25): T2, the group's own net re-laid, closed by hand after the
+  round's three checks were spent, and its reserve gates (planclr, the eMMC box) were refused at the door.
 - **A reopen is not a refill.** A reopened group gets half of its tier's budget after its first wall and
   a quarter after every later one (never less than one round and 15 min): the wall's table holds a plan
   that closed, so the new epoch re-proves and lays it. The share is on the ledger's reopen event; an
