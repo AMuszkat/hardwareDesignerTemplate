@@ -2434,6 +2434,12 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **A field box's narrow floor is the published area's outline, read from the board, never a box typed
+  over it.** A rule area with a step in its edge (y 13.225 west of a corner, y 12.725 east of it) typed as
+  one rectangle grants width and gap the handoff never gave; every count on it is off published terms and
+  `route.py check` fails the plan only at the end. Inside the area a line keeps the area's track gap to
+  another net's via too -- stamp vias with that, not the outside gap. (board1 R1: walls 10-11 counted on a
+  field 0.5 mm north of the area west of x 36.275, Q135.)
 - **A via moved or re-netted in a what-if keeps its net only if it is free.** pcbnew re-nets a via no
   track touches from the copper under it (a zone, a touching track) on save and on load: a DMI1_B via came
   back GND or DATA9_B. Remove that copper first, `via.SetIsFree(True)` before saving, and read the net
