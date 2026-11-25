@@ -1271,8 +1271,11 @@ def cmd_budget(board_dir, arg=None, worker=None, before=None):
         t = tally(g)
         print(f"budget: {tok.key} -- worker logged. Put these lines in its brief:\n"
               f"  GROUP {tok.key} (tier {g['tier']}): {max(0, t['left_rounds'])} round(s) and "
-              f"{dur(max(0, t['left_seconds']))} are left, and the tools count every run you start -- on your "
-              f"scratch copy too.\n  STOP at the first `BUDGET SPENT`, or when one round has shown what blocks: "
+              f"{dur(max(0, t['left_seconds']))} of recorded run time are left (the jobs, router runs and checks "
+              f"the ledger counts -- not your wall-clock), and the tools count every run you start -- on your "
+              f"scratch copy too."
+              + (f" A LAY is open: {t['lay_left']} check(s) to gate its row, no router run, no race." if t.get('lay') else "")
+              + f"\n  STOP at the first `BUDGET SPENT`, or when one round has shown what blocks: "
               f"hand back what blocks (parts, vias, nets) and EVERY term that could move, each with the edit that "
               f"moves it on a scratch copy -- the terms count's variants (budget.py, THE WALL CARRIES ITS COUNT); "
               f"do not start another run.")
