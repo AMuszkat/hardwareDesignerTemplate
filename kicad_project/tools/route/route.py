@@ -718,6 +718,19 @@ def viol_keys(rep):
     return keys
 
 
+SHORT_TYPES = ("shorting_items", "tracks_crossing")
+
+
+def drc_shorts(rep):
+    """[(type, its items)] for every DRC violation that joins two nets.  Never accepted by a plan, never
+    inherited from the board a plan is built on, and a gate of its own in the audit -- whose `drc` row
+    fails anyway while a board is half routed, so a new short there reads as one more failure.
+    TRAP (board1 NORTHGAP r192, 2026-11-25): a transplant laid an AUD_BCLK via on R1's DRAM_DATA9_B
+    stub; the next check took that board as its base and passed, apply and audit too."""
+    return [(v["type"], "; ".join(sorted(i.get("description", "") for i in v.get("items", []))))
+            for v in rep.get("violations", []) if v["type"] in SHORT_TYPES]
+
+
 def open_count(rep):
     return len(rep.get("unconnected_items", []))
 
@@ -1516,11 +1529,16 @@ def cmd_check(a, quiet=False, gate=True):
     # group ends every escape in free board on purpose, and "track has an
     # unconnected end" is what that looks like to DRC.  It is never a way to wave away a real
     # error: the reason is printed every run and reviewed with the group.
+    s0, s1 = drc_shorts(base), drc_shorts(rep)
+    held = [x for x in s1 if x in s0]
+    if held:
+        bad.append(f"short: {len(held)} short(s) on the board this plan is built on, still there with it -- fix "
+                   f"them first, a short is never a base: {held[0][0]} {held[0][1][:160]}")
     accepted = {a["type"]: a["why"] for a in plan.get("accept", [])}
     taken = defaultdict(int)
     real = []
     for k in new:
-        if k[0] in accepted:
+        if k[0] in accepted and k[0] not in SHORT_TYPES:             # a short is never accepted
             taken[k[0]] += 1
         else:
             real.append(k)
@@ -1862,12 +1880,18 @@ def cmd_audit(a):
         lines, rc = [f"{B.pcb.with_suffix('.kicad_sch').name} is not beside the board: the parity test "
                      "cannot run, and a run without it reads exactly like a pass"], 4
     else:
-        lines, rc = P.drc_summary(B, *drccache.report(B.pcb))
+        d_rep = drccache.report(B.pcb)
+        lines, rc = P.drc_summary(B, *d_rep)
     viol = next((ln for ln in lines if ln.startswith("violations:")), "violations: ?")
     unc = next((ln for ln in lines if ln.startswith("unconnected:")), "unconnected: ?")
     par = next((ln for ln in lines if ln.startswith("schematic parity:")), "")
     gate("drc", rc == 0 and viol.strip().startswith("violations: none") and unc.strip() == "unconnected: 0",
          f"{viol}; {unc}; {par}" if rc != 4 else lines[-1])
+    if rc != 4 and isinstance(d_rep[0], dict):
+        sh = drc_shorts(d_rep[0])
+        gate("shorts", not sh, f"{len(sh)} DRC violation(s) joining two nets"
+             + (": " + "; ".join(f"{t} {i[:120]}" for t, i in sh[:3]) if sh else " (a gate of its own: `drc` fails "
+                "while the board is half routed)"))
     if G.get("via_clear"):
         vc = via_clear_sites(B)
         gate("via clear", not vc, f"{len(vc)} via(s) under the minimum" + (
