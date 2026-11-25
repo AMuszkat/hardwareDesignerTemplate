@@ -1169,6 +1169,12 @@ its docstring. What the spec has to be told:
   (a neighbour's track ripped and re-routed inside the plan) snaps that net's source and goal to the
   grid in the spec before the race. TRAP (board1 NORTHGAP r190, 2026-11-25): PMIC_RST_B's source at
   (27.645, 5.008) killed the ceiling slot at 5 s; it was re-raced in a later slot at (27.65, 5.0).
+- **A source on a shut field's courtyard line is walled by the field's halo**: a field with
+  `"open": []` is grown by about W/2 + clearance, so a lane-end source ON the courtyard line sits
+  inside it and netgroup blocks the leg at set-up -- in seconds, but as a router run, so it costs
+  the round. End each escape stub past the halo (courtyard line plus W/2 + clr, on the grid) before
+  the race, and check every source against the grown field in the spec builder. TRAP (board1 R1
+  tracks, 2026-11-25): R1T_F's 50 F legs were BLOCKED in 8 s, every source on U1's courtyard line.
 - **Plans checked one at a time on one copy are not proven together.** `check` judges a plan
   against the board as it stands, so plans made side by side each pass and still collide when
   applied: a through via one plan lays (an in-pad via for a net changing layer) crosses another
