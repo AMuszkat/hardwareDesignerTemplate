@@ -2109,6 +2109,12 @@ has moved. `budget.py`'s docstring is the manual; in short:
   reserves) moved too. TRAP (board1 NORTHGAP, Q128 / D138, 2026-11-25): the ceiling plateaued with 4
   nets in two knots, each with a free layer and an unshut via; the wall said DOES NOT FIT and the
   answer was to hand-lay two layer changes -- one round trip lost.
+- **A clear site is one the hop can REACH, not one inside a radius.** Before a hand-lay or a lead
+  that moves the group's own via is briefed, count the sites with every knot net's partial freed and
+  trace each hop from its net's copper to the site on the hop layer; a site the holder needs is not
+  free to another net. TRAP (board1 NORTHGAP r192, 2026-11-25): a radius test offered three leads
+  (a pocket 'held only by the group's own via'); the hand-lay worker found 7 sites for 8 hops, the
+  pocket fenced off on its layer, and no lead closed -- one worker spent (`leads/cu.py sites`).
 - **A reopen is not a refill.** A reopened group gets half of its tier's budget after its first wall and
   a quarter after every later one (never less than one round and 15 min): the wall's table holds a plan
   that closed, so the new epoch re-proves and lays it. The share is on the ledger's reopen event; an
