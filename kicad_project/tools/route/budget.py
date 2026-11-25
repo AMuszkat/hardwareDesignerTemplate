@@ -118,6 +118,11 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   B 45 min, C 90 min); every variant started in it is ended at its end, and one that gave no
   answer by then is "closes": null.  Start them together -- the cores are idle while a
   question travels, and a window used one variant at a time is a window wasted.
+  COPPER ENDS A WINDOW: when the group lays copper after its window (an apply no rip has
+  undone), the board the table describes is gone -- every row counted before that copper is
+  stale, and the window is over with it: the next --terms job opens a new one, on today's
+  board (`count_base`).  (board1 R1, 2026-11-25: the one window went to a single variant
+  before three applies; the table was stale and the group could neither count nor wall.)
 
 A REOPEN IS NOT A REFILL.  An answered wall (or a part that moved) opens a new epoch, and the
 epoch gets a SHARE of the tier's budget: half after the group's first wall, a quarter after
@@ -485,6 +490,7 @@ def tally(g, now=None):
     lay = None                                           # the `lay` event of this epoch: LAY_CHECKS checks after it
     secs = count_s = last = 0.0
     counts, terms, on_copper, t_apply = [], [], {}, 0.0
+    base = last_copper(g)
     for e in g.get("events", []):                        # copper is a fact of the board, whatever the epoch
         if e["kind"] == "apply":
             on_copper[e.get("name")] = set(e.get("nets", []))
@@ -497,7 +503,8 @@ def tally(g, now=None):
             counts.append(e)
             count_s += s
         elif k == "terms":                               # the count a wall carries: its own window, no round, not the group's time
-            terms.append(e)
+            if e["t"] >= base:                           # a window used before the group's last copper is over
+                terms.append(e)
         elif k == "lay":
             lay = lay or e
         elif k in ("reopen", "worker", "apply", "rip"):
@@ -967,6 +974,28 @@ def epoch_start(g):
     return min((e["t"] for e in g.get("events", []) if e.get("epoch", 1) == ep), default=0.0)
 
 
+def last_copper(g):
+    """When the group last laid copper in this epoch and kept it (an apply no rip has undone), or 0."""
+    ep, kept = g.get("epoch", 1), {}
+    for e in g.get("events", []):
+        if e.get("epoch", 1) != ep:
+            continue
+        if e["kind"] == "apply":
+            kept[e.get("name")] = e["t"]
+        elif e["kind"] == "rip":
+            kept.pop(e.get("name"), None)
+    return max(kept.values(), default=0.0)
+
+
+def count_base(g):
+    """Where the board a terms count describes begins: the epoch's start, or the group's last kept
+    copper if later. A row counted before it was counted on a board that is gone, and the window
+    used before it is used no more: one new window, on today's board.  TRAP (board1 R1, 2026-11-25):
+    its one window went at 23:20 to a single variant; three applies followed, the old table was
+    stale, and the group could neither count nor write its wall."""
+    return max(epoch_start(g), last_copper(g))
+
+
 def read_terms(hb, key, since=0.0):
     """The group's terms table, checked (the docstring's THE WALL CARRIES ITS COUNT).
     -> (the table, []) or (None, what is wrong with it).  The table gains "path", "sha",
@@ -1029,9 +1058,9 @@ def read_terms(hb, key, since=0.0):
             errs.append(f"{name}: \"evidence\": the variant's result, a file inside the board folder (tmpWork/..., "
                         f"routing/...) -- {('no such file: ' + ev) if ev else 'none given'}")
         elif f.stat().st_mtime < since:
-            errs.append(f"{name}: its evidence {ev} is older than this epoch (which began "
-                        f"{time.strftime('%m-%d %H:%M', time.localtime(since))}): it was counted for an earlier wall, "
-                        f"on an earlier board -- count it again")
+            errs.append(f"{name}: its evidence {ev} is older than the board it describes (this epoch, or the "
+                        f"group's last copper, began {time.strftime('%m-%d %H:%M', time.localtime(since))}): it was "
+                        f"counted for an earlier wall, on an earlier board -- count it again")
         rows.append(dict(r, moved=mv, closes=c))
     ceiling = next((r for r in rows if set(r["moved"]) == allt), None)
     if ceiling is None:
@@ -1107,7 +1136,7 @@ def cmd_terms(board_dir, key):
         print(f"terms: {key} is not in the ledger ({', '.join(sorted(L['groups'])) or 'empty'})", file=sys.stderr)
         return 2
     key = next(k for k, x in L["groups"].items() if x is g)
-    TT, errs = read_terms(hb, key, epoch_start(g))
+    TT, errs = read_terms(hb, key, count_base(g))
     if errs:
         print(f"TERMS FAIL -- {terms_path(hb, key).relative_to(hb)}:\n  " + "\n  ".join(errs))
         return 1
@@ -1145,7 +1174,7 @@ def cmd_lay(board_dir, key):
             print(f"LAY REFUSED -- {key} is {t['state']}, not spent: gate the row with the round's own checks",
                   file=sys.stderr)
             return 2
-        TT, errs = read_terms(hb, key, epoch_start(g))
+        TT, errs = read_terms(hb, key, count_base(g))
         if errs:
             print(f"LAY REFUSED -- {terms_path(hb, key).relative_to(hb)}:\n  " + "\n  ".join(errs), file=sys.stderr)
             return 1
@@ -1285,6 +1314,17 @@ def cmd_budget(board_dir, arg=None, worker=None, before=None):
     return print_table(hb)
 
 
+ORDINALS = ("SECOND THIRD FOURTH FIFTH SIXTH SEVENTH EIGHTH NINTH TENTH ELEVENTH TWELFTH THIRTEENTH "
+            "FOURTEENTH FIFTEENTH SIXTEENTH SEVENTEENTH EIGHTEENTH NINETEENTH TWENTIETH").split()
+
+
+def ordinal(n):
+    """A wall's number in its title.  TRAP (board1 NORTHGAP, 2026-11-25): the 14th wall came out "the THIRD"."""
+    if 2 <= n <= len(ORDINALS) + 1:
+        return ORDINALS[n - 2]
+    return f"{n}" + ("th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th"))
+
+
 def cmd_wall(board_dir, key, blocks, changes, blocking=False):
     hb = home(board_dir)
     if hb is None:
@@ -1330,7 +1370,7 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
         # the wall carries its count: the changes it offers are rows that closed on scratch
         TT, terrs = None, []
         if n_wall >= 2 or g.get("tier", "A") != "A" or terms_path(hb, key).is_file():
-            TT, terrs = read_terms(hb, key, epoch_start(g))
+            TT, terrs = read_terms(hb, key, count_base(g))
         if terrs:
             print(f"WALL REFUSED -- {key}'s wall number {n_wall} (tier {g.get('tier', 'A')}) carries its count, and "
                   f"{terms_path(hb, key).relative_to(hb)} is not it yet:\n  " + "\n  ".join(terrs) + "\n"
@@ -1356,7 +1396,7 @@ def cmd_wall(board_dir, key, blocks, changes, blocking=False):
         rev = handoff_rev(hb)
         head = blocks.strip().splitlines()[0][:110]
         second = n_wall >= 2
-        title = (f"WALL {key}" + (f", the {['', '', 'SECOND', 'THIRD'][min(n_wall, 3)]}" if second else "") + f": {head}")
+        title = (f"WALL {key}" + (f", the {ordinal(n_wall)}" if second else "") + f": {head}")
         if TT and not TT["closing"]:
             title = title.replace(": ", " -- DOES NOT FIT: ", 1)
         # the layers the epoch's rounds could use, and the board's others: a layer no round opened

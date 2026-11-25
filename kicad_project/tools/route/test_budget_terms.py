@@ -276,7 +276,7 @@ class TermsTable(unittest.TestCase):
             table(hb, TERMS3, [dict(moved=["T1", "T2", "T3"], closes=False, left=5)])
             TT, errs = B.read_terms(hb, "G", time.time() + 3600)          # the epoch began after the count
             self.assertIsNone(TT)
-            self.assertTrue(any("older than this epoch" in e for e in errs), errs)
+            self.assertTrue(any("older than the board it describes" in e for e in errs), errs)
 
 
 class Wall(unittest.TestCase):
@@ -374,7 +374,7 @@ class Wall(unittest.TestCase):
             table(hb, TERMS3, [dict(moved=["T1", "T2", "T3"], closes=False, left=4)])    # written before the reopen
             r, said = quiet(B.cmd_wall, hb, "G", "x", [])
             self.assertEqual(r, 2)
-            self.assertIn("older than this epoch", said)
+            self.assertIn("older than the board it describes", said)
 
     def test_cmd_terms(self):
         with board(group(job(1, 60.0, t=time.time() - 100), tier="C")) as hb:
