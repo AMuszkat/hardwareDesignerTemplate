@@ -2032,6 +2032,13 @@ has moved. `budget.py`'s docstring is the manual; in short:
   and for any group's second wall; with it, it takes no `--change`. A ceiling that does not close is a
   wall titled `DOES NOT FIT`: no routing term is left, the question is the placement or the stack-up, and
   it is the user's at once.
+- **A variant that moves another group's reserve is scored with that group's gate too**: the exit lanes
+  (`exitlane.py`), a corridor kept for a group not yet routed. A converged plan that fails it does not
+  close for free. Run those gates on the race's raw plan BEFORE a polish: a polish to CHECK PASS cannot
+  fix copper that sits in another group's room. TRAP (board1 NORTHGAP r190, 2026-11-25): R2own moved
+  the exit lanes and the eMMC reserve, converged, and was polished to CHECK PASS in 16 min. Only then
+  did exitlane U1 fail (8 north balls: ENET_MDC/MDIO, BOOT_CFG13/15, RGMII_TD1) and R_EMMC's corridor
+  fail (19 items), which needed a terms count with the reserves kept.
   TRAP (board1, 2026-11-23 and 24): 28 walls on five groups in 32 hours. Each wall named changes nobody
   had counted; each answer granted one; the next rounds showed it was not enough. One group of 33 nets
   reached its tenth wall with 13.5 h of tool time against a 6 h budget and no net on copper; four of its
