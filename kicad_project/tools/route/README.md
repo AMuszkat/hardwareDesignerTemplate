@@ -2175,6 +2175,21 @@ has moved. `budget.py`'s docstring is the manual; in short:
   two pairs routed on one layer, either one's vias stay outside the other's span, or a lane (width + 2 x clearance)
   fits between them. Run the same test on any applied via set before the tracks are planned. PROOF: the test
   flags exactly the shut pair on the applied set.
+- **A chain of plans is replayed WHOLE on a fresh copy of today's board before it is called gated -- base plan
+  and the script's last steps included.** TRAP (board1 R1 fan-in, 2026-11-26): three plans passed `route.py check`
+  on a scratch copy whose base was an earlier scratch board (old pieces already ripped by a base plan laid with a
+  private script). Replayed on a copy of the real board the chain failed twice: without the base plan a kept via
+  lost its GND stitch (a rule finding), and with it the base brought seven clearance hits at the far BGA -- its
+  dog-bone vias stood on copper the real board had gained since. The fix was a base cut down to what the chain
+  itself needs (11 via rips, one via), which also left every connected net connected. So: (1) the replay script
+  starts by refusing any board whose sha is not the one it was written for, and applies EVERY plan through
+  `route.py apply`, the base first; (2) a base plan keeps only the rips and re-sites the later plans need -- drop
+  an item, rehearse, keep it only if a later check names it; (3) the script's closing steps (drc diff, dangle
+  diff, read-back) are run on that rehearsal, not first on the real board: a plain DRC diff does not read a
+  plan's `accept` list and fails on the open ends the plan's own check accepted -- pass those one by one (net,
+  layer, position) and nothing else; (4) "which net opened" is read from the boards' connectivity, never from two
+  DRC reports: `place.py drc --out` caps the unconnected list at 499 and a half-routed board is past it. Prove
+  it: the rehearsal's log ends with the script's own OK line on a copy whose starting sha is the real board's.
 - **Gate a plan on a copy of TODAY's board, not the copy it was routed on.** TRAP (board1 R1 round 8,
   2026-11-23): the row passed every gate on its round's base copy, made hours before; the real board had since
   taken 304 tracks of other groups and moved 5 parts, none of which that gate had seen. WAY AROUND: diff the base
