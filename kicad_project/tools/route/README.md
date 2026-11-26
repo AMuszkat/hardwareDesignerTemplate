@@ -2434,6 +2434,10 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **A rehearsal of an apply relies on `route.py apply`'s own check; a stand-alone `route.py check` on the
+  copy is charged to the plan's group by budget.py even outside the board folder and even as a plain job.**
+  (board1 R1_N, 2026-11-26: three rehearsal checks spent R1's round.) `place.py drc`'s report caps a type at
+  199 items: a DRC diff of your own skips capped types and counts dangling vias with viadangle.py.
 - **A rung that widens a rule area is drawn by MERGING it into the area's outline, never as a second
   rectangle.** A segment spanning two outlines lies wholly in neither: `route.py check` flags it
   (area-clear) while the router's floor fields passed it. (board1 R1 r199: 26 findings at x 36.275.)
