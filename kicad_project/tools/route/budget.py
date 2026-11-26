@@ -854,6 +854,14 @@ def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, labe
             if is_gate:
                 e["gate"] = True
             if t["left_rounds"] <= 0 and not is_gate:
+                live = [x for x in g["events"] if x.get("epoch", 1) == ep and x["kind"] == "job" and not x.get("gate")
+                        and x.get("s") is None and now - x["t"] < float(x.get("limit") or DEAD_S)]
+                if live:                                  # one round is ONE job (board1 R1 r201: a second one past the
+                    print(f"BUDGET SPENT -- {key}: job {live[-1].get('label') or live[-1].get('jid')} holds this "
+                          f"epoch's round and is still running. One round is ONE job: run every variant inside it "
+                          f"(xargs -P, up to {RACE}); a second job now would get the routers of both refused.",
+                          file=sys.stderr)
+                    sys.exit(EXIT)
                 print(f"budget: {key} has no round left, "
                       f"{t['lay_left'] if t['lay'] else CHECKS - t['checks']} check(s)"
                       f"{' (the lay of a closing row)' if t['lay'] else ''}: this job may run "
@@ -958,6 +966,7 @@ def applied(board_dir, plan_path):
     if hb is None or os.environ.get(ENV_IN) or Path(board_dir).resolve() != hb:
         return                                            # a rehearsal on a copy is not copper
     name, nets, _ = plan_nets(plan_path)
+    closed = closed_nets(hb, nets)                        # "on copper" is a net closed pad to pad, not touched
     with Ledger(hb) as L:
         key, _d = key_for(L, name, nets)
         g = L.group(key)
@@ -965,10 +974,45 @@ def applied(board_dir, plan_path):
             tier, basis = classify(hb, nets)
             g = L.d["groups"][key] = dict(names=[name], nets=sorted(nets), tier=tier, basis=basis, epoch=1,
                                           events=[], walls=[])
-        g["events"].append(dict(id=len(g["events"]) + 1, t=time.time(), kind="apply", name=name,
-                                epoch=g.get("epoch", 1), nets=sorted(nets), s=0,
-                                result=f"{len(nets)} net(s) on copper"))
+        on = sorted(nets) if closed is None else sorted(closed)
+        e = dict(id=len(g["events"]) + 1, t=time.time(), kind="apply", name=name,
+                 epoch=g.get("epoch", 1), nets=on, s=0,
+                 result=f"{len(on)} net(s) on copper" + ("" if closed is None else
+                                                          f", closed pad to pad, of {len(nets)} the plan touched"))
+        if closed is not None:
+            e["touched"] = sorted(nets)
+        g["events"].append(e)
         L.dirty = True
+
+
+def closed_nets(hb, nets):
+    """-> the nets among `nets` whose pads are all joined on the board (connectivity, pad to pad), or None
+    where pcbnew is not importable.  A plan that lays a net's dog-bones and leaves its line out touched the
+    net and did not route it (board1 R1, 2026-11-26: the ledger read 55 of 76 on copper, the board 9)."""
+    try:
+        import pcbnew
+    except ImportError:
+        return None
+    pcb = sorted(p for p in Path(hb).glob("*.kicad_pcb"))
+    if len(pcb) != 1:
+        return None
+    b = pcbnew.LoadBoard(str(pcb[0]))
+    b.BuildConnectivity()
+    c = b.GetConnectivity()
+    want, pads = set(nets), {}
+    for p in b.GetPads():
+        n = short(p.GetNetname())
+        if n in want:
+            pads.setdefault(n, []).append(p)
+    out = set()
+    for n, ps in pads.items():
+        if len(ps) < 2:
+            out.add(n)
+            continue
+        seen = {x.m_Uuid.AsString() for x in c.GetConnectedItems(ps[0]) if x.Type() == pcbnew.PCB_PAD_T}
+        if all(p.m_Uuid.AsString() in seen for p in ps[1:]):
+            out.add(n)
+    return out
 
 
 def ripped(board_dir, name):

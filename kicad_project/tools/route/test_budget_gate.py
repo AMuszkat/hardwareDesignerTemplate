@@ -7,6 +7,7 @@ Standard library only (budget.py is): tally() on in-memory groups, close() on a 
 temporary folder.  The case it was written for: board1 NORTHGAP, 2026-11-24 -- two DRC jobs
 (12 s, 19 s) and a 7 s dry run were charged three of its four rounds.
 """
+import contextlib
 import json
 import os
 import sys
@@ -155,6 +156,37 @@ class GatePath(unittest.TestCase):
             self.assertEqual([bool(e.get("gate")) for e in g["events"]], [True, False])
             self.assertEqual(B.tally(g)["rounds"], 1)                 # the plain job only
 
+
+
+class OneRoundOneJob(unittest.TestCase):
+    """board1 R1 r201, 2026-11-26: five variants as five `bgwait run --group R1` jobs -- the second was let in past
+    the budget, and its tally got the first job's router refused: a granted round spent with 0 s routed."""
+
+    def test_second_job_while_the_first_holds_the_round_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            hb = Path(d)
+            (hb / "routing").mkdir()
+            (hb / "QUESTIONS.md").write_text("# Questions\n")
+            g = group(tier="C")
+            g["events"].append(dict(id=1, kind="reopen", epoch=1, t=time.time() - 5, frac=0.25, result="x"))
+            B.ledger_path(hb).write_text(json.dumps({"groups": {"G": g}, "home": str(hb)}))
+            old = {k: os.environ.get(k) for k in ("HW_BUDGET_BOARD", B.ENV_IN, B.ENV_JOB)}
+            os.environ["HW_BUDGET_BOARD"] = str(hb)
+            os.environ.pop(B.ENV_IN, None)
+            os.environ.pop(B.ENV_JOB, None)
+            try:
+                with open(os.devnull, "w") as dn, contextlib.redirect_stdout(dn), contextlib.redirect_stderr(dn):
+                    B.gate(hb, "G", kind="job", jid="a@1", label="A")          # the round
+                    with self.assertRaises(SystemExit) as cm:
+                        B.gate(hb, "G", kind="job", jid="b@2", label="B")      # a second job: refused
+                    self.assertEqual(cm.exception.code, B.EXIT)
+                    B.gate(hb, "G", kind="job", jid="c@3", label="C", is_gate=True)  # a gate job still runs
+            finally:
+                for k, v in old.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
