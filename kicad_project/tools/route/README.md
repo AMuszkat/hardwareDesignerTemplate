@@ -2434,6 +2434,9 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **A via site search counts copper polygons (net-tied PCB_SHAPE) as obstacles**: a via that clears
+  tracks, vias and pads can still short a polygon (board1 NORTHGAP r200, 2026-11-26: C25's site passed
+  through the PMIC_LX3 polygon). A DRC diff of your own compares parity items to the expected set, not to zero.
 - **A rehearsal of an apply relies on `route.py apply`'s own check; a stand-alone `route.py check` on the
   copy is charged to the plan's group by budget.py even outside the board folder and even as a plain job.**
   (board1 R1_N, 2026-11-26: three rehearsal checks spent R1's round.) `place.py drc`'s report caps a type at
