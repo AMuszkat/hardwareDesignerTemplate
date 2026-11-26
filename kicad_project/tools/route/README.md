@@ -2186,6 +2186,19 @@ has moved. `budget.py`'s docstring is the manual; in short:
   gets its site counted on every layer the via crosses before any spec names the net; (3) the list of open nets
   skips pour nets and sees an end that is a joint of two segments. Prove it: the count's file reads N / 0 / 0 on
   the copy the spec is written for.
+- **A replay script that rips and re-lays a group carries no number from the stage before it, and a re-laid
+  piece is ripped by its ends of TODAY.** TRAPS (board1 R1, 2026-11-26, each cost one rehearsal or one count):
+  (1) a read-back grep typed as "41 of 41" failed the next stage's rehearsal when the group had 43 -- read the
+  total from the plan, compare closed against it; (2) `route.py rip` overwrites `routing/<group>.ripped.json` and
+  renames the applied manifest, so a script that rips backs both up and restores both on any failure; (3) a rip
+  names a whole segment by both ends: once a stage re-lays a line with one end moved, a later plan written
+  against the old ends matches nothing -- list the group's segments from the board, not from an earlier plan;
+  (4) a via-site search on a 0.02 mm grid missed the only site, which a 0.01 mm grid found: search at the
+  board's own snap before a pocket is called shut; (5) two parallel 45-degree pieces stepped 0.2000 in y stand
+  0.1414 centre to centre, not 0.2000 -- a clearance along a diagonal is counted square to it (0.2032 square is
+  0.2874 in y); (6) two group names one character apart (`R1_u500fan`, `R1u500fan`) are two manifests and one
+  typo: check a new name against `routing/*.applied.json` first. Prove it: the script's rehearsal on a fresh
+  copy of today's board ends with its own OK line and no net read open that was closed.
 - **A chain of plans is replayed WHOLE on a fresh copy of today's board before it is called gated -- base plan
   and the script's last steps included.** TRAP (board1 R1 fan-in, 2026-11-26): three plans passed `route.py check`
   on a scratch copy whose base was an earlier scratch board (old pieces already ripped by a base plan laid with a
