@@ -2438,6 +2438,12 @@ where the hours went. What would have saved them:
   `--group NAME` is refused for a group the ledger does not know, and a group named by a plan the classifier
   files under the group whose nets it shares -- check which with `route.py budget` before a gate longer than
   GATE_S, or it spends that group's round (board1 NG_LINEAGE, 2026-11-26: a 6-min gate charged to R_J1N).
+- **Lines that share a field are ONE negotiation, and every spec is pre-checked net by net first.** A
+  sub-group laid alone walls in the ends of the rest: board1 R1 laid its 20 CA lines and walled in 6 of
+  its 42 DQ ends; then pairs laid before their single-ended neighbours walled in more. Rip what walls
+  them and route both together. netgroup's reach table runs only inside a charged round, so one shut-in
+  end spends the round at iteration 1. Pre-check each net alone (shut ends 0) before the round; a spent
+  group does that as a `--terms` job, at no round (board1 R1 epoch 16: 2 rounds, 61 s, nothing closed).
 - **One round is ONE `bgwait.py run --group G` job.** Runs in flight together count as one round only inside
   one job (xargs -P, up to RACE). Separate `run` calls are separate rounds: the second is admitted past the budget
   with a warning, and its tally then gets the FIRST job's router refused (board1 R1 r201, 2026-11-26: a user-granted
