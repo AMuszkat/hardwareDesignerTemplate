@@ -2186,6 +2186,18 @@ has moved. `budget.py`'s docstring is the manual; in short:
   gets its site counted on every layer the via crosses before any spec names the net; (3) the list of open nets
   skips pour nets and sees an end that is a joint of two segments. Prove it: the count's file reads N / 0 / 0 on
   the copy the spec is written for.
+- **The pre-check runs every net alone in EVERY variant that differs in layers, and a via site is not a way
+  out.** TRAP (board1 R1, 2026-11-27): seven fan-out vias had been sited at the far BGA by a site count; the
+  pre-check then found two of those nets shut inside the BGA's field on every layer (25 000 cells reached, none
+  of the channel), a third open only on the layers of some variants, and four spec defects -- in 67 s and 6
+  min, as `--terms` jobs, with the round unspent. So: (1) a fan-out via is accepted when a flood from it, on
+  the layers the net may take and at the field's terms, reaches the channel -- not when the via fits; (2) "the
+  tightest variant covers the rest" holds only when a net that fails it is given its exception and tested
+  there too: loop the pre-check over the variants (a variant that only adds via room is covered); (3) every
+  layer any net of a spec may take is in the spec's `layers` and the variant is the per-net `layers` -- a
+  net-level layer the grid lacks is a KeyError in maze, not a message; (4) a source is a grid point: where a
+  net's via stands off its run's end, the run's end is the source. Prove it: `precheck/PASS` written by the
+  job itself, every net x every variant `exit 0`.
 - **A replay script that rips and re-lays a group carries no number from the stage before it, and a re-laid
   piece is ripped by its ends of TODAY.** TRAPS (board1 R1, 2026-11-26, each cost one rehearsal or one count):
   (1) a read-back grep typed as "41 of 41" failed the next stage's rehearsal when the group had 43 -- read the
