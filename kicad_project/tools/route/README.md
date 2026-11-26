@@ -2434,6 +2434,11 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **One round is ONE `bgwait.py run --group G` job.** Runs in flight together count as one round only inside
+  one job (xargs -P, up to RACE). Separate `run` calls are separate rounds: the second is admitted past the budget
+  with a warning, and its tally then gets the FIRST job's router refused (board1 R1 r201, 2026-11-26: a user-granted
+  round spent with 0 s routed). An end-to-end open-net list walks `GetConnectedItems(pad)` filtered to pads;
+  `GetConnectedPads` gives direct neighbours only, and the ledger's "on copper" means some copper, not closed.
 - **`route.py check` does not judge pour nets, the via-to-pad gap or nfp vias: run `route.py audit` on the
   laid copy BEFORE the rehearsal** (board1 NORTHGAP r201, 2026-11-26: gate 1 passed four defects only audit
   caught). `fill_zones` fills before BuildConnectivity, so a new nfp via is filled at hole clearance only.
