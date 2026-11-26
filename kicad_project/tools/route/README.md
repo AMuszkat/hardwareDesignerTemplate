@@ -2175,6 +2175,17 @@ has moved. `budget.py`'s docstring is the manual; in short:
   two pairs routed on one layer, either one's vias stay outside the other's span, or a lane (width + 2 x clearance)
   fits between them. Run the same test on any applied via set before the tracks are planned. PROOF: the test
   flags exactly the shut pair on the applied set.
+- **Before a spec is written for the run between two BGAs, count both ends without a router: the fan-in's open
+  ends with the area-clear rule, the far BGA's via sites with a grid.** TRAP (board1 R1, 2026-11-26): a gated
+  fan-in left 25 lines open on its edge behind a 45-degree hook. Continued east, 18 of them were 0.117 from the
+  neighbour's hook where the area rule wants 0.2032, and four balls at the far BGA had no fan-out via site
+  because the group's own inner lines held the lanes. Both were found by two geometric counts in minutes, with
+  the group's one round unspent; a router would have spent it at iteration 1. So: (1) a fan-in plan ends every
+  open line STRAIGHT at its edge, for at least the length and at the pitch the next piece needs, and its gate
+  includes that count (every end: continues / needs a via site / no site); (2) every bare ball at the far end
+  gets its site counted on every layer the via crosses before any spec names the net; (3) the list of open nets
+  skips pour nets and sees an end that is a joint of two segments. Prove it: the count's file reads N / 0 / 0 on
+  the copy the spec is written for.
 - **A chain of plans is replayed WHOLE on a fresh copy of today's board before it is called gated -- base plan
   and the script's last steps included.** TRAP (board1 R1 fan-in, 2026-11-26): three plans passed `route.py check`
   on a scratch copy whose base was an earlier scratch board (old pieces already ripped by a base plan laid with a
