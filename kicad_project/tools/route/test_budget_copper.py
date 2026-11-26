@@ -28,6 +28,18 @@ def group(*events, tier="C"):
     return dict(names=["G"], nets=["A", "B"], tier=tier, basis="", epoch=1, events=list(events), walls=[])
 
 
+class Recount(unittest.TestCase):
+    def test_a_recount_replaces_every_earlier_claim(self):
+        g = group(ev(1, "apply", NOW - 4000, nets=["A", "B"]), ev(2, "recount", NOW - 3000, nets=["A"]))
+        self.assertEqual(B.tally(g, NOW)["nets_applied"], 1)
+        self.assertFalse(B.tally(g, NOW)["complete"])
+
+    def test_an_apply_after_a_recount_adds(self):
+        g = group(ev(1, "apply", NOW - 4000, nets=["A", "B"]), ev(2, "recount", NOW - 3000, nets=[]),
+                  ev(3, "apply", NOW - 2000, name="G2", nets=["B"]))
+        self.assertEqual(B.tally(g, NOW)["nets_applied"], 1)
+
+
 class Window(unittest.TestCase):
     def test_a_window_before_copper_is_over_and_a_new_one_opens(self):
         g = group(ev(1, "terms", NOW - 4000, s=150.0), ev(2, "apply", NOW - 3000, nets=["A"]))

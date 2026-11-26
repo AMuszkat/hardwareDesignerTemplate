@@ -523,6 +523,8 @@ def tally(g, now=None):
             t_apply = e["t"]
         elif e["kind"] == "rip":
             on_copper.pop(e.get("name"), None)
+        elif e["kind"] == "recount":                     # the board read pad to pad: it replaces every earlier claim
+            on_copper = {"(recount)": set(e.get("nets", []))}
     for e in ev:
         k, s = e["kind"], cost(e, now)
         if k == "count":
@@ -533,7 +535,7 @@ def tally(g, now=None):
                 terms.append(e)
         elif k == "lay":
             lay = lay or e
-        elif k in ("reopen", "worker", "apply", "rip"):
+        elif k in ("reopen", "worker", "apply", "rip", "recount"):
             pass
         elif k == "job":                                 # the job owns its time; what ran inside it says what it was
             secs, last = secs + s, e["t"]
@@ -1017,6 +1019,33 @@ def closed_nets(hb, nets):
         if all(p.m_Uuid.AsString() in seen for p in ps[1:]):
             out.add(n)
     return out
+
+
+def cmd_recount(board_dir, key):
+    """`budget.py recount <group>` (under tools/kpy): read the group's nets on the board, pad to pad, and put
+    that on the ledger in place of every earlier apply's claim.  An apply recorded before closed_nets counted
+    every net its plan touched (board1 R1: 75 of 76 "on copper", 34 closed); this is how such a ledger is
+    brought back to the board -- it only ever reads, and it never adds a round or a minute."""
+    hb = home(board_dir)
+    if hb is None:
+        print(f"{board_dir}: not a session's board", file=sys.stderr)
+        return 2
+    with Ledger(hb) as L:
+        g = L.d["groups"].get(key)
+        if g is None:
+            print(f"recount: {key} is not in the ledger", file=sys.stderr)
+            return 2
+        closed = closed_nets(hb, g.get("nets", []))
+        if closed is None:
+            print("recount: pcbnew is not importable here -- run it as `tools/kpy tools/route/budget.py recount G`",
+                  file=sys.stderr)
+            return 2
+        g["events"].append(dict(id=len(g["events"]) + 1, t=time.time(), kind="recount", epoch=g.get("epoch", 1),
+                                s=0, nets=sorted(closed),
+                                result=f"{len(closed)} of {len(g.get('nets', []))} net(s) closed pad to pad on the board"))
+        L.dirty = True
+    print(f"recount: {key}: {len(closed)} of {len(g.get('nets', []))} net(s) closed pad to pad on the board")
+    return 0
 
 
 def ripped(board_dir, name):
@@ -1657,6 +1686,10 @@ if __name__ == "__main__":
         if len(a_.group) != 2:
             ap.error("terms GROUP")
         sys.exit(cmd_terms(bd_, a_.group[1]))
+    if a_.group[:1] == ["recount"]:
+        if len(a_.group) != 2:
+            ap.error("recount GROUP")
+        sys.exit(cmd_recount(bd_, a_.group[1]))
     if a_.group[:1] == ["lay"]:
         if len(a_.group) != 2:
             ap.error("lay GROUP")
