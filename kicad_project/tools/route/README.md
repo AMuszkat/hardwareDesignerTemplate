@@ -2434,6 +2434,10 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **A new group with no ledger entry is named by its plan's path** (`bgwait.py run --group <board>/routing/G.json`):
+  `--group NAME` is refused for a group the ledger does not know, and a group named by a plan the classifier
+  files under the group whose nets it shares -- check which with `route.py budget` before a gate longer than
+  GATE_S, or it spends that group's round (board1 NG_LINEAGE, 2026-11-26: a 6-min gate charged to R_J1N).
 - **One round is ONE `bgwait.py run --group G` job.** Runs in flight together count as one round only inside
   one job (xargs -P, up to RACE). Separate `run` calls are separate rounds: the second is admitted past the budget
   with a warning, and its tally then gets the FIRST job's router refused (board1 R1 r201, 2026-11-26: a user-granted
