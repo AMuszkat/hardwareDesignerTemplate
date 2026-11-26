@@ -2434,6 +2434,9 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **A cluster model inside U1's courtyard uses the courtyard's own F rule (DRU `BGA_ESCAPE_U1`), not the
+  outside gap**: at the outside gap no fan exists and every row reads as void (board1 NORTHGAP r200, 2026-11-26).
+  A pcbnew via removed with `Remove()` segfaults at Python GC: keep a reference and leave with `os._exit`.
 - **A via site search counts copper polygons (net-tied PCB_SHAPE) as obstacles**: a via that clears
   tracks, vias and pads can still short a polygon (board1 NORTHGAP r200, 2026-11-26: C25's site passed
   through the PMIC_LX3 polygon). A DRC diff of your own compares parity items to the expected set, not to zero.
