@@ -2434,6 +2434,10 @@ where the hours went. What would have saved them:
   the model (tracks a gap, vias a strip) was corrected by a physical check afterwards: place the vias
   and lines the model assumed (a 1-D placement of the strip is minutes) before a count goes into a
   question.
+- **`route.py check` does not judge pour nets, the via-to-pad gap or nfp vias: run `route.py audit` on the
+  laid copy BEFORE the rehearsal** (board1 NORTHGAP r201, 2026-11-26: gate 1 passed four defects only audit
+  caught). `fill_zones` fills before BuildConnectivity, so a new nfp via is filled at hole clearance only.
+  `viadangle.py`'s diff keys on UUID: a re-created via reads as newly dangling -- diff by net and position.
 - **A cluster model inside U1's courtyard uses the courtyard's own F rule (DRU `BGA_ESCAPE_U1`), not the
   outside gap**: at the outside gap no fan exists and every row reads as void (board1 NORTHGAP r200, 2026-11-26).
   A pcbnew via removed with `Remove()` segfaults at Python GC: keep a reference and leave with `os._exit`.
