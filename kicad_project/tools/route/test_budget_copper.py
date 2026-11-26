@@ -71,7 +71,7 @@ class StaleRows(unittest.TestCase):
             os.utime(f, (NOW - 4000, NOW - 4000))
             (hb / "routing" / "terms" / "G.json").write_text(
                 '{"terms": {"T1": {"kind": "placement", "text": "a part moved"}}, "rows": '
-                '[{"moved": ["T1"], "closes": false, "left": 2, "evidence": "tmpWork/ceil.json", '
+                '[{"moved": ["T1"], "closes": false, "left": 2, "contested": ["N1", "N2", "N3"], "evidence": "tmpWork/ceil.json", '
                 '"blocked_by": [{"what": "a via site", "part": null}]}]}')
             g = group(ev(1, "terms", NOW - 4100, s=150.0), ev(2, "apply", NOW - 3000, nets=["A"]))
             TT, errs = B.read_terms(hb, "G", B.count_base(g))

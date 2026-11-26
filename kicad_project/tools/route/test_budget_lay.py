@@ -83,7 +83,7 @@ class Cmd(unittest.TestCase):
         (hb / "routing" / "terms" / "G.json").write_text(json.dumps({"terms": terms, "rows": [
             {"moved": ["T1", "T2"], "closes": None, "left": None, "evidence": "tmpWork/ceil.json"},
             {"moved": ["T1"], "closes": True, "left": 0, "proof": "check", "evidence": "tmpWork/t1.json"},
-            {"moved": ["T2"], "closes": False, "left": 2, "evidence": "tmpWork/t2.json"}]}))
+            {"moved": ["T2"], "closes": False, "left": 2, "contested": ["N1", "N2", "N3"], "evidence": "tmpWork/t2.json"}]}))
         B.ledger_path(hb).write_text(json.dumps({"groups": {"G": spent_group()}, "home": str(hb)}))
         return hb
 

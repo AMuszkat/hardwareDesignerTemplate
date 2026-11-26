@@ -104,6 +104,10 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   whoever grants knows that before granting.  (board1, 2026-11-24: a runner scored a routed
   ceiling whose raw plan failed the gate as `LEFT 33` -- its 33 findings, read as nets, a
   DOES NOT FIT wall for a group that routes; another table marked channel counts "closes".)
+  A CROSSING IS COUNTED AT ITS OWN ENDS FIRST: a row that does not close names its "contested" nets;
+  two of them (or each pair in "crossings") are a crossing, and the table carries a "swap" term with
+  those "nets" -- their end sites exchanged or re-sited -- in a row of its own (crossing_rows; board1 R1,
+  Q139: a crossing that two fan-out sites exchanged closed in 3 min had been asked as ten rule rows).
   A TABLE WITH NO CLOSING ROW SAYS WHAT STOPS ITS CEILING: that row carries "blocked_by": [{"what":
   "pad C12.1 over the lane end (3.2, 4.1)", "part": "C12"}, {"what": "the via site reserved
   at (1.0, 2.0)", "part": null}], as measured, and every part named there is moved by a term
@@ -1139,12 +1143,45 @@ def read_terms(hb, key, since=0.0):
                 errs.append(f"term {tid} has no row of its own: the ceiling closes, so count {tid} ALONE or every "
                             f"term BUT {tid} -- which terms the group needs is the question")
     errs += ceiling_blockers(D, terms, ceiling, rows)
+    errs += crossing_rows(terms, rows)
     if errs:
         return None, errs
     rows.sort(key=lambda r: r is not ceiling)             # the ceiling first, the rest as written
     closing = sorted((r for r in rows if r["closes"] is True), key=lambda r: rank(r["moved"]))
     return dict(D, terms=terms, rows=rows, ceiling=ceiling, closing=closing, path=str(rel),
                 sha=hashlib.sha256(raw).hexdigest()[:12]), []
+
+
+def crossing_rows(terms, rows):
+    """A bind that is a CROSSING is counted at its own ends first.  Every row that does not close names its
+    "contested" nets (the router's last overlap); two of them -- or each pair of "crossings": [[a, b], ...] --
+    are a crossing, and the table then carries a term {"kind": "swap", "nets": [a, b], "text": "a's and b's end
+    sites exchanged or re-sited"} counted in a row of its own.  -> what is missing.  (board1 R1 wall 12, Q139,
+    2026-11-26, the third time after Q134 (2) and Q138: ten rows relaxed a handoff rule for a crossing that two
+    U500 fan-out sites exchanged closed in 3 min, the group's own copper.)"""
+    errs, pairs = [], set()
+    for i, r in enumerate(rows):
+        if r["closes"] is not False:
+            continue
+        name = f"row {i + 1} ({' + '.join(r['moved']) or 'no term'})"
+        con = r.get("contested")
+        if not (isinstance(con, list) and con and all(isinstance(n, str) and n for n in con)):
+            errs.append(f"{name}: it does not close -- \"contested\": the nets the router left overlapping "
+                        f"(netgroup's last `contested:` line); a crossing is counted at its own ends first")
+            continue
+        cr = r.get("crossings")
+        if isinstance(cr, list) and cr:
+            pairs |= {frozenset(map(str, x)) for x in cr if isinstance(x, list) and len(x) == 2}
+        elif len(con) == 2:
+            pairs.add(frozenset(con))
+    for pr in sorted(pairs, key=sorted):
+        tids = [t for t, x in terms.items() if x.get("kind") == "swap" and pr <= set(map(str, x.get("nets") or []))]
+        if not any(set(r["moved"]) == {t} for t in tids for r in rows):
+            a, b = sorted(pr)
+            errs.append(f"the bind is a crossing, {a} x {b}: count its ends first -- a term {{\"kind\": \"swap\", "
+                        f"\"nets\": [\"{a}\", \"{b}\"], \"text\": \"their end sites exchanged or re-sited\"}} "
+                        f"in a row of its own, before any rule or layer (the sites are the group's own copper)")
+    return errs
 
 
 _REFLIKE = re.compile(r"(?<![A-Za-z0-9_])([A-Z]{1,4}[0-9]{1,4})(?![A-Za-z0-9_])")

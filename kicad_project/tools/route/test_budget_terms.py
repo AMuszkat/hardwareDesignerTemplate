@@ -92,6 +92,8 @@ def table(hb, terms, rows, key="G", touch=True, blocked=None, extra=None):
                 f = hb / r["evidence"]
                 f.parent.mkdir(parents=True, exist_ok=True)
                 f.write_text("{}")
+        if r.get("closes") is False and "contested" not in r:
+            r["contested"] = ["N1", "N2", "N3"]           # three nets left overlapping: not one crossing
         if (blocked is not False and set(r.get("moved") or []) == set(terms) and r.get("closes") is not True
                 and "blocked_by" not in r):
             r["blocked_by"] = blocked or [{"what": "the lane end is boxed by a via site", "part": None}]
@@ -202,6 +204,26 @@ class TermsTable(unittest.TestCase):
         TT, errs = self.read(TERMS3, [dict(moved=["T1"], closes=False, left=3)])
         self.assertIsNone(TT)
         self.assertTrue(any("no CEILING row" in e for e in errs), errs)
+
+    def test_a_crossing_is_counted_at_its_ends_first(self):
+        rows = [dict(moved=["T1", "T2", "T3"], closes=False, left=2, contested=["A", "B"]),
+                dict(moved=["T1"], closes=False, left=2, contested=["A", "B"])]
+        TT, errs = self.read(TERMS3, rows)
+        self.assertIsNone(TT)
+        self.assertTrue(any("the bind is a crossing, A x B" in e for e in errs), errs)
+
+    def test_a_crossing_with_its_swap_row_passes_that_check(self):
+        terms = dict(TERMS3, T4={"kind": "swap", "nets": ["A", "B"], "text": "A's and B's U500 sites exchanged"})
+        rows = [dict(moved=["T1", "T2", "T3", "T4"], closes=False, left=2, contested=["A", "B"]),
+                dict(moved=["T4"], closes=False, left=2, contested=["C", "D"], crossings=[["C", "D"]])]
+        TT, errs = self.read(terms, rows)
+        self.assertFalse(any("A x B" in e for e in errs), errs)
+        self.assertTrue(any("C x D" in e for e in errs), errs)          # the swap's own crossing is next
+
+    def test_a_row_that_does_not_close_names_what_it_left(self):
+        rows = [dict(moved=["T1", "T2", "T3"], closes=False, left=2, contested=[])]
+        TT, errs = self.read(TERMS3, rows)
+        self.assertTrue(any('"contested"' in e for e in errs), errs)
 
     def test_a_closing_ceiling_needs_every_term_counted(self):
         rows = [dict(moved=["T1", "T2", "T3"], closes=True, left=0, proof="check"), dict(moved=["T1"], closes=False, left=3)]
