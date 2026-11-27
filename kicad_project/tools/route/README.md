@@ -752,6 +752,21 @@ its docstring. What the spec has to be told:
   layers and that pcbnew does not flash on a field's open inner layer is its drill / 2 + the
   board's copper-to-hole there. A power layer's own pours are not poured yet, so pcbnew does not
   flash their vias either: name those nets in `"keep_pads": {"In5.Cu": [...]}`.
+- **...and OUTSIDE a field too, at the signal's figure from the hole wall** (netgroup `via_halo`,
+  areaclear `bare_holes`, board1 R1 / D148, 2026-11-27). TRAP: the hole model above ran only on a
+  field's open layers; everywhere else `static_via` kept the pad on every layer, so the DRAM
+  channel still held 0.4032 (pad 0.2 + 0.2032) at a padless via and the fab change that removed
+  the pads reached nothing; and nothing tested a SIGNAL via's hole at its own spacing -- KiCad
+  holds only hole_clearance there. NOW: on a layer a board via is not flashed on, its halo is
+  drill / 2 + (GND / rail: copper-to-hole; signal: SC(its clearance), the field's figure in a
+  field, never below copper-to-hole) + W / 2. A rail is a plane_layers net, a net the board pours,
+  or a keep_pads net; any other net is a signal (the stricter side). `areaclear` rows `signal
+  holes` hold every other-net track to a signal hole wall at the stricter class or the last
+  clearance rule whose terms hold, an area's included (the channel's CK / DQS 0.284); `route.py
+  check` and `audit` print them with the area rows. PROVE IT: `tools/kpy
+  tools/route/test_bareholes.py` builds a 4-layer via (REMOVE_EXCEPT_START_AND_END) and asserts
+  its disc radius per layer through `board_via` + `via_halo` -- pad on F / B, hole on In1 / In2.
+  A spec's `extra_vias` / `reserve_vias` have no hole: their pad stands on every layer.
 - **A drilled pad's HOLE is an obstacle on every layer, whatever copper its pad has** (netgroup,
   2026-11-23). TRAP: netgroup skipped every pad that lists no copper layer (it was meant for paste
   apertures), so an NPTH drawn on the mask layers only was not there at all. A test hole of 0.3 mm
@@ -2699,6 +2714,18 @@ where the hours went. What would have saved them:
 - **An inner stage with no vias: open both layers to every net.** netgroup with each net pinned to one
   inner layer gave NO SOLUTION where both layers open converged in 4 s (board1 R1 r197, two re-sited DQ
   lines). Pin a layer only where the handoff assigns one.
+- **A via in the strip keeps its inner pads until the board says otherwise.** A DRAM / GND via between the
+  two BGAs with no track on In5 / In7 still took 0.4032 of a lane from its centre (its 0.4 pad) where its
+  bare hole takes 0.2778 -- the fab drops non-functional pads only where the file marks them.
+  `unusedpads.py --box ... --nets 'GND|DRAM_.*' --apply` sets KiCad's remove-unconnected (start and end
+  kept) on the vias in a box, refills, and reads back the layers each lacks; read FlashLayer only after a
+  refill (a pour connects a via only through the filler's override, not saved). The router and the
+  check read the result as the bullet above says (before that fix, only inside a spec field and at
+  one figure for every net, so a channel's gain reached nothing).
+  `pcbnew.SaveBoard` of a `.kicad_pcb` with no `.kicad_pro` beside it writes KiCad's DEFAULT project: a
+  scratch base built so DRC'd 1335 errors where the board has 10 -- `--apply` now refuses it; a base you
+  build by script gets the board's `.kicad_pro` / `.kicad_dru` BEFORE the first save, and a `cmp` after.
+  (board1 R1, D148, 2026-11-27.)
 
 ## `corners.py` — the angle rule for a polyline
 

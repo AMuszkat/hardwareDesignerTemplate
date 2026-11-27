@@ -56,8 +56,21 @@ So a line that leaves the area must already stand at its class spacing where it 
 (the opening is done inside the area, as #30 says).  A breach whose point lies inside ANOTHER relaxed
 region -- another such area, or a courtyard a clearance rule names with `intersectsCourtyard` -- is
 not reported: that region's own rule is in force there.  Not modelled: a pad's or a zone's local
-clearance override, an unflashed via or pad (hole clearance is not a rule an area relaxes), vias and
-pads straddling the edge (only tracks are clipped).
+clearance override, an unflashed pad, vias and pads straddling the edge (only tracks are clipped).
+
+A SIGNAL VIA'S BARE HOLE (bare_holes; its rows are the pseudo-area `signal holes`).  Where the fab
+removes a via's unconnected inner pads (unconnected-layer mode "remove", 14_fab's non-functional
+pads) the via is only its HOLE on that layer, and KiCad tests nothing there but hole_clearance --
+not the clearance rules.  10_layout holds a signal via's hole wall to the signal's own spacing:
+every track of another net on that layer, board-wide, keeps from the hole wall the stricter class
+(or Board Setup's floor), or the LAST clearance rule of the file whose every term holds for the
+track and the via -- an area's or a courtyard's terms decided by where the two items are, so a
+first-mm area gives its figure, the DRAM channel's CK / DQS rule its 0.284 -- never below the
+board's copper-to-hole.  A GND or rail via (a net the board pours, or the guide's plane_layers) is
+left to KiCad's hole_clearance, which is all the rule asks of it; any other net is a signal, the
+stricter side.  TRAP (board1 R1, 2026-11-27): the router kept the pad's 0.4032 at a padless via
+in the DRAM channel, and nothing tested the signal's figure at the hole, so the fab change that
+removed the pads reached nothing.
 
 `route.py check` fails a plan that adds a breach (the board before and the scratch copy with the plan
 are both measured); `route.py audit` prints an `area clear` line and fails on any breach.
@@ -193,9 +206,11 @@ def _regions(node, negated=False):
 def parse_dru(text):
     """{"areas": [{"rule", "area", "min", "layer"}], "courtyards": {REF},
     "pair_rules": [{"rule", "min", "layer", "cond": tree}] in the file's order,
-    "not_modelled": [{"rule", "term"}], and the two older summaries "pair_min": mm or None,
-    "pair_names": [(patA, patB, mm)]} from a .kicad_dru's text."""
+    "not_modelled": [{"rule", "term"}], "all_rules": [{"rule", "min", "layer", "cond": tree or None}]
+    (every clearance rule in the file's order, regions included: bare_holes), and the two older
+    summaries "pair_min": mm or None, "pair_names": [(patA, patB, mm)]} from a .kicad_dru's text."""
     areas, courts, pair_min, names, pairs, unread, cands = [], set(), None, [], [], [], []
+    every = []
     for blk in _blocks(text):
         m = re.search(r"\(constraint\s+clearance\s+\(min\s+([0-9.]+)\s*mm\)", blk)
         if not m:
@@ -218,6 +233,11 @@ def parse_dru(text):
             names.append((pa, pb, mn))
         if not (in_area or in_court):                        # else a region's rule, not a pair rule
             cands.append((name, mn, lay, cond))
+        try:                                                 # bare_holes: regions decided by geometry
+            tree = parse_cond(cond) if cond.strip() else ("and", [])
+        except _NotRead:
+            tree = None                                      # not read: never lowers a number
+        every.append({"rule": name, "min": mn, "layer": lay, "cond": tree})
     own = {"Area": {a["area"] for a in areas}, "Courtyard": courts}
     for name, mn, lay, cond in cands:
         try:
@@ -233,7 +253,7 @@ def parse_dru(text):
         except _NotRead as e:
             unread.append({"rule": name, "term": str(e)})
     return {"areas": areas, "courtyards": courts, "pair_min": pair_min, "pair_names": names,
-            "pair_rules": pairs, "not_modelled": unread}
+            "pair_rules": pairs, "not_modelled": unread, "all_rules": every}
 
 
 def _wild(pat, s):
@@ -253,23 +273,25 @@ def _or(vals):
     return True if True in vals else None if None in vals else False
 
 
-def cond_holds(node, A, B, net_class=None):
+def cond_holds(node, A, B, net_class=None, region=None):
     """True / False / None (cannot be decided) for a parsed condition and two items.
-    A, B: (net name, item or None)."""
+    A, B: (net name, item or None).  region(kind, name) -> True / False / None decides an
+    intersectsArea / intersectsCourtyard term for the pair (bare_holes); without it a region term is
+    not decided, and a negated one says only that the region has its own rule."""
     k = node[0]
     if k == "and":
-        return _and(cond_holds(n, A, B, net_class) for n in node[1])
+        return _and(cond_holds(n, A, B, net_class, region) for n in node[1])
     if k == "or":
-        return _or(cond_holds(n, A, B, net_class) for n in node[1])
+        return _or(cond_holds(n, A, B, net_class, region) for n in node[1])
     if k == "not":
-        if node[1][0] == "region":
+        if node[1][0] == "region" and region is None:
             return True                                      # the region has its own rule (parse_dru saw it)
-        v = cond_holds(node[1], A, B, net_class)
+        v = cond_holds(node[1], A, B, net_class, region)
         return None if v is None else not v
     if k == "coupled":
         return coupled(A[0], B[0])
     if k == "region":
-        return None
+        return region(node[1], node[2]) if region else None
     net, it = A if node[1] == "A" else B
     if k == "name":
         return _wild(node[2], net)
@@ -283,12 +305,12 @@ def cond_holds(node, A, B, net_class=None):
     return None
 
 
-def rule_holds(rule, a, b, ia=None, ib=None, layer=None, net_class=None):
+def rule_holds(rule, a, b, ia=None, ib=None, layer=None, net_class=None, region=None):
     """Does a pair rule give its number to nets a, b (items ia, ib) on this layer?  True / False /
     None; either item may be A."""
     if rule["layer"] is not None and layer is not None and not layer_ok(rule["layer"], layer):
         return False
-    v = _or(cond_holds(rule["cond"], x, y, net_class)
+    v = _or(cond_holds(rule["cond"], x, y, net_class, region)
             for x, y in (((a, ia), (b, ib)), ((b, ib), (a, ia))))
     return None if v and rule["layer"] is not None and layer is None else v
 
@@ -513,9 +535,96 @@ def required_fn(class_clr, floor, rules, net_class=None):
     return f
 
 
+HOLES = "signal holes"   # the pseudo-area of bare_holes' rows (route.py check / audit print it)
+
+
+def hole_required_fn(class_clr, floor, rules, hole_clr, net_class=None):
+    """f(a, b, ia, ib, layer, region): the clearance a track of net a keeps from the HOLE WALL of a
+    signal via of net b on a layer it is not flashed on (10_layout's non-functional-pads rule: the
+    signal's own spacing, from the hole wall) -- the stricter class or Board Setup's floor, or the
+    number of the LAST clearance rule of the file whose every term holds for the pair, an area's and
+    a courtyard's included (region decides those terms by the two items' geometry: a first-mm area
+    gives its own figure there, the DRAM channel's CK / DQS rule its 0.284); never below the
+    board's copper-to-hole (hole_clr), which KiCad holds there alone.  A rule that cannot be
+    decided never lowers the number."""
+    every = rules.get("all_rules", [])
+
+    def f(a, b, ia=None, ib=None, layer=None, region=None):
+        need = max(class_clr(a), class_clr(b), floor)
+        for r in every:
+            v = None if r["cond"] is None else rule_holds(r, a, b, ia, ib, layer, net_class, region)
+            if v:
+                need = r["min"]
+            elif v is None:
+                need = max(need, r["min"])
+        return max(need, hole_clr)
+    return f
+
+
+def bare_holes(holes, tracks, need_fn, regions=None, reach=1.0, upper=None):
+    """Every track of another net nearer a signal via's bare HOLE than the signal's spacing.
+
+    holes:   [{"net", "layer", "at", "r" (the drill's radius)}] -- one per layer the via is NOT
+             flashed on, GND and rail vias left out by the caller (KiCad's hole_clearance holds them)
+    tracks:  [{"kind": "track", "net", "layer", "a", "b", "w"}]
+    need_fn: hole_required_fn(...)
+    regions: {(kind, name): [(layers or None, rings)]} -- the rule areas and courtyards, for a
+             rule's intersectsArea / intersectsCourtyard terms: True when both items meet the region
+             on the layer, False when neither does, None (never lowers) when one does
+    upper:   f(net_a, net_b) -> the most any rule could ask of the pair: a gap at or above it is
+             not judged further (the region tests are the cost)
+    -> rows as breaches() gives them, area HOLES, kind "hole of via", at the hole's centre."""
+    regions = regions or {}
+    index = defaultdict(lambda: defaultdict(list))
+    for n, t in enumerate(tracks):
+        for c in _cells(*_bbox(t)):
+            index[t["layer"]][c].append(n)
+    out = {}
+    for h in holes:
+        x, y = h["at"]
+        seen = set()
+        for c in _cells(x - h["r"] - reach, y - h["r"] - reach, x + h["r"] + reach, y + h["r"] + reach):
+            for n in index[h["layer"]].get(c, ()):
+                if n in seen:
+                    continue
+                seen.add(n)
+                t = tracks[n]
+                if t["net"] == h["net"]:
+                    continue
+                d, q = _pt_seg(h["at"], t["a"], t["b"])
+                g = d - t["w"] / 2 - h["r"]
+                if g >= reach or (upper is not None and g >= upper(t["net"], h["net"]) - EPS):
+                    continue
+                hv = {"kind": "via", "net": h["net"], "layer": h["layer"], "at": h["at"], "r": h["r"]}
+
+                def region(kind, name, t=t, h=h):
+                    hit = []
+                    for lays, rings in regions.get((kind, name), ()):
+                        if lays is not None and h["layer"] not in lays:
+                            continue
+                        hit.append((touches(t["a"], t["b"], t["w"] / 2, rings), touches(h["at"], h["at"], h["r"], rings)))
+                    ti, hi = any(a for a, _ in hit), any(b for _, b in hit)
+                    return True if ti and hi else False if not (ti or hi) else None
+                need = need_fn(t["net"], h["net"], t, hv, h["layer"], region)
+                if g >= need - EPS:
+                    continue
+                k = (h["layer"], t["net"], h["net"], round(x, 3), round(y, 3))
+                if k not in out or g < out[k]["gap"]:
+                    out[k] = {"area": HOLES, "rule": "a signal via's bare hole keeps the signal's spacing",
+                              "layer": h["layer"], "net": t["net"], "other": h["net"], "kind": "hole of via",
+                              "at": [round(x, 4), round(y, 4)], "to": [round(q[0], 4), round(q[1], 4)],
+                              "gap": round(max(g, 0.0), 4), "need": need, "hole": True,
+                              "piece": [[round(t["a"][0], 4), round(t["a"][1], 4)], [round(t["b"][0], 4), round(t["b"][1], 4)]]}
+    return sorted(out.values(), key=lambda r: (r["layer"], r["at"][1], r["at"][0], r["net"]))
+
+
 def text(r):
     def sh(n):
         return _base(n) or "<no net>"
+    if r.get("hole"):
+        return (f"{sh(r['net'])} track at ({r['to'][0]:.3f}, {r['to'][1]:.3f}) / the bare hole of a {sh(r['other'])} via "
+                f"at ({r['at'][0]:.3f}, {r['at'][1]:.3f}) on {r['layer']} (not flashed there): {r['gap']:.4f} mm from "
+                f"the hole wall, needs {r['need']:.4f} (the signal's spacing, never below copper-to-hole)")
     return (f"{sh(r['net'])} / {sh(r['other'])} ({r['kind']}) on {r['layer']} at ({r['at'][0]:.3f}, {r['at'][1]:.3f}): "
             f"{r['gap']:.4f} mm, needs {r['need']:.4f} past {r['area']}"
             + (f" -- to its copper at ({r['to'][0]:.3f}, {r['to'][1]:.3f}) inside the area" if r.get("straddles") else
@@ -674,14 +783,82 @@ def _arc_pts(s, m, e, n=8):
     return [(ux + r * math.cos(a0 + sweep * k / n), uy + r * math.sin(a0 + sweep * k / n)) for k in range(n + 1)]
 
 
+def holes_from_board(B, rules):
+    """(holes, tracks, need_fn, regions, upper) for bare_holes on a route.py RBoard: every via's
+    hole on each inner copper layer it is NOT flashed on (unconnected-layer mode "remove"), its net
+    a signal -- GND and the rails (the nets of the board's pours and the guide's plane_layers) are
+    left to KiCad's hole_clearance, which is all 10_layout asks of them; any other net is a signal,
+    the stricter side -- and every track piece on those layers, board-wide."""
+    pn, b, mm = B.pn, B.b, B.pn.ToMM
+    ds = b.GetDesignSettings()
+    rails = {z.GetNetname() for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname()}
+    planes = {_base(str(q.get("net") or "")) for q in (getattr(B, "gates", None) or {}).get("plane_layers", []) or []}
+    inner = [L for L in b.GetEnabledLayers().CuStack() if L not in (pn.F_Cu, pn.B_Cu)]
+    names = {L: b.GetLayerName(L) for L in inner}
+    holes, tracks = [], []
+    for t in b.GetTracks():
+        if t.Type() == pn.PCB_VIA_T:
+            n = t.GetNetname()
+            if not n or n in rails or _base(n) in planes:
+                continue
+            at = (mm(t.GetPosition().x), mm(t.GetPosition().y))
+            for L in inner:
+                if t.IsOnLayer(L) and not t.FlashLayer(L):
+                    holes.append({"net": n, "layer": names[L], "at": at, "r": mm(t.GetDrillValue()) / 2})
+            continue
+        if t.GetLayer() not in names:
+            continue
+        w = mm(t.GetWidth())
+        if t.Type() == pn.PCB_ARC_T:
+            s_, m_, e_ = t.GetStart(), t.GetMid(), t.GetEnd()
+            pts = _arc_pts((mm(s_.x), mm(s_.y)), (mm(m_.x), mm(m_.y)), (mm(e_.x), mm(e_.y)))
+        else:
+            pts = [(mm(t.GetStart().x), mm(t.GetStart().y)), (mm(t.GetEnd().x), mm(t.GetEnd().y))]
+        for a_, b_ in zip(pts, pts[1:]):
+            if a_ != b_:
+                tracks.append({"kind": "track", "net": t.GetNetname(), "layer": names[t.GetLayer()], "a": a_, "b": b_, "w": w})
+    regions = defaultdict(list)
+    for z in b.Zones():
+        if z.GetIsRuleArea() and z.GetZoneName():
+            regions[("Area", z.GetZoneName())].append(
+                ({b.GetLayerName(l) for l in z.GetLayerSet().Seq() if pn.IsCopperLayer(l)}, _rings(pn, z.Outline())))
+    for fp in b.GetFootprints():
+        for lay in (pn.F_CrtYd, pn.B_CrtYd):
+            cy = fp.GetCourtyard(lay)
+            if cy.OutlineCount():
+                regions[("Courtyard", fp.GetReference())].append((None, _rings(pn, cy)))
+    floor = getattr(B, "clearance", None)
+    if floor is None:
+        floor = mm(ds.m_MinClearance)
+    hole_clr = mm(ds.m_HoleClearance)
+    cc, cn = {}, {}
+
+    def class_clr(net):
+        if net not in cc:
+            cc[net] = (B.class_clearance(net) if net and b.FindNet(net) else None) or 0.0
+        return cc[net]
+
+    def net_class(net):
+        if net not in cn:
+            ni = b.FindNet(net) if net else None
+            cn[net] = str(ni.GetNetClassName()) if ni else None
+        return cn[net]
+    top = max([hole_clr, floor] + [r["min"] for r in rules.get("all_rules", [])])
+    return (holes, tracks, hole_required_fn(class_clr, floor, rules, hole_clr, net_class), dict(regions),
+            lambda a, b_: max(top, class_clr(a), class_clr(b_)))
+
+
 def run(B):
-    """(breaches, info) on a board; info["areas"] is empty when no rule relaxes clearance over an area."""
+    """(breaches, info) on a board; info["names"] is empty when no rule relaxes clearance over an
+    area and no signal via has a bare hole (bare_holes; its rows are area HOLES)."""
     areas, items, req, skip, info = from_board(B)
-    if not areas:
-        return [], info
     out = []
     for a in areas:
         out += breaches([a], items, req, skip + a["others"])
+    holes, tracks, need, regions, upper = holes_from_board(B, info)
+    if holes:
+        out += bare_holes(holes, tracks, need, regions, upper=upper)
+        info["names"] = list(info.get("names", [])) + [HOLES]
     return out, info
 
 
