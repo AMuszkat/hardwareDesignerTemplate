@@ -2307,6 +2307,25 @@ has moved. `budget.py`'s docstring is the manual; in short:
   and without `placement.json` it stops in a second on the first keep-out the guide names. Read the pass for the
   `angles:` line with a joint count before quoting it. TRAP (board1 R1, 2026-11-27: gate 2 passed with no angle test;
   gate 3 died at 1 s on 'no placement.json keep-out named ...').
+- **A terms count after a failed round: what voids a row before it is a row** (board1 R1,
+  2026-11-27: 14 variants, 5 usable rows). (1) THE WINDOW STARTS WITH THE ROUND'S PRE-CHECK: a pre-
+  check is a `--terms` job, the epoch's first one opens the group's one window (`budget.py`,
+  TERMS_S), and the round then runs inside it -- the count got 40 of 90 minutes and the crossings it
+  named were never counted. Write the count's variants (ceiling first, every form below) BEFORE the
+  pre-check, so they start the minute the round ends. (2) A STAGED FORM WITH FROZEN LINES IS NOT A
+  COUNT: stage 0's lines, once frozen, wall a later unit's source via and stage 1 ends exit 4 in
+  seconds -- it reads like a verdict and is an order-form block (`"closes": null`). Use it only to
+  ask whether a knot opens (stage 0 alone); count the group as one negotiation or by halves that
+  share no source site. (3) ONE JOB A SLICE, OR ADD UP THE ROUTERS: a second job started beside the
+  first took the slice past its cap and the kernel killed four routers of the FIRST job (exit 247,
+  watch exit -9, at iteration 6-8). `bgwait.py run` prints the GB held; a router of 45 nets on this
+  window peaks near 1.5 GB at the start and grows -- put every variant in ONE job under one `xargs
+  -P`, and read `journalctl --user | grep -i oom` before a -9 is called anything. (4) A ROW THE TIME
+  CAP STOPPED IS NULL, NOT FALSE, unless the router ended itself (stalled or `ENDED exit 1` before
+  the cap): a result script that maps every non-zero exit to `false` writes a DOES NOT FIT nobody
+  counted. (5) A CROSSING NAMED BY A STAGED VARIANT GETS ITS OWN SWAP ROW IN THE SAME COUNT -- the
+  table refuses a ceiling without it (`budget.py terms`), so make that variant with the others, not
+  after the first results.
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
