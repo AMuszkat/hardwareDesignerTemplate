@@ -2186,6 +2186,20 @@ has moved. `budget.py`'s docstring is the manual; in short:
   gets its site counted on every layer the via crosses before any spec names the net; (3) the list of open nets
   skips pour nets and sees an end that is a joint of two segments. Prove it: the count's file reads N / 0 / 0 on
   the copy the spec is written for.
+- **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
+  any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
+  line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
+  pitch 0.321-0.323 mm, legal inside it (0.1016) and 0.009 short of 0.128 + 0.2032 outside it; every net ALONE
+  passed the pre-check in four variants (100 of 100), and the round -- six variants, 55 min, 6 cores -- ended with 25
+  of 25 nets overlapping in each, flat from iteration 20: 14 pairs could never both continue, whatever the
+  layers. An alone-check, a per-end area-clear count and a via-site count are all blind to it; only the pair is
+  not. So: (1) a fan-in that ends at an area's edge arrives there at the pitch of the terms OUTSIDE it, rounded up
+  to the router's grid -- spread inside the area, where it is cheap; (2) `endpairs.py` passes before the pre-check
+  is started; (3) a negotiation whose net count never falls and whose cells are flat for 15 iterations is stopped
+  and read (`contested` of the partial: a net whose every contested cell lies within 0.5 mm of its own end is
+  inherent, not congested), not waited out; (4) the spec's width is the class's on EACH layer (a 50 ohm line is
+  0.128 outside and 0.1016 inside on this stack-up; one width for all layers taxed the inner ones 8 %). Prove
+  it: `ENDPAIRS PASS` on every variant's spec.
 - **The pre-check runs every net alone in EVERY variant that differs in layers, and a via site is not a way
   out.** TRAP (board1 R1, 2026-11-27): seven fan-out vias had been sited at the far BGA by a site count; the
   pre-check then found two of those nets shut inside the BGA's field on every layer (25 000 cells reached, none
