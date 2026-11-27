@@ -876,6 +876,21 @@ its docstring. What the spec has to be told:
   under U100 read In2 1 free, but PMIC_RST_B's diagonal In2 leg closed it to the north -- 0 joined. WORKED: count at
   cuts closer together than the shortest track between them (0.2 mm), and call a lane through only when it is free at
   every cut from end to end.
+- **`lanecount.py --cut-x`: the same count across a VERTICAL line, with pads, pours, a width and a clearance -- and a
+  cut that carries the lines says nothing about their vias.** `tools/kpy tools/route/lanecount.py BOARD.kicad_pcb --cut-x
+  39.0,39.5,43.25 --y 13.2,29.8 --layer F.Cu,In2.Cu,B.Cu --width 0.128 --clearance 0.2032 [--own NET,NET] [--through 2]
+  [--span X0,X1] [--area-rule]` cuts KiCad's own outlines (tracks, via pads or bare holes, pads, shapes, filled pours),
+  grown by clearance + half the width, and lists every free run with what bounds it; `--own` nets are no obstacle unless
+  they span the cut, `--through 2` says how many slots stay 2 pitches deep (the rest are dead ends), `--area-rule` counts
+  at a rule area's clearance. The old call is unchanged (horizontal lines, tracks and vias only, fixed pitch). It is
+  an upper bound, importable (`copper`, `cut`, `through`). PROVE IT on a cut countable by eye before a table is believed:
+  two parallel tracks with nothing between (gap - widths - two clearances -> floor(run / pitch) + 1; one pair that
+  must REFUSE a second line), the copper already drawn must fit, a poured plane must read 0. TRAP (board1 R1,
+  2026-11-27): the channel between two BGAs read 20-49 free lanes a layer at every cut for 25 lines, and a six-variant
+  round had closed none: a through via needs ALL its layers free at one point, 6 % of the channel did, and the half
+  with 13 lines held 9-11 such sites with a GND via in reach. WORKED: count via sites on every layer at once (greedy
+  packing = lower bound, a cover by discs of the via spacing = upper bound), per half, against the lines ending there --
+  and per VARIANT from each net's own `"layers"`, never the spec's top-level list (the superset, equal in all).
 - **Parallel 45-degree runs between two obstacles are counted in x - y** (or x + y): n runs need (n - 1) x 0.2874 mm of it at
   4 mil spacing, 0.318 on a 0.0455 grid (7 cells, 0.225 mm apart), plus each obstacle's own keep-out x 1.414. Six runs
   wanted 1.59 between two vias 1.50 apart: one via site moved 0.14 mm, by hand, before any router ran.
@@ -2199,7 +2214,9 @@ has moved. `budget.py`'s docstring is the manual; in short:
   and read (`contested` of the partial: a net whose every contested cell lies within 0.5 mm of its own end is
   inherent, not congested), not waited out; (4) the spec's width is the class's on EACH layer (a 50 ohm line is
   0.128 outside and 0.1016 inside on this stack-up; one width for all layers taxed the inner ones 8 %). Prove
-  it: `ENDPAIRS PASS` on every variant's spec.
+  it: `ENDPAIRS PASS` on every variant's spec. It also refuses a `via_sep` below via pad + clearance (the same
+  specs: 0.5 for 0.4 pads at 0.2032 -- DRC wants centres 0.6032, and no two vias of different nets on the board
+  stood closer than 0.64): a round that had closed would have failed its check on the vias.
 - **The pre-check runs every net alone in EVERY variant that differs in layers, and a via site is not a way
   out.** TRAP (board1 R1, 2026-11-27): seven fan-out vias had been sited at the far BGA by a site count; the
   pre-check then found two of those nets shut inside the BGA's field on every layer (25 000 cells reached, none

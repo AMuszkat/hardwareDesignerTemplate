@@ -8,7 +8,8 @@ For every pair of nets in a netgroup spec and every pair of their ends (`src`, e
 centre distance is held against width + clearance of the copper they must run in THERE: a field's own numbers only when both
 ends lie inside the same field by more than that distance from its edge -- an end ON a field's edge leaves it into the
 spec's base width and clearance, and that is where fan-ins end.  The distance is rounded up to the spec's pitch, as the
-router's cells do.  Exit 1 and one line a pair (`INHERENT`), exit 0 and `ENDPAIRS PASS` otherwise.  Read-only.
+router's cells do.  Also refused: a `via_sep` below via pad + base clearance (two new vias the router would stand closer
+than DRC allows).  Exit 1 and one line a pair (`INHERENT`), exit 0 and `ENDPAIRS PASS` otherwise.  Read-only.
 """
 import itertools, json, math, os, sys
 
@@ -80,7 +81,12 @@ for sp in specs:
                                  f"{d:.3f} mm apart, {need:.4f} needed ({why}; {cells:.3f} on the {P} grid)"))
     for _, line in sorted(found):
         print(line)
-    print(f"{os.path.basename(sp)}: {len(S['nets'])} nets, {len(found)} pair(s) of ends too close to be routed together")
+    vs, vneed = S.get("via_sep", 0.8), S["via"][0] + S["clearance"]
+    if len(S["nets"]) > 1 and vs < vneed - 1e-9:     # the router spaces two NEW vias by via_sep alone; DRC by pad + clearance
+        print(f"VIA_SEP {vs} is below via pad {S['via'][0]} + clearance {S['clearance']} = {vneed:.4f}: two new vias of "
+              f"different nets may stand where DRC refuses them, and the plan fails its check after the round")
+        found.append((0, "via_sep"))
+    print(f"{os.path.basename(sp)}: {len(S['nets'])} nets, {len(found)} finding(s): ends too close to be routed together, or via_sep")
     bad += len(found)
 print("ENDPAIRS PASS" if not bad else f"ENDPAIRS FAIL: {bad} -- spread the ends (or move the field's edge past where they spread) before any round")
 sys.exit(1 if bad else 0)
