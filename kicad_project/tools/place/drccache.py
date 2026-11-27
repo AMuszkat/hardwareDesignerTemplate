@@ -79,9 +79,20 @@ def inputs(pcb, board_dir=None):
     return files + _global_tables()
 
 
+# kicad-cli's DRC arguments; part of the cache key.
+# --all-track-errors: without it KiCad reports only the FIRST clearance error of each track, and which one is
+# first follows the board's item order -- so a plan that adds or removes any copper can swap a standing row for
+# another standing row on the same track (a false "1 new DRC"), and, worse, a plan's NEW error on a track that
+# already carries a standing one is never reported (0 new DRC, a hole in the gate).
+# TRAP (board1 R4tx, 2026-11-27: SDQS0_T_A's 2.125 mm segment 0.209 from DATA0_A's via and 0.2x from DMI0_A's;
+# the baseline named one via, the board with the plan the other; route.py check failed twice on copper no plan touched).
+DRC_ARGS = ["--schematic-parity", "--all-track-errors", "--format", "json"]
+
+
 def key(pcb, board_dir=None):
     h = hashlib.sha256()
     h.update(_cli_identity().encode())
+    h.update(" ".join(DRC_ARGS).encode())
     base = Path(board_dir).resolve() if board_dir else Path(pcb).resolve().parent
     for f in inputs(pcb, board_dir):
         try:
@@ -152,8 +163,7 @@ class Run:
         self.t0 = time.monotonic()
         self.locks0 = _locks(self.pcb)
         _LIVE.add(self)
-        self.proc = subprocess.Popen(["kicad-cli", "pcb", "drc", "--schematic-parity", "--format", "json",
-                                      "-o", str(self.out), str(self.pcb)],
+        self.proc = subprocess.Popen(["kicad-cli", "pcb", "drc", *DRC_ARGS, "-o", str(self.out), str(self.pcb)],
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     def result(self):

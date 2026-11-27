@@ -2773,3 +2773,23 @@ spec written for a plain netgroup run with an absolute `plan` path (`/home/.../t
 race.py in a second ("plan leaves the board folder"), and the refusal is charged as a round. **WAY AROUND:** write
 `plan` as `routing/...` or `tmpWork/...`, relative to the board folder, in every variant spec before the race.
 **PROOF:** board1 tmpWork/R_PMIC/d126/ (the first race refused, the second ran).
+
+**TRAP: a standing clearance row reads as "1 new DRC", and a new one can hide behind it** (board1 R4tx, 2026-11-27).
+Without `--all-track-errors` kicad-cli reports only the FIRST clearance error of each track; which one is first follows
+the board's item order, which any plan changes. A plan that touched nothing near it failed `route.py check` twice on a
+standing row (same via, another segment of the same net), and a plan's own new error on a track that already carries
+one would never have been reported. **WAY AROUND:** `tools/place/drccache.py` now passes `DRC_ARGS` with
+`--all-track-errors` (part of the cache key) for every check, audit and `place.py drc`. **PROOF:** a "new" row whose
+items are both older than the plan -- measure the gap of every segment of that net to the other item (pcbnew,
+read-only): two under the clearance means the report swapped rows. board1 tmpWork/R4tx3/, ROUTING_PLAN 799.
+
+**TRAP: a staged round that stalls in an early stage counts nothing after it** (board1 R1, 2026-11-27: three rounds,
+each naming one knot). (1) A stage that stalls or is BLOCKED AT A SOURCE ends the variant, so the later stages'
+knots stay unnamed and each costs a round of its own. In every round put beside the staged variants one variant per
+later stage that runs THAT stage first (channel A first, lines first), so one round names every stage's knots.
+(2) A frozen stage walls the next stage's sources (units first walled four byte lines 0.175 mm from their balls;
+lines first walled a unit): nets that share a ball field are negotiated in the stage that lays the wall, not after
+it. (3) A stall that is flat from iteration 30 to 300 (same nets, the cells within 10 %) is a crossing, not a
+search: read the contested cells -- two nets on one layer running through one spot on opposite diagonals -- and bind
+one by a reserve stub or a layer swap; more time never closes it. (4) Twenty-odd bound-layer nets as ONE negotiation
+went flat at 13..16 nets for 30 minutes: stage it. **PROOF:** board1 tmpWork/R1round209/k/SUMMARY.txt, SUMMARY_m.txt.
