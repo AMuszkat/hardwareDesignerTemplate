@@ -767,6 +767,19 @@ its docstring. What the spec has to be told:
   tools/route/test_bareholes.py` builds a 4-layer via (REMOVE_EXCEPT_START_AND_END) and asserts
   its disc radius per layer through `board_via` + `via_halo` -- pad on F / B, hole on In1 / In2.
   A spec's `extra_vias` / `reserve_vias` have no hole: their pad stands on every layer.
+- **A change to `netgroup.py` runs END TO END before any round: `tools/kpy
+  tools/route/test_netgroup_smoke.py`** (3 tests, ~3 s; board1 R1 r211, 2026-11-27). TRAP: the
+  bare-hole change passed its unit tests (`test_bareholes.py` calls the functions one at a time),
+  then its board-via loop named a halo `full` -- the net table `write_partial()` reads -- and every
+  router run died at its first partial write (`TypeError: 'float' object is not subscriptable`): a
+  reopened round spent in 26 s. NOW: the smoke test builds a 4-layer board in a temp folder outside
+  every board (KiCad writes its .kicad_pro; no budget: `budget.home()` finds no board), with a GND
+  via inside a field's courtyard and a signal via outside it (both REMOVE_EXCEPT_START_AND_END), a
+  GND pour and an F.Cu wall, and runs `netgroup.py --board <tmp> <spec> --timeout 60` as a session
+  would: exit 0, the plan, its origin, a partial written, a via each, none in the field, no board's
+  ledger touched. It carries its own proof: the same run on a mutant with `full` back must fail with
+  that TypeError -- if the mutation site is rewritten, re-aim `MUTANT`, never drop the case. A new
+  branch of the router is added to the fixture with the change, not after its first crash.
 - **A drilled pad's HOLE is an obstacle on every layer, whatever copper its pad has** (netgroup,
   2026-11-23). TRAP: netgroup skipped every pad that lists no copper layer (it was meant for paste
   apertures), so an NPTH drawn on the mask layers only was not there at all. A test hole of 0.3 mm

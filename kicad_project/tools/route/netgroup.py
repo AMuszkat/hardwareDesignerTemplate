@@ -1022,15 +1022,17 @@ def main():
             rail = v["net"] in RAIL
             for L_ in LAYERS:
                 # the full figure: off the field's open layers, and past its edge
-                full = via_halo(v, L_, rail, SC(v.get("clr")), HOLECLR, maze.W / 2, keep_pads=KEEP)
+                # (not `full`: that name is the net table write_partial reads -- a float there crashed
+                # every router run at its first partial write, board1 R1 r211)
+                r_full = via_halo(v, L_, rail, SC(v.get("clr")), HOLECLR, maze.W / 2, keep_pads=KEEP)
                 rr = (via_halo(v, L_, rail, SC(v.get("clr")), HOLECLR, maze.W / 2, F=F, keep_pads=KEEP)
-                      if L_ in F.get("open", []) else full)
+                      if L_ in F.get("open", []) else r_full)
                 G.block_disc([L_], v["x"], v["y"], rr)
                 ROUND[L_].append((v["x"], v["y"], rr, v["net"]))
                 # a via near the field's edge: past the edge the track is the group's width, so the
                 # cells outside the field keep the full halo (board1: a 0.181 B.Cu run 0.066 from a
                 # dog-bone 0.3 inside U1's courtyard)
-                G.block([L_], {c_ for c_ in G.disc(v["x"], v["y"], full) if not in_field(*G.xy(c_))})
+                G.block([L_], {c_ for c_ in G.disc(v["x"], v["y"], r_full) if not in_field(*G.xy(c_))})
             # the "via" layer (a new via's hole-to-hole and pad) keeps the pad, flashed or not
             G.block(["via"], G.disc(v["x"], v["y"], v["r"] + SC(v.get("clr")) + maze.VIA_R))
         else:
