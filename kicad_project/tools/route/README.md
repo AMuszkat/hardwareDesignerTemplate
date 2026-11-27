@@ -2793,3 +2793,18 @@ it. (3) A stall that is flat from iteration 30 to 300 (same nets, the cells with
 search: read the contested cells -- two nets on one layer running through one spot on opposite diagonals -- and bind
 one by a reserve stub or a layer swap; more time never closes it. (4) Twenty-odd bound-layer nets as ONE negotiation
 went flat at 13..16 nets for 30 minutes: stage it. **PROOF:** board1 tmpWork/R1round209/k/SUMMARY.txt, SUMMARY_m.txt.
+
+**TRAP: naming a knot from the router's report alone picks the wrong net** (board1 R1, 2026-11-27, rounds N and P).
+(1) The contested list names the nets that overlap, not the one that shuts the channel: a STUCK net whose partner is a
+via plus a clean routed net is reported alone -- lift each routed net of the stage in the flood and see which lift
+opens the way (CA4_B was shut by NCS0_B's lay, 0.35 mm off its guide). (2) Count the centre-line crossings of the two
+nets in the partial: an odd count is a swap forced by the ends' order, an even count is a twist in a pocket, and a
+stub that binds one net moves a twist to the next pair (three ends, two lanes). (3) A reserve stub measured in a model
+that contains it reads as a way (+0.5): measure it with itself left out. (4) The flood's widest-way lay puts a net
+mid-gap, so a failed sequential lay of two or three nets in a two-lane pocket decides nothing: compute the exact
+bound. (5) `--seed` did not move a 6-cell stuck net; the net's own reserve piece in the gap did. (6) `netgroup.py
+--plateau 40` ends a flat stage in 1..10 minutes: three rounds took 47 minutes where one took 32. (7) `bgwait.py run
+--group G` that prints `round 2 of 1 ... this job may take N min` is NOT a go: every router in the job refuses with
+BUDGET SPENT in a second; start only on `round 1 of 1`, and book a granted round in a command of its own, read its
+output, then start. **PROOF:** board1 tmpWork/R1round209/n/CROSSINGS.md, p/KNOTS.md, p/SUMMARY_p.txt; ROUTING_PLAN
+804, 807.
