@@ -2234,6 +2234,16 @@ has moved. `budget.py`'s docstring is the manual; in short:
   written `"closes": null`. For the lower bound run both hugs -- a wall follower (best in an open channel) and a
   wall-biased Dijkstra (best where sites are scarce) -- and verify pairs with the SAME pitch rule the laying used, or the
   verify fails good runs at the column where the rule changes. Print the min cut's place: it names the wall to ask about.
+- **A relaxed spacing between a bus's own lines is a clearance PER PAIR, never a number for the raster.** A rule like
+  "two nets of this bus may stand 0.1016 apart" (a `.kicad_dru` condition on both A and B) leaves every OTHER net at the
+  line's class clearance: KiCad takes the larger of the two classes, so a 0.2032-class line owes 0.2032 to a GND via
+  whose own class is 0.1016. A count that grows each obstacle by "the item's own clearance" or by the relaxed number
+  reads 0.1016 too close to every ground via, pad and rail in the field. Before a count's table is quoted anywhere,
+  take one free cell beside a foreign via from its output and hold its distance against pad/2 + CLASS clearance +
+  width/2 -- and read the rule's condition from the board's `.kicad_dru`, not the handoff's heading. Match the relaxed
+  items by net name, never by zipping two copper lists by position (lists of different length drop the relaxation
+  silently). TRAP (board1 R1, 2026-11-27): four counts and a question to concept said 23 of 25; with GND at the class
+  clearance the same plan read 16 of 25 and the upper bound of two rows fell from 25 to 23.
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
