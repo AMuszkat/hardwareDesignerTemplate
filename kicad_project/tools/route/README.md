@@ -209,6 +209,23 @@ CSI_D0_P at the edge). A point inside another relaxed region (another such area,
 clearance rule names) is that region's. Proof: `python3 tools/route/test_areaclear.py` (a 45-degree
 breach, a pair broken and opened at the edge, a pair broken and not opened, pairs, a via and a pad).
 
+- **`areaclear.py` reads the pair rules whole, and a gate that does not read them fails every
+  legal pair.** TRAP (board1 R1, 2026-11-27): it read a pair rule only as `A.NetName == 'X' &&
+  B.NetName == 'Y'`, so a bus's own-lines rule (an OR group of names a side, a layer clause) and
+  its beside-a-GND-via rule (`B.Type == 'Via'`, two mirrored halves) counted for nothing: 70 of 72
+  `RULE area clear` rows were legal pairs judged at the class clearance, and they hid the 2 that
+  were real. Read now, for a clearance rule that names no area and no courtyard: `NetName` and
+  `NetClass` with `==` / `!=` (KiCad's `*` and `?`, case ignored), `Type == 'Via' | 'Track' | 'Pad'
+  | 'Zone'` per ITEM (a rule for a net's vias does not relax its tracks, pads or pour),
+  `isCoupledDiffPair()`, `&&` / `||` / `!` and brackets to any depth, the `(layer ...)` clause;
+  either item may be A; the LAST matching rule in the file gives the number, as in KiCad. STRICT:
+  a rule with any other term (another property, a function, `&&` and `||` mixed in one bracket, a
+  negated courtyard no rule of the file relaxes) is not applied -- the class clearance stands --
+  and the tool's own run prints it once as `not modelled`; a term that cannot be decided for an
+  item never relaxes. Before a new kind of pair rule is routed to, run `tools/kpy
+  tools/route/areaclear.py --board B` once and read that list. Proof: `test_areaclear.py` (OR
+  groups, the layer, a via against a track of the same net, the mirror, unknown terms).
+
 - **A plan's clearances in seconds, before the round: `planclr.py`** -- a design aid, never instead
   of `check`, which still runs every round and is still counted. TRAP (board1 R_U1W r172c,
   2026-11-23): 9 PCIE_85 items (0.106-0.180 against 0.2032) surfaced only after `check`'s ~2 min

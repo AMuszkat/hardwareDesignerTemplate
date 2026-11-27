@@ -23,8 +23,34 @@ every other net's copper on that layer -- tracks, flashed vias, flashed pads, po
 wherever it lies.  The gap must be at least what applies without the area's rule:
 
     the larger of the two nets' class clearances and Board Setup's minimum clearance;
-    for a coupled pair (KiCad's isCoupledDiffPair: names ending + / - or P / N) or a pair a rule
-    names by `A.NetName == 'X' && B.NetName == 'Y'`, the smallest clearance those rules give.
+    for a pair of ITEMS a pair rule names, that rule's number -- the LAST such rule in the file,
+    as KiCad takes it.
+
+A PAIR RULE is a clearance rule whose condition names no area and no courtyard.  Its condition is
+parsed whole, and its number is taken for two items only when EVERY term holds for them on that
+layer, with the two items as A and B or as B and A:
+
+    A.NetName == 'pat' / != 'pat'     KiCad's wildcards (* and ?), case ignored, the full net name
+    A.NetClass == 'pat' / != 'pat'    the net's class by name
+    A.Type == 'Via' | 'Track' | 'Pad' | 'Zone'     the ITEM: a rule for a net's vias does not relax
+                                      that net's tracks, pads or pour
+    A.isCoupledDiffPair()             names ending + / - or P / N
+    && , || , ! and brackets, to any depth: an OR group of names, a `||` of two mirrored halves
+    (layer "F.Cu" | outer | inner)    the rule's layer clause: no other layer takes its number
+
+STRICT, because this gate must never pass what KiCad's rule does not: a rule with a term that is
+not in this list (another property, a function, `&&` and `||` mixed in one bracket) is NOT applied
+-- the class clearance stands for its pairs -- and is named once, `not modelled`.  A term that is
+read but cannot be decided for an item (no class known, an arc's Type) never relaxes either.  One
+term is read as it always was: `!A.intersectsCourtyard('U1')` (or `!A.intersectsArea('X')`) in a
+pair rule says only that the region has a rule of its own, and it is read only when this file HAS
+a clearance rule for that region -- the region is then a skip region below, and outside it the
+pair's number stands, also for an item that reaches into it (KiCad's letter withholds it there).
+A negated region no rule of the file relaxes makes the rule `not modelled`.  A not-modelled rule
+that TIGHTENS a pair is DRC's to hold, not this check's.  TRAP (board1 R1, 2026-11-27): while only `A.NetName == 'X' && B.NetName
+== 'Y'` was read, a bus's own-lines rule (an OR group per side, a layer clause) and its
+beside-a-GND-via rule (`B.Type == 'Via'`, mirrored) counted for nothing: 70 legal pairs failed at
+the class clearance and hid the 2 rows that were real.
 
 So a line that leaves the area must already stand at its class spacing where it crosses the edge
 (the opening is done inside the area, as #30 says).  A breach whose point lies inside ANOTHER relaxed
@@ -36,8 +62,8 @@ pads straddling the edge (only tracks are clipped).
 `route.py check` fails a plan that adds a breach (the board before and the scratch copy with the plan
 are both measured); `route.py audit` prints an `area clear` line and fails on any breach.
 
-The geometry (`clip`, `breaches`, `parse_dru`) is plain Python on lists, so
-`tools/route/test_areaclear.py` drives it without KiCad.
+The geometry and the rules (`clip`, `breaches`, `parse_dru`, `parse_cond`, `rule_holds`) are plain
+Python on lists, so `tools/route/test_areaclear.py` drives them without KiCad.
 """
 import argparse
 import json
@@ -75,32 +101,196 @@ def _blocks(text):
     return [b for b in out if b.startswith("(rule")]
 
 
+_TOK = re.compile(r"""\s*(?:(?P<and>&&)|(?P<or>\|\|)
+    |(?P<cmp>[AB]\.\w+\s*(?:==|!=)\s*'[^']*')
+    |(?P<call>[AB]\.\w+\(\s*(?:'[^']*'\s*(?:,\s*'[^']*'\s*)*)?\))
+    |(?P<lp>\()|(?P<rp>\))|(?P<not>!(?!=))|(?P<other>[^\s()&|!']+|'[^']*'|.))""", re.X)
+_TYPES = {"via": "via", "track": "track", "pad": "pad", "zone": "poly"}
+
+
+class _NotRead(Exception):
+    """A term of a condition this parser does not understand."""
+
+
+def parse_cond(cond):
+    """A pair rule's condition as a tree, or raise _NotRead(term).
+
+    ("and" | "or", [node, ...]) | ("not", node) | ("name" | "class", side, pattern) |
+    ("type", side, kind) | ("coupled",) | ("region", "Area" | "Courtyard", name)
+    side: "A" or "B"; kind: an item's "kind".
+    One bracket holds `&&` or `||`, never both: their order in KiCad's grammar is not this tool's
+    to assume."""
+    toks = [(m.lastgroup, m.group(m.lastgroup)) for m in _TOK.finditer(cond)]
+    pos = [0]
+
+    def peek():
+        return toks[pos[0]] if pos[0] < len(toks) else (None, "")
+
+    def take():
+        t = peek()
+        pos[0] += 1
+        return t
+
+    def atom(k, v):
+        if k == "cmp":
+            side, field, op, val = re.fullmatch(r"([AB])\.(\w+)\s*(==|!=)\s*'([^']*)'", v).groups()
+            if field == "NetName":
+                node = ("name", side, val)
+            elif field == "NetClass":
+                node = ("class", side, val)
+            elif field == "Type" and val.lower() in _TYPES:
+                node = ("type", side, _TYPES[val.lower()])
+            else:
+                raise _NotRead(v)
+            return node if op == "==" else ("not", node)
+        if k == "call":
+            if re.fullmatch(r"[AB]\.isCoupledDiffPair\(\s*\)", v):
+                return ("coupled",)
+            m = re.fullmatch(r"[AB]\.intersects(Area|Courtyard)\(\s*'([^']*)'\s*\)", v)
+            if m:
+                return ("region", m.group(1), m.group(2))
+        raise _NotRead(v or "the condition's end")
+
+    def unary():
+        k, v = take()
+        if k == "not":
+            if peek()[0] not in ("call", "lp", "not"):
+                raise _NotRead("!" + peek()[1])              # `!A.x == 'y'`: what ! binds to is KiCad's
+            return ("not", unary())
+        if k == "lp":
+            node = level()
+            if take()[0] != "rp":
+                raise _NotRead("an open bracket")
+            return node
+        return atom(k, v)
+
+    def level():
+        nodes, ops = [unary()], set()
+        while peek()[0] in ("and", "or"):
+            ops.add(take()[0])
+            nodes.append(unary())
+        if len(ops) > 1:
+            raise _NotRead("&& and || in one bracket")
+        return (ops.pop(), nodes) if ops else nodes[0]
+
+    node = level()
+    if pos[0] < len(toks):
+        raise _NotRead(peek()[1])
+    return node
+
+
+def _regions(node, negated=False):
+    """Every region a condition names: (kind, name, directly negated)."""
+    if node[0] == "region":
+        yield node[1], node[2], negated
+    elif node[0] == "not":
+        yield from _regions(node[1], node[1][0] == "region")
+    elif node[0] in ("and", "or"):
+        for n in node[1]:
+            yield from _regions(n)
+
+
 def parse_dru(text):
-    """{"areas": [{"rule", "area", "min", "layer"}], "courtyards": {REF}, "pair_min": mm or None,
+    """{"areas": [{"rule", "area", "min", "layer"}], "courtyards": {REF},
+    "pair_rules": [{"rule", "min", "layer", "cond": tree}] in the file's order,
+    "not_modelled": [{"rule", "term"}], and the two older summaries "pair_min": mm or None,
     "pair_names": [(patA, patB, mm)]} from a .kicad_dru's text."""
-    areas, courts, pair_min, names = [], set(), None, []
+    areas, courts, pair_min, names, pairs, unread, cands = [], set(), None, [], [], [], []
     for blk in _blocks(text):
         m = re.search(r"\(constraint\s+clearance\s+\(min\s+([0-9.]+)\s*mm\)", blk)
         if not m:
             continue
         mn = float(m.group(1))
         name = re.match(r'\(rule\s+"([^"]*)"', blk)
+        name = name.group(1) if name else "?"
         cond = re.search(r'\(condition\s+"([^"]*)"\)', blk)
         cond = cond.group(1) if cond else ""
         lay = re.search(r'\(layer\s+"?([^")\s]+)"?\)', blk)
-        for a in sorted(set(re.findall(r"(?<!!)[AB]\.intersectsArea\('([^']+)'\)", cond))):
-            areas.append({"rule": name.group(1) if name else "?", "area": a, "min": mn,
-                          "layer": lay.group(1) if lay else None})
-        courts |= set(re.findall(r"(?<!!)[AB]\.intersectsCourtyard\('([^']+)'\)", cond))
+        lay = lay.group(1) if lay else None
+        in_area = sorted(set(re.findall(r"(?<!!)[AB]\.intersectsArea\('([^']+)'\)", cond)))
+        in_court = set(re.findall(r"(?<!!)[AB]\.intersectsCourtyard\('([^']+)'\)", cond))
+        for a in in_area:
+            areas.append({"rule": name, "area": a, "min": mn, "layer": lay})
+        courts |= in_court
         if "isCoupledDiffPair()" in cond:
             pair_min = mn if pair_min is None else min(pair_min, mn)
         for pa, pb in re.findall(r"A\.NetName == '([^']+)' && B\.NetName == '([^']+)'", cond):
             names.append((pa, pb, mn))
-    return {"areas": areas, "courtyards": courts, "pair_min": pair_min, "pair_names": names}
+        if not (in_area or in_court):                        # else a region's rule, not a pair rule
+            cands.append((name, mn, lay, cond))
+    own = {"Area": {a["area"] for a in areas}, "Courtyard": courts}
+    for name, mn, lay, cond in cands:
+        try:
+            if not cond.strip():
+                raise _NotRead("no condition: a rule for every pair")
+            tree = parse_cond(cond)
+            for kind, ref, negated in _regions(tree):
+                if not negated:
+                    raise _NotRead(f"intersects{kind}('{ref}') inside a bracket")
+                if ref not in own[kind]:
+                    raise _NotRead(f"!intersects{kind}('{ref}'): no clearance rule of this file is for that region")
+            pairs.append({"rule": name, "min": mn, "layer": lay, "cond": tree})
+        except _NotRead as e:
+            unread.append({"rule": name, "term": str(e)})
+    return {"areas": areas, "courtyards": courts, "pair_min": pair_min, "pair_names": names,
+            "pair_rules": pairs, "not_modelled": unread}
 
 
-def _glob(pat, s):
-    return re.fullmatch(".*".join(re.escape(p) for p in pat.split("*")), s) is not None
+def _wild(pat, s):
+    """KiCad's string `==`: * and ? are wildcards, case is ignored."""
+    rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pat)
+    return re.fullmatch(rx, s, re.I | re.S) is not None
+
+
+def _and(vals):
+    """Three-valued: False beats None (not decided) beats True."""
+    vals = list(vals)
+    return False if False in vals else None if None in vals else True
+
+
+def _or(vals):
+    vals = list(vals)
+    return True if True in vals else None if None in vals else False
+
+
+def cond_holds(node, A, B, net_class=None):
+    """True / False / None (cannot be decided) for a parsed condition and two items.
+    A, B: (net name, item or None)."""
+    k = node[0]
+    if k == "and":
+        return _and(cond_holds(n, A, B, net_class) for n in node[1])
+    if k == "or":
+        return _or(cond_holds(n, A, B, net_class) for n in node[1])
+    if k == "not":
+        if node[1][0] == "region":
+            return True                                      # the region has its own rule (parse_dru saw it)
+        v = cond_holds(node[1], A, B, net_class)
+        return None if v is None else not v
+    if k == "coupled":
+        return coupled(A[0], B[0])
+    if k == "region":
+        return None
+    net, it = A if node[1] == "A" else B
+    if k == "name":
+        return _wild(node[2], net)
+    if k == "class":
+        nc = net_class(net) if net_class else None
+        return None if not nc or "," in nc else _wild(node[2], nc)
+    if k == "type":
+        if it is None or it.get("arc"):                      # an arc's Type is not this tool's to name
+            return None
+        return it["kind"] == node[2]
+    return None
+
+
+def rule_holds(rule, a, b, ia=None, ib=None, layer=None, net_class=None):
+    """Does a pair rule give its number to nets a, b (items ia, ib) on this layer?  True / False /
+    None; either item may be A."""
+    if rule["layer"] is not None and layer is not None and not layer_ok(rule["layer"], layer):
+        return False
+    v = _or(cond_holds(rule["cond"], x, y, net_class)
+            for x, y in (((a, ia), (b, ib)), ((b, ib), (a, ia))))
+    return None if v and rule["layer"] is not None and layer is None else v
 
 
 def _base(net):
@@ -248,7 +438,7 @@ def breaches(areas, items, required, skip_regions=(), reach=0.5):
     areas:    [{"area", "rule", "min", "layer" (None/outer/inner/name), "layers": {layer}, "rings"}]
     items:    [{"kind": "track", "net", "layer", "a", "b", "w"} | {"kind": "via", "net", "layer", "at", "r"}
                | {"kind": "pad" | "poly", "net", "layer", "rings", "what"?}]   (one entry per copper layer)
-    required: f(net_a, net_b) -> mm, the clearance without the area's rule
+    required: f(net_a, net_b, item_a, item_b, layer) -> mm, the clearance without the area's rule
     skip_regions: [(layer or None, rings)] -- other relaxed regions; a breach whose point lies in one is not
                reported
     -> [{"area", "layer", "net", "other", "kind", "at", "gap", "need", "piece"}], one per item pair, its
@@ -277,7 +467,7 @@ def breaches(areas, items, required, skip_regions=(), reach=0.5):
                         o = items[n]
                         if n == ti or o["net"] == t["net"]:
                             continue
-                        need = required(t["net"], o["net"])
+                        need = required(t["net"], o["net"], t, o, t["layer"])
                         g, u, v = _item_dist(p, q, o)
                         g -= h
                         if g >= need - EPS:
@@ -303,18 +493,23 @@ def breaches(areas, items, required, skip_regions=(), reach=0.5):
     return sorted(best.values(), key=lambda r: (r["area"], r["layer"], r["at"][1], r["at"][0]))
 
 
-def required_fn(class_clr, floor, rules):
-    """f(a, b): the clearance without an area's rule -- the stricter class (or Board Setup's floor), or
-    the pair rules' number for a coupled pair."""
-    pm, names = rules.get("pair_min"), rules.get("pair_names", [])
+def required_fn(class_clr, floor, rules, net_class=None):
+    """f(a, b, ia=None, ib=None, layer=None): the clearance without an area's rule -- the stricter
+    class (or Board Setup's floor), or the number of the last pair rule in the file whose every term
+    holds for the two items on that layer.  A rule that cannot be decided (no items or no layer given
+    for a rule that names them, no `net_class(net) -> name` for one that names a class) never lowers
+    the number."""
+    pairs = rules.get("pair_rules", [])
 
-    def f(a, b):
-        for pa, pb, mn in names:
-            if (_glob(pa, a) and _glob(pb, b)) or (_glob(pa, b) and _glob(pb, a)):
-                return mn
-        if pm is not None and coupled(a, b):
-            return pm
-        return max(class_clr(a), class_clr(b), floor)
+    def f(a, b, ia=None, ib=None, layer=None):
+        need = max(class_clr(a), class_clr(b), floor)
+        for r in pairs:
+            v = rule_holds(r, a, b, ia, ib, layer, net_class)
+            if v:
+                need = r["min"]
+            elif v is None:
+                need = max(need, r["min"])
+        return need
     return f
 
 
@@ -394,7 +589,8 @@ def from_board(B):
         if lay not in layers:
             continue
         w = mm(t.GetWidth())
-        if t.Type() == pn.PCB_ARC_T:
+        arc = t.Type() == pn.PCB_ARC_T
+        if arc:
             s, m_, e = t.GetStart(), t.GetMid(), t.GetEnd()
             pts = _arc_pts((mm(s.x), mm(s.y)), (mm(m_.x), mm(m_.y)), (mm(e.x), mm(e.y)))
         else:
@@ -403,6 +599,8 @@ def from_board(B):
             if a_ == b_ or not inbox(min(a_[0], b_[0]), min(a_[1], b_[1]), max(a_[0], b_[0]), max(a_[1], b_[1])):
                 continue
             items.append({"kind": "track", "net": t.GetNetname(), "layer": lay, "a": a_, "b": b_, "w": w})
+            if arc:
+                items[-1]["arc"] = True
     for pad in b.GetPads():
         p = pad.GetPosition()
         if not inbox(mm(p.x) - 3, mm(p.y) - 3, mm(p.x) + 3, mm(p.y) + 3):
@@ -445,10 +643,18 @@ def from_board(B):
         if net not in cc:
             cc[net] = (B.class_clearance(net) if net and b.FindNet(net) else None) or 0.0
         return cc[net]
+    cn = {}
+
+    def net_class(net):
+        if net not in cn:
+            ni = b.FindNet(net) if net else None
+            cn[net] = str(ni.GetNetClassName()) if ni else None
+        return cn[net]
     # the other areas are skip regions for an area's pieces only when they are a DIFFERENT area
     for a in areas:
         a["others"] = [(None, x["rings"]) for x in areas if x["area"] != a["area"]]
-    return areas, items, required_fn(class_clr, floor, rules), skip, dict(rules, missing=missing, names=sorted(names))
+    return (areas, items, required_fn(class_clr, floor, rules, net_class), skip,
+            dict(rules, missing=missing, names=sorted(names)))
 
 
 def _arc_pts(s, m, e, n=8):
@@ -494,6 +700,8 @@ def main():
     out, info = run(B)
     for m in info.get("missing", []):
         print(f"  area {m}: a rule names it, the board has no rule area of that name -- not judged")
+    for m in info.get("not_modelled", []):
+        print(f"  rule \"{m['rule']}\": not modelled ({m['term']}) -- its pairs are judged at the class clearance")
     if not info.get("names"):
         print("AREACLEAR ----: the .kicad_dru relaxes clearance over no rule area on this board")
         return 0
