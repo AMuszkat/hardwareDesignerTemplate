@@ -2244,6 +2244,32 @@ has moved. `budget.py`'s docstring is the manual; in short:
   items by net name, never by zipping two copper lists by position (lists of different length drop the relaxation
   silently). TRAP (board1 R1, 2026-11-27): four counts and a question to concept said 23 of 25; with GND at the class
   clearance the same plan read 16 of 25 and the upper bound of two rows fell from 25 to 23.
+- **A laying on a raster decides nothing about a cut with less than one cell of slack -- compute the cut by exact
+  distance FIRST, and the packing bound before any search.** A hand-laying or a site search that takes candidate sites
+  in plan order, first by distance, on the router's pitch measures the plan and the raster: lines that fit by 0.02 mm
+  do not appear on a 0.025 grid, and seven plan orders give the same count without proving it. Before a laying is run
+  on a tight cut: (1) name the two walls and compute, from centre distance, pad or track half-widths and the per-pair
+  clearances, what n lines need and what is free -- at a free angle AND on 0/45 runs, which cost more; a cut that is
+  short on 45 degrees is short, whatever the raster says; (2) for vias in a pocket, the packing bound first (pairwise
+  via-via pitch, a stub between two foreign vias, the pocket's width at each row), exhaustive on sites alone -- it is
+  seconds; (3) only a cut whose exact slack is at least one cell goes to a laying, and a laying that ends "plan-
+  limited" is reported as undecided, never as a count of the term it tried; (4) a site picker that refuses a net's own
+  standing via hides an opening -- say so in the result. A plan that fits by less than a cell is hand-laid at exact
+  coordinates and gated by `route.py check`, or it is a question. TRAP (board1 R1, 2026-11-27): two "last" counts
+  ended at their time limit with 23 of 25 and slack 0.019 / 0.020 mm on the two cuts, one of them 0.024 short on
+  45-degree runs -- the exact distances took minutes and were computed last; (board1 R4, same day): the packing bound
+  on sites alone decided a pocket (5 of 6) in 0.2 s where four 1500 s searches had not.
+- **A via-pocket row that counts sites and stubs is a lead until four more things were tested WITH it: the plane pours
+  the vias cut, the stitch rule, every via's exit, and the width outside the courtyard.** Clearance and hole-to-copper
+  pass on a set of vias that still fails the gate: a column of antipads cuts a rail's strip on a plane layer into an
+  island (`pournet`), a via stands further from a GND via than the stitch rule allows (a published finding fails), the
+  vias have no free lane on the layer they must leave on (flood each exit with the other vias standing and the moved
+  copper re-laid), and a neck width that is legal inside the courtyard is a `track_width` error for the piece outside
+  it (a `necks` entry does not lift a DRC rule). Copper ripped to make the pocket is part of the row: it is re-laid in
+  the same count, or the row is not counted. And `route.py check` takes ONE plan -- merge rip, re-lay and adds first;
+  an `accept` of `via_dangling` is by type and hides an unrelated dangling via. TRAP (board1 R4, 2026-11-27): six of
+  six sites verified with margins, two gates failed on an In4 island, the stitch distance and two ripped nets with no
+  way back -- each a test of seconds on the copy.
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
