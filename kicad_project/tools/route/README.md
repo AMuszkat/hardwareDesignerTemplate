@@ -2216,7 +2216,14 @@ has moved. `budget.py`'s docstring is the manual; in short:
   0.128 outside and 0.1016 inside on this stack-up; one width for all layers taxed the inner ones 8 %). Prove
   it: `ENDPAIRS PASS` on every variant's spec. It also refuses a `via_sep` below via pad + clearance (the same
   specs: 0.5 for 0.4 pads at 0.2032 -- DRC wants centres 0.6032, and no two vias of different nets on the board
-  stood closer than 0.64): a round that had closed would have failed its check on the vias.
+  stood closer than 0.64): a round that had closed would have failed its check on the vias. Two sources that
+  are both standing vias are not judged (the board's DRC did). AFTER the ends are re-laid, three more things the
+  same round taught: `route.py check` passes an open end whose 0.128 continuation outside the area would foul a
+  neighbour's in-area 45 -- count every end's continuation (an edge count) on the applied copy, not only the
+  check; a via-site count is blind to a site standing in a NEIGHBOUR's exit (13 sites by count, 10 clear of the
+  other lines' first 0.6 mm) -- subtract those before the count is held against the lines; and when the last
+  pairs will not spread, read the class's rule before asking: a rule typed `(min 0.12) (opt 0.128)` already lets
+  the few lines of one tight run leave at its minimum (a spec field with a box and its own width).
 - **The pre-check runs every net alone in EVERY variant that differs in layers, and a via site is not a way
   out.** TRAP (board1 R1, 2026-11-27): seven fan-out vias had been sited at the far BGA by a site count; the
   pre-check then found two of those nets shut inside the BGA's field on every layer (25 000 cells reached, none

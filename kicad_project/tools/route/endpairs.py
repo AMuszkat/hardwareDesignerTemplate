@@ -67,6 +67,8 @@ for sp in specs:
     S = json.load(open(sp)); P = S.get("pitch", 0.025); found = []
     for a, b in itertools.combinations(sorted(S["nets"]), 2):
         for (x1, y1, l1, k1), (x2, y2, l2, k2) in itertools.product(ends(S, a), ends(S, b)):
+            if k1 == k2 == "src" and l1 is None and l2 is None:
+                continue                                        # two standing vias: the board's DRC judged them, not this
             d = math.hypot(x1 - x2, y1 - y2)
             if l1 is None and l2 is None:                       # two vias
                 need, why = S.get("via_sep", S["via"][0] + S["clearance"]), "via_sep"
