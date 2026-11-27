@@ -2287,6 +2287,19 @@ has moved. `budget.py`'s docstring is the manual; in short:
   an `accept` of `via_dangling` is by type and hides an unrelated dangling via. TRAP (board1 R4, 2026-11-27): six of
   six sites verified with margins, two gates failed on an In4 island, the stitch distance and two ripped nets with no
   way back -- each a test of seconds on the copy.
+- **Hand-laid via sites that pass their gate are not a plan until every net was flooded ALONE to its far end -- and a
+  net with no way is counted under a LADDER of rip sets at once, not under today's list.** Three sets, one run each (a
+  router-free flood takes under a minute): the plan's own rips; plus the whole inner runs of the tracks the flood
+  names as walls; every inner track of the group between the two fan-outs. For a net with no reach print WHICH END is
+  pocketed and by what copper: it turns a 'move the site' search into a rip-list change. Flag every short gap by its
+  two walls -- only a gap between walls no round of this group moves (vias, pads, another group's copper) can make a
+  `DOES NOT FIT`; a gap walled by the group's own track is the next rip. Take the smallest set that passes reach,
+  fixed-wall gaps and columns, with its layer assignment, into the spec; it is a lead (each net alone is necessary,
+  not sufficient). And let the model test itself on APPLIED copper first: a flood that refuses a drawn, DRC-clean
+  track has found either its own defect or a handoff spacing that no DRC rule gates -- ask for the rule. TRAP (board1
+  R1, 2026-11-27: with the plan's 21 rips 22 of 25 lines reached and two via gaps read 1 lane for 4; with 110 rips on
+  20 nets 25 of 25 and no gap short; the self-test found a 0.284 mm rule the .kicad_dru never had and nine places on
+  the board under it).
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
