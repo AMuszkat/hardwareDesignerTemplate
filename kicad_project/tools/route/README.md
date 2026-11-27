@@ -2220,6 +2220,12 @@ has moved. `budget.py`'s docstring is the manual; in short:
   cells on F.Cu in all six: the lines crossed one another on the one layer they share on the way to scattered via
   places. That is ten lines of python on `*.plan.partial.json` and it names the term to count next (here: where a via
   may stand), which six more variants on the same terms do not (board1 R1, 2026-11-27).
+- **A greedy sweep of shortest runs is not a count of lines that keep their order.** Asked how many of 25 lines reach a
+  via place on one layer without crossing a neighbour, 36 sweeps gave 3-9 on the same terms and 10-20 at the ceiling:
+  each shortest run shut the next line's end, and the only upper bound built (one via per block, a matching) read 25 in
+  every row -- 45 minutes and a table that decided nothing (board1 R1, 2026-11-27). Before believing such a count, print
+  the spread between sweep orders; a count of order-keeping runs needs runs that HUG (river routing from both walls) or
+  a DP in the lines' order, and a bound that carries the order.
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
