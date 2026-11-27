@@ -2300,6 +2300,13 @@ has moved. `budget.py`'s docstring is the manual; in short:
   R1, 2026-11-27: with the plan's 21 rips 22 of 25 lines reached and two via gaps read 1 lane for 4; with 110 rips on
   20 nets 25 of 25 and no gap short; the self-test found a 0.284 mm rule the .kicad_dru never had and nine places on
   the board under it).
+- **A scratch copy for `route.py check` carries the board's rule files, not only its KiCad files:**
+  `general_routing_guide.md`, `placement.json` and `routing/` beside the `.kicad_pcb`, `.kicad_pro`, `.kicad_dru`,
+  `.kicad_prl` and the two lib tables. Without the guide the check still ends `CHECK PASS` and prints `angles: the
+  guide has no 'joints' row, not checked` -- a pass with the angle, shape and via-link rules skipped; with the guide
+  and without `placement.json` it stops in a second on the first keep-out the guide names. Read the pass for the
+  `angles:` line with a joint count before quoting it. TRAP (board1 R1, 2026-11-27: gate 2 passed with no angle test;
+  gate 3 died at 1 s on 'no placement.json keep-out named ...').
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
