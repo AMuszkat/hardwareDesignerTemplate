@@ -2808,3 +2808,28 @@ bound. (5) `--seed` did not move a 6-cell stuck net; the net's own reserve piece
 BUDGET SPENT in a second; start only on `round 1 of 1`, and book a granted round in a command of its own, read its
 output, then start. **PROOF:** board1 tmpWork/R1round209/n/CROSSINGS.md, p/KNOTS.md, p/SUMMARY_p.txt; ROUTING_PLAN
 804, 807.
+- **A staged run that ends BLOCKED is re-staged by `restage.py` inside the job, not by a person one net a round -- and
+every re-run is a router run of the budget** (board1 R1, 2026-11-27, round R). Four rounds each moved ONE walled net by hand:
+every part closed alone, a staged run froze stage k and stage k+1 was shut in at a source or a goal by it. `restage.py
+--spec S --workdir D --deadline T [--policy pull|push] -- <router with {spec} {timeout}>` reads the report (the last `--- leg
+N:`, each `BLOCKED SOURCE|GOAL` block, its `walled by ...'s fixed copper` line), sorts the walls (a net of an EARLIER stage
+is a leg and a stage can move it; a net of the same or a later stage is its prelaid reserve; the rest is the board), moves
+the blocked leg (pull: into the earliest stage of its leg-wallers; push: a new stage of its own before them) and runs
+again; exit 5 = only reserves or the board wall it (a stub to cut or a rip row, not an order), 6 = a stage stalled, 7 = a
+cycle (the knot is that pair), 8 = the router refused or crashed (null), 9 = time or `--max-iter` (`--continue` goes on).
+(1) netgroup does not resume: each iteration negotiates every stage again, so count N variants x K iterations / RACE
+rounds BEFORE the job and set `--max-iter`; the run past the last round is refused in a second. (2) A spec the round before
+already ran needs no first run: `--seed-log LOG --seed-exit N`. (3) Give the router `--live PATH` when it records its
+spec's path (origin, a stale-plan check). (4) Keep a replay of the board's REAL logs beside the job script
+(`test_restage.py --replay SPEC LOG EXIT`): a changed report text is what breaks the parser. **PROOF:** `python3
+tools/route/test_restage.py` (14 tests, a stub runner, no router); board1 tmpWork/R1round209/r/replay.txt, STATE.md.
+(5) The first real round (board1 R1 round R): on one half every pull closed the first stage again in 80..120 s, four nets
+moved in three runs; on the other a pull ended `stopped` at the iteration cap with two nets left -- that row is null,
+not a stall: give a seeded variant fewer, longer runs. Spend a round on DEPTH (two starts x three runs), not on six starts.
+- **TRAP: a relaxed rule area's edge is read from the board, and a self-check of it tests every pair both ways** (board1
+R4 exits, 2026-11-27). A lay script modelled the first-mm area's north edge at one y for the whole part; west of one x
+the outline steps 0.5 mm, and a lane legal in the model sat 0.11 mm from a via. The fix passed a point-wise self-check
+that took each sample's nearest partner one way and counted a point ON the edge as inside; `route.py check` failed it at
+0.1893 of 0.2032 mm. Way round: dump the rule area's outline from the board, judge each draft with `planclr.py`, and in
+your own check hold a pair to the class number as soon as EITHER point is on or past the edge. **PROOF:** the gate's
+`RULE area clear` rows reproduced to the digit on the failed plan before the fixed one is gated.
