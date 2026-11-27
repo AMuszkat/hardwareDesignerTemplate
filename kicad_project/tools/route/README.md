@@ -2201,6 +2201,11 @@ has moved. `budget.py`'s docstring is the manual; in short:
   gets its site counted on every layer the via crosses before any spec names the net; (3) the list of open nets
   skips pour nets and sees an end that is a joint of two segments. Prove it: the count's file reads N / 0 / 0 on
   the copy the spec is written for.
+- **Any `netgroup.py` run on a copy of a budgeted group books a round -- a 20 s smoke test of one net too.** A worker
+  tried a new spec form on six nets alone as an ungrouped `bgwait` job; `netgroup.py` booked `run [round] 18 s` and the
+  group's only granted round was gone before any negotiation (board1 R1, 2026-11-27). A spec-form smoke test goes INSIDE
+  the pre-check's `--group G --terms` job (the pre-check script takes a variant and net names), never beside it; say so
+  in the brief of every worker that builds specs. Proof: `budget.py --board B G` before and after reads the same rounds.
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
