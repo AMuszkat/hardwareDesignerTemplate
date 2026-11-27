@@ -2206,6 +2206,20 @@ has moved. `budget.py`'s docstring is the manual; in short:
   group's only granted round was gone before any negotiation (board1 R1, 2026-11-27). A spec-form smoke test goes INSIDE
   the pre-check's `--group G --terms` job (the pre-check script takes a variant and net names), never beside it; say so
   in the brief of every worker that builds specs. Proof: `budget.py --board B G` before and after reads the same rounds.
+- **An alone pre-check that exits 0 for a line with a PINNED via is not reach, and a pinned site is assigned by reach, not
+  by position.** A site list from a capacity count (legal on every layer, a ground via near) says nothing about whether
+  the line's far end gets there: of 23 counted sites six were reached by no line from the far BGA on any inner layer, and
+  ten pinned lines "routed alone" by paying for 1-4 extra vias (the far leg's F.Cu avoid is a price, not a wall). Before
+  pinning: a flood per line from each end on each of its layers with the OTHER sites standing, a matching over that
+  table, and after the pre-check a count of each alone plan's vias (one per pinned line). And a line whose far via opens
+  on ONE layer has one way out: take it from a free variant's alone plan and keep every pinned site off it -- the
+  failure reads as that free line's own BLOCKED SOURCE (board1 R1, 2026-11-27). Pinning did not help the round: the two
+  pinned variants ended with twice the overlap of the free ones.
+- **After a round that closes nothing, read WHERE before anything else: the partial plan's `contested` cells by layer and
+  x band.** Six variants, 29-40 iterations each, every net overlapping, flat from iteration 10 -- and 65-77 % of the
+  cells on F.Cu in all six: the lines crossed one another on the one layer they share on the way to scattered via
+  places. That is ten lines of python on `*.plan.partial.json` and it names the term to count next (here: where a via
+  may stand), which six more variants on the same terms do not (board1 R1, 2026-11-27).
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
