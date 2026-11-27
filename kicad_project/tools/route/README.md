@@ -2226,6 +2226,14 @@ has moved. `budget.py`'s docstring is the manual; in short:
   every row -- 45 minutes and a table that decided nothing (board1 R1, 2026-11-27). Before believing such a count, print
   the spread between sweep orders; a count of order-keeping runs needs runs that HUG (river routing from both walls) or
   a DP in the lines' order, and a bound that carries the order.
+- **Build the bound that carries the order BEFORE any sweep.** For "how many of N order-keeping lines reach a via place",
+  vertex-disjoint paths over blocks no wider than the run pitch (a flow from the lines' ends to the legal sites; 40 lines
+  of python, 2 s a row) decided three of five rows that 70 sweeps and a matching bound could not: 18 of 25 on the
+  handoff's terms is DOES NOT FIT whatever a sweep finds (board1 R1, 2026-11-27). It errs upward (any line may take any
+  site), so a row is closed only by a set laid whole and verified, and a row whose lower and upper differ is UNDECIDED,
+  written `"closes": null`. For the lower bound run both hugs -- a wall follower (best in an open channel) and a
+  wall-biased Dijkstra (best where sites are scarce) -- and verify pairs with the SAME pitch rule the laying used, or the
+  verify fails good runs at the column where the rule changes. Print the min cut's place: it names the wall to ask about.
 - **`endpairs.py`: two ends of one negotiation closer than a track and its clearance -- before the pre-check, before
   any round.** `tools/kpy tools/route/endpairs.py --board <board dir> routing/SPEC.json ...` (exit 1, one `INHERENT`
   line a pair). TRAP (board1 R1, 2026-11-27): 25 fan-in lines ended on the east edge of a relaxed-clearance area at
