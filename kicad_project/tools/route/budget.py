@@ -514,7 +514,7 @@ def tally(g, now=None):
                and cost(e, now) <= GATE_S}               # a gate's own checks open no round (board1 NORTHGAP r192)
     rounds = checks = free = lays = 0                    # free: runs that never negotiated, their round left out
     lay = None                                           # the `lay` event of this epoch: LAY_CHECKS checks after it
-    secs = count_s = last = 0.0
+    secs = count_s = last = tgrant = 0.0
     counts, terms, on_copper, t_apply = [], [], {}, 0.0
     base = last_copper(g)
     for e in g.get("events", []):                        # copper is a fact of the board, whatever the epoch
@@ -535,6 +535,8 @@ def tally(g, now=None):
                 terms.append(e)
         elif k == "lay":
             lay = lay or e
+        elif k == "terms_grant":                         # the user's own extension of this epoch's terms window
+            tgrant += float(e.get("add", 0))
         elif k in ("reopen", "worker", "apply", "rip", "recount"):
             pass
         elif k == "job":                                 # the job owns its time; what ran inside it says what it was
@@ -589,7 +591,8 @@ def tally(g, now=None):
     return dict(rounds=rounds, seconds=secs, checks=checks, free=free, counts=counts, count_s=count_s, complete=complete,
                 nets_applied=nets_applied, left_rounds=left_r, left_seconds=left_s, state=state, wall=wall,
                 no_more=no_more, lay=lay, lay_left=lay_left, allow_rounds=T["rounds"], allow_seconds=T["seconds"], frac=T["frac"], terms=terms,
-                terms_end=(min(e["t"] for e in terms) + TERMS_S[g.get("tier", "A")]) if terms else None)
+                terms_grant=tgrant,
+                terms_end=(min(e["t"] for e in terms) + TERMS_S[g.get("tier", "A")] + tgrant) if terms else None)
 
 
 def key_for(L, name, nets):
@@ -821,7 +824,7 @@ def gate(board_dir, name, nets=None, kind="run", matched=False, limit=None, labe
             g["events"].append(e)
             return Token(hb, key, e["id"], COUNT_S, now)
         if kind == "terms":                               # the count a wall carries: runs when spent, in its own window
-            span = TERMS_S[g["tier"]]
+            span = TERMS_S[g["tier"]] + t.get("terms_grant", 0.0)
             t0 = min((x["t"] for x in t["terms"]), default=now)
             left = t0 + span - now
             if left <= 1:
@@ -1354,6 +1357,45 @@ def lay_rows(TT):
             and all(str(TT["terms"][m].get("handoff_allows") or "").strip() for m in r["moved"])]
 
 
+GRANT_MAX_MIN = 90                                       # one grant at most a tier-C window again
+
+
+def cmd_grant(board_dir, key, minutes, why):
+    """`budget.py grant <group> <minutes> --why "<the user's answer, quoted>"`: THE USER extends this epoch's terms
+    window.  A session never runs it on its own judgement: the ledger keeps the quote, and `route.py budget` shows
+    the grant beside the window.  It adds no round and none of the group's time -- only minutes to a count that
+    the window cut off (board1 R1, 2026-11-28: the ceiling's two knots, each owing its own site-exchange row by
+    crossing_rows, showed at the window's end; the user gave 45 min)."""
+    hb = home(board_dir)
+    if hb is None:
+        print(f"{board_dir}: not a session's board: no budget", file=sys.stderr)
+        return 2
+    if not (0 < minutes <= GRANT_MAX_MIN) or len(why.strip()) < 20 or "user" not in why.lower():
+        print(f"GRANT REFUSED -- minutes in (0, {GRANT_MAX_MIN}], and --why quotes the user's answer (who and what, "
+              f"\"the user, <date>: ...\")", file=sys.stderr)
+        return 2
+    with Ledger(hb) as L:
+        g = L.group(key) or next((x for x in L.d["groups"].values() if key in x.get("names", [])), None)
+        if g is None:
+            print(f"grant: {key} is not in the ledger", file=sys.stderr)
+            return 2
+        key = next(k for k, x in L.d["groups"].items() if x is g)
+        t = tally(g)
+        if not t["terms"]:
+            print(f"GRANT REFUSED -- {key}: no terms count in this epoch; the window opens with its first job",
+                  file=sys.stderr)
+            return 1
+        ep, now = g.get("epoch", 1), time.time()
+        gap = max(0.0, now - t["terms_end"])             # a grant runs from now: the idle time since the window
+        g["events"].append(dict(t=now, kind="terms_grant", name=key, epoch=ep, id=len(g["events"]) + 1, s=0,
+                                add=round(gap + minutes * 60.0, 1), minutes=minutes, why=why.strip()))
+        L.dirty = True                                   # ended is not count time, so it is not given
+        end = max(now, t["terms_end"]) + minutes * 60.0
+    print(f"budget: {key} -- terms window extended {minutes:g} min by the user's grant; it now ends "
+          f"{time.strftime('%H:%M', time.localtime(end))} ({max(0, round((end - time.time()) / 60))} min from now)")
+    return 0
+
+
 def cmd_lay(board_dir, key):
     """`budget.py lay <group>`: a spent group lays the closing row the handoff already allows."""
     hb = home(board_dir)
@@ -1676,6 +1718,7 @@ if __name__ == "__main__":
     ap.add_argument("group", nargs="*", metavar="[terms] GROUP",
                     help="a group: its record. `terms GROUP`: check routing/terms/GROUP.json as the wall will. "
                          "`lay GROUP`: a spent group lays its closing row the handoff already allows")
+    ap.add_argument("--why", default="", help="`grant GROUP MINUTES --why`: the user's answer, quoted")
     a_ = ap.parse_args()
     bd_ = a_.board
     if re.fullmatch(r"board\d+", bd_) and sorted(KP.glob(bd_ + "_*")):
@@ -1690,6 +1733,10 @@ if __name__ == "__main__":
         if len(a_.group) != 2:
             ap.error("recount GROUP")
         sys.exit(cmd_recount(bd_, a_.group[1]))
+    if a_.group[:1] == ["grant"]:
+        if len(a_.group) != 3:
+            ap.error("grant GROUP MINUTES --why \"the user, <date>: ...\"")
+        sys.exit(cmd_grant(bd_, a_.group[1], float(a_.group[2]), a_.why))
     if a_.group[:1] == ["lay"]:
         if len(a_.group) != 2:
             ap.error("lay GROUP")

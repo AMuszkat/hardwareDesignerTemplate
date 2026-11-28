@@ -508,6 +508,34 @@ class TermsWindow(unittest.TestCase):
         self.assertEqual(t["terms_end"], T0 + 5 + B.TERMS_S["C"])
         self.assertEqual(t["state"], "open")
 
+    def test_the_users_grant_reopens_the_window_from_now(self):
+        first = dict(id=9, kind="terms", name="G", epoch=1, t=time.time() - B.TERMS_S["C"] - 3600, s=900.0, jid="c@1")
+        why = "the user, 2026-11-28: 45 more min (Recommended)"
+        with board(self.spent(first)) as hb:
+            r, said = quiet(B.cmd_grant, hb, "G", 45, why)
+            self.assertEqual(r, 0, said)
+            e = ledger(hb)["events"][-1]
+            self.assertEqual((e["kind"], e["minutes"], e["why"]), ("terms_grant", 45, why))
+            t = B.tally(ledger(hb))
+            self.assertEqual(t["rounds"], 5)                              # it gives no round
+            tok, said = quiet(B.gate, hb, "G", kind="terms", label="x", jid="x@1")
+            self.assertTrue(tok, said)
+            self.assertAlmostEqual(tok.detach()["limit"], 45 * 60, delta=5)
+
+    def test_a_grant_is_the_users_and_bounded(self):
+        first = dict(id=9, kind="terms", name="G", epoch=1, t=time.time() - B.TERMS_S["C"] - 5, s=900.0, jid="c@1")
+        with board(self.spent(first)) as hb:
+            n = len(ledger(hb)["events"])
+            for m, why in ((45, "the session thinks so, more time"), (B.GRANT_MAX_MIN + 1, "the user, 2026-11-28: yes"),
+                           (0, "the user, 2026-11-28: yes please")):
+                r, said = quiet(B.cmd_grant, hb, "G", m, why)
+                self.assertEqual(r, 2, said)
+                self.assertIn("GRANT REFUSED", said)
+            self.assertEqual(len(ledger(hb)["events"]), n)
+        with board(self.spent()) as hb:                                   # no window yet: nothing to extend
+            r, said = quiet(B.cmd_grant, hb, "G", 45, "the user, 2026-11-28: 45 more min")
+            self.assertEqual(r, 1, said)
+
     def test_what_runs_inside_a_terms_job_is_charged_nothing(self):
         with board(self.spent()) as hb:
             os.environ[B.ENV_IN] = "terms"                                # what bgwait.py sets for its command
