@@ -96,7 +96,8 @@ def table(hb, terms, rows, key="G", touch=True, blocked=None, extra=None):
             r["contested"] = ["N1", "N2", "N3"]           # three nets left overlapping: not one crossing
         if (blocked is not False and set(r.get("moved") or []) == set(terms) and r.get("closes") is not True
                 and "blocked_by" not in r):
-            r["blocked_by"] = blocked or [{"what": "the lane end is boxed by a via site", "part": None}]
+            r["blocked_by"] = blocked or [{"what": "the lane end is boxed by a via site", "part": None,
+                                    "wall": "fixed", "why": "10_layout #4: the via site is reserved"}]
         full.append(r)
     p.write_text(json.dumps(dict({"terms": terms, "rows": full}, **(extra or {}))))
     return p
@@ -247,7 +248,7 @@ class TermsTable(unittest.TestCase):
         self.assertIn("does not say what stops it", errs[0])
         self.assertIn("no row closes", errs[0])
         # a part that stops it and that no term moves: the count is missing (board1 R1, 2026-11-25)
-        by = [{"what": "pad C100.1 over the lane end (33.5, 14.2)", "part": "C100"}, {"what": "a via site", "part": None}]
+        by = [{"what": "pad C100.1 over the lane end (33.5, 14.2)", "part": "C100"}, {"what": "a via site", "part": None, "wall": "fixed", "why": "#4"}]
         TT, errs = self.read(TERMS3, [dict(row, blocked_by=by)])
         self.assertIsNone(TT)
         self.assertIn("C100 stops the ceiling", errs[0])
@@ -264,11 +265,56 @@ class TermsTable(unittest.TestCase):
         # a blocker that reads like a reference says whether it is a part
         TT, errs = self.read(TERMS3, [dict(row, blocked_by=[{"what": "pad R66.1 north of the lane"}])])
         self.assertIn("it names R66", errs[0])
-        TT, errs = self.read(TERMS3, [dict(row, blocked_by=[{"what": "DRAM_DATA9_B's lane end on In7.Cu"}])])
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=[{"what": "DRAM_DATA9_B's lane end on In7.Cu", "wall": "fixed",
+                                                                  "why": "another group's copper"}])])
         self.assertEqual(errs, [])
         # a ceiling that closes owes none
         TT, errs = self.read({"T1": TERMS3["T1"]}, [dict(moved=["T1"], closes=True, left=0, proof="check")], blocked=False)
         self.assertEqual(errs, [])
+
+    def test_only_a_gap_between_fixed_walls_does_not_fit(self):
+        """board1 R1, Q147 (rev 212): DOES NOT FIT with a router lead and its own lays uncounted."""
+        row = dict(moved=["T1", "T2", "T3"], closes=False, left=1)
+        own = {"what": "the pocket's walls: CA4_A's lay, NCS1_A's In2 track", "part": None, "wall": "own"}
+        # a blocker that says no wall, or a fixed one with no rule
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=[{"what": "a pocket", "part": None}])])
+        self.assertIn("which wall is it?", errs[0])
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=[{"what": "a pocket", "part": None, "wall": "fixed"}])])
+        self.assertIn("fixed by what?", errs[0])
+        # the group's own copper, uncounted: a lead, the table refused
+        TT, errs = self.read(TERMS3, [dict(row, blocked_by=[own])])
+        self.assertIsNone(TT)
+        self.assertIn("A LEAD, UNCOUNTED", errs[0])
+        # counted by a row that moved every term and re-laid it: the table stands
+        relaid = dict(row, evidence="tmpWork/terms/relaid.json", lead="CA4_A, NCS1_A re-laid",
+                      blocked_by=[{"what": "the board edge", "part": None, "wall": "fixed", "why": "the outline"}])
+        with board(group(job(1, 60.0))) as hb:
+            (hb / "tmpWork/terms").mkdir(parents=True, exist_ok=True)
+            (hb / relaid["evidence"]).write_text("{}")
+            table(hb, TERMS3, [dict(row, blocked_by=[dict(own, counted=relaid["evidence"])]), relaid])
+            TT, errs = B.read_terms(hb, "G")
+            self.assertEqual(errs, [])
+            self.assertIn("every term, and CA4_A, NCS1_A re-laid", "\n".join(B.terms_lines(TT)))
+            self.assertIn("counted: `tmpWork/terms/relaid.json`", "\n".join(B.closing_lines(TT, "G")))
+            # ... but a count its window cut is no count
+            table(hb, TERMS3, [dict(row, blocked_by=[dict(own, counted=relaid["evidence"])]),
+                               dict(relaid, closes=None, left=None)])
+            TT, errs = B.read_terms(hb, "G")
+            self.assertIn("no answer in its window", errs[0])
+            # the router's own line in the ceiling's evidence is a router lead, whatever the entries say
+            ev = hb / "tmpWork/terms/ceil.log"
+            ev.write_text("DMI0_B: the channel is shut by routed nets, not by the board alone -- another "
+                          "--seed or --full may open it without a change to the spec")
+            table(hb, TERMS3, [dict(row, evidence="tmpWork/terms/ceil.log")])
+            TT, errs = B.read_terms(hb, "G")
+            self.assertIsNone(TT)
+            self.assertIn("the router's own lead", errs[0])
+            # ... counted by another seed: the table stands
+            seed = dict(relaid, lead="--seed 2")
+            table(hb, TERMS3, [dict(row, evidence="tmpWork/terms/ceil.log", blocked_by=[
+                {"what": "DMI0_B's cut point", "part": None, "wall": "router", "counted": seed["evidence"]}]), seed])
+            TT, errs = B.read_terms(hb, "G")
+            self.assertEqual(errs, [])
 
     def test_a_ceiling_that_does_not_close_is_a_whole_table(self):
         TT, errs = self.read(TERMS3, [dict(moved=["T3", "T2", "T1"], closes=False, left=5)])

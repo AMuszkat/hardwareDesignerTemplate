@@ -114,6 +114,13 @@ rows of a table that CLOSED on a scratch copy, and the table starts from the loo
   or kept by a rule the table names -- "fixed": {"C12": "the handoff rule"}.  A blocker no
   term moved is a count that is missing; the table is refused.  (board1 R1, 2026-11-25: an
   eighth wall titled DOES NOT FIT on a pad of a capacitor that was in none of its seven terms.)
+  ONLY A GAP BETWEEN FIXED WALLS IS DOES NOT FIT: a blocker that is no part says "wall": "fixed"
+  (with "why", the rule), "own" (the group's own copper) or "router" (the router's own lead:
+  another --seed, --full, a wider window); "own" and "router" are LEADS, counted on the group's
+  share with no question -- "counted": the evidence of a row that moved every term and re-laid
+  that copper or ran that effort ("lead" on that row) -- and the table is refused while one is
+  not.  The router's own "may open it" line in the ceiling's note or evidence is a router lead.
+  (board1 R1, Q147: DOES NOT FIT with a router lead and three of its own lays uncounted.)
   "evidence": the variant's result, a file of the board folder written in this
   epoch -- a table counted for an earlier wall is refused.  A row with "moved": [] is the
   published terms as they stand (more effort only).  `budget.py terms <group>` checks the
@@ -1174,7 +1181,7 @@ def read_terms(hb, key, since=0.0):
             if not any(set(r["moved"]) in ({tid}, allt - {tid}) for r in rows):
                 errs.append(f"term {tid} has no row of its own: the ceiling closes, so count {tid} ALONE or every "
                             f"term BUT {tid} -- which terms the group needs is the question")
-    errs += ceiling_blockers(D, terms, ceiling, rows)
+    errs += ceiling_blockers(D, terms, ceiling, rows, hb)
     errs += crossing_rows(terms, rows)
     if errs:
         return None, errs
@@ -1217,9 +1224,66 @@ def crossing_rows(terms, rows):
 
 
 _REFLIKE = re.compile(r"(?<![A-Za-z0-9_])([A-Z]{1,4}[0-9]{1,4})(?![A-Za-z0-9_])")
+# The router's own leads (maze.py's blocked-goal report): more effort or a wider window, no term
+_ROUTER_LEAD = re.compile(r"--seed or --full may open it|a wider window may open it")
+WALLS = {"fixed": "a wall the handoff fixes",
+         "own": "the group's own copper (a lay a form froze, a track the group put down)",
+         "router": "the router's own lead (another --seed, --full, a wider window)"}
 
 
-def ceiling_blockers(D, terms, ceiling, rows):
+def _lead_errs(D, ceiling, rows, hb):
+    """ONLY A GAP BETWEEN FIXED WALLS IS DOES NOT FIT.  Each blocker that is no part says which
+    wall it is: "wall": "fixed" with "why" (the handoff rule that fixes it), or "own" / "router" --
+    a LEAD, which the group counts on its own share and asks no one: "counted": the evidence of
+    a row that moved every term and re-laid that copper or ran that effort ("lead" on the row
+    says which).  The router's own line ("another --seed or --full may open it") in the
+    ceiling's note, its blockers or its evidence is a router lead whatever the entries say.
+    (board1 R1, Q147 at rev 212: a ceiling titled DOES NOT FIT with its router lead and three
+    of its own lays uncounted -- concept: "not DOES NOT FIT yet".)  -> the errors."""
+    by, errs = ceiling["blocked_by"], []
+    others = {str(r.get("evidence")): r for r in rows if r is not ceiling and set(r["moved"]) == set(ceiling["moved"])}
+    kinds = set()
+    for b in by:
+        what = str(b["what"]).strip()[:60]
+        if b.get("part"):
+            continue                                       # a part: moved by a term or kept by "fixed"
+        w = b.get("wall")
+        if w not in WALLS:
+            errs.append(f"blocked_by \"{what}\": which wall is it? \"wall\": \"fixed\" ({WALLS['fixed']}; with "
+                        f"\"why\": the rule), \"own\" ({WALLS['own']}) or \"router\" ({WALLS['router']}). Only a "
+                        f"gap between fixed walls is DOES NOT FIT")
+            continue
+        kinds.add(w)
+        if w == "fixed":
+            if not str(b.get("why") or "").strip():
+                errs.append(f"blocked_by \"{what}\": a fixed wall -- fixed by what? \"why\": \"the handoff rule\"")
+            continue
+        r = others.get(str(b.get("counted") or ""))
+        if r is None:
+            errs.append(f"blocked_by \"{what}\" is {WALLS[w]}: A LEAD, UNCOUNTED. Count it on this share -- every "
+                        f"term moved and {'that copper re-laid' if w == 'own' else 'that effort run'}, a row of its "
+                        f"own (\"lead\": what it changed) -- and name the row: \"counted\": \"<its evidence>\". It "
+                        f"moves nothing the group must ask for, so it is no question, and no wall is DOES NOT FIT "
+                        f"before it is counted")
+        elif r["closes"] is None:
+            errs.append(f"blocked_by \"{what}\": its count ({r['evidence']}) gave no answer in its window -- the "
+                        f"lead is still uncounted")
+    if "router" not in kinds:
+        texts = [str(ceiling.get("note") or "")] + [str(b.get("what") or "") for b in by]
+        f = Path(hb) / str(ceiling.get("evidence") or "")
+        try:
+            if f.is_file() and f.stat().st_size < 4 << 20:
+                texts.append(f.read_text(errors="replace"))
+        except OSError:
+            pass
+        m = next((m for t in texts for m in [_ROUTER_LEAD.search(t)] if m), None)
+        if m:
+            errs.append(f"the ceiling carries the router's own lead (\"{m.group(0)}\") and no blocker is "
+                        f"\"wall\": \"router\" with its count: run that effort on every term and name its row")
+    return errs
+
+
+def ceiling_blockers(D, terms, ceiling, rows, hb="."):
     """A TABLE WITH NO CLOSING ROW SAYS WHAT STOPS ITS CEILING, AND A PART THAT STOPS IT IS A TERM.
     (A table with a row that closes offers that row: it owes none of this.)  The ceiling row carries "blocked_by": [{"what": "pad C12.1 over the lane end (3.2, 4.1)",
     "part": "C12"}, {"what": "the via site reserved at (1.0, 2.0)", "part": null}] -- what stands
@@ -1263,7 +1327,7 @@ def ceiling_blockers(D, terms, ceiling, rows):
                     f"text) and count the ceiling again -- or say what keeps it there: \"fixed\": {{\"{ref}\": "
                     f"\"the handoff rule that fixes it\"}}. A wall whose blocker was never moved is a count that "
                     f"is missing, not a group that does not fit")
-    return errs
+    return errs + _lead_errs(D, ceiling, rows, hb)
 
 
 def blockers_lines(TT):
@@ -1274,10 +1338,12 @@ def blockers_lines(TT):
     fixed = TT.get("fixed") if isinstance(TT.get("fixed"), dict) else {}
     out = ["", "**What stops the ceiling** (every term moved, as measured):"]
     for b in c["blocked_by"]:
-        ref = b.get("part")
+        ref, w = b.get("part"), b.get("wall")
         out.append(f"- {str(b['what']).strip()}"
                    + (f" -- {ref} stays: {str(fixed[ref]).strip()}" if ref and str(fixed.get(ref) or "").strip() else
-                      f" -- {ref} is moved by a term above" if ref else ""))
+                      f" -- {ref} is moved by a term above" if ref else
+                      f" -- fixed: {str(b.get('why') or '').strip()}" if w == "fixed" else
+                      f" -- {WALLS[w]}, counted: `{b.get('counted')}`" if w in WALLS else ""))
     return out
 
 
@@ -1289,7 +1355,9 @@ def terms_lines(TT):
            "| moved | closes | nets left | evidence |", "|---|---|---|---|"]
     for r in TT["rows"]:
         mv, c = r["moved"], r["closes"]
-        what = (f"every term ({', '.join(mv)}): the ceiling" if set(mv) == allt and len(allt) > 1 else
+        what = (f"every term, and {str(r['lead']).strip()}" if r.get("lead") and set(mv) == allt and
+                r is not TT["ceiling"] else
+                f"every term ({', '.join(mv)}): the ceiling" if set(mv) == allt and len(allt) > 1 else
                 " + ".join(mv) if mv else "no term: the published terms as they stand")
         out.append(f"| {what} | {PROOFS[r['proof']][0] if c is True else 'NO' if c is False else 'no answer in the window'} | "
                    f"{r['left'] if r.get('left') is not None else '?'} | `{r['evidence']}`"

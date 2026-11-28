@@ -2190,6 +2190,18 @@ has moved. `budget.py`'s docstring is the manual; in short:
   DOES NOT FIT, pad C100.1 named as what shut a lane and C100 in none of the seven terms (the board's own
   notes read "what would free it: C100 re-sited (not counted)"), the ceiling `false` with "the F race was
   stopped by the window" in its note -- one more round trip, no term.
+- **Only a gap between FIXED walls is DOES NOT FIT** (`budget.py`, `_lead_errs`). Each `blocked_by` entry
+  that is no part says `"wall"`: `"fixed"` with `"why"` (the handoff rule), `"own"` (the group's own
+  copper: a lay a staged form froze, a track the group put down) or `"router"` (the router's own lead:
+  another `--seed`, `--full`, a wider window). `own` and `router` are LEADS: count them on the group's
+  share, no question -- a row that moved every term AND re-laid that copper or ran that effort
+  (`"lead": "--seed 2"`), named on the entry as `"counted": "<its evidence>"`; a count its window cut is
+  no count. The router's "another --seed or --full may open it" line in the ceiling's note, its blockers or
+  its evidence is a router lead whatever the entries say. Build the ceiling's variants with the leads in
+  them from the start: the seeds, a `--full` run, and the group's own frozen lays released as routed nets.
+  TRAP (board1 R1, Q147, 2026-11-28): a seventeenth wall titled DOES NOT FIT with the router's own lead
+  ("the channel is shut by routed nets ... another --seed or --full may open it") and three of R1's own
+  lays as the pocket's walls, all uncounted; concept, rev 212: "not DOES NOT FIT yet" -- one more round trip.
 - **A clear site is one the hop can REACH, not one inside a radius.** Before a hand-lay or a lead
   that moves the group's own via is briefed, count the sites with every knot net's partial freed and
   trace each hop from its net's copper to the site on the hop layer; a site the holder needs is not
