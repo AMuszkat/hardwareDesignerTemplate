@@ -7,6 +7,7 @@ limit -- for both session types (the concept side calls it by path).
     python3 tools/bgwait.py status [NAME ...]
     python3 tools/bgwait.py kill NAME ...
     python3 tools/bgwait.py clean NAME ... | --all-ended
+    python3 tools/bgwait.py watch board1_module/tmpWork/TASK [DIR ...] [--idle 1800] [--max 5400]
 
     python3 tools/bgwait.py run --name N --group GROUP|SPEC|PLAN [--count | --gate | --terms] [--board boardN] -- <command>
 
@@ -117,6 +118,18 @@ SIGTERM to the job's process group, SIGKILL after `--grace` seconds (default
 refuses -- the jobs folder is shared by the session and all its workers, and forgetting every ended
 job deletes their default logs and the records `cores` reads (board1, 2026-11-23: a worker's bare
 `clean` took 82, the session's included).  `--all-ended` is the old behaviour, asked for by name.
+
+A WORKER IS WATCHED TOO.  `watch DIR [DIR ...] [--idle 1800] [--max 5400]`, sent as a BACKGROUND
+Bash command in the same message as the worker it watches, returns when the worker's folder
+(tmpWork/<task>/, then any scratch folder it writes) holds a file DONE -- the brief tells the
+worker to write it last, beside STATE.md (exit 0); when nothing under them was written for
+--idle seconds: STALLED, stop the worker and hand its STATE.md to a fresh one (exit 3); when the
+worker has been out --max seconds since the first watch, still writing: a bounded task that is
+not bounded, stop it and split what is left (exit 4); or at --timeout, watch again (exit 124).
+A worker's hand-back wakes the session; a worker that stops without one -- a prompt nobody
+answers, a hang -- wakes nothing, and a session that waits on "the worker hands back" waits
+forever.  (board1 R4, 2026-11-27: a worker wrote its last file at 21:15 and sat with no
+process and no hand-back for 11 h 36 min, while the session held R1's next step for it.)
 
 WHERE THE JOB FILES LIVE -- git-ignored, one folder per session:
     HW_BGWAIT_DIR                       when set (tests);
@@ -1248,6 +1261,65 @@ def cmd_cores(a):
     return 0
 
 
+WATCH_STAMP = ".watch_start"
+WATCH_SKIP = {"__pycache__", WATCH_STAMP}
+
+
+def newest_write(dirs):
+    """(mtime, path) of the newest file or folder under `dirs` (caches and the watch's stamp left out)."""
+    best = (0.0, None)
+    for d in dirs:
+        for root, dn, fn in os.walk(d):
+            dn[:] = [x for x in dn if x not in WATCH_SKIP]
+            for x in [root] + [os.path.join(root, f) for f in fn if f not in WATCH_SKIP]:
+                try:
+                    m = os.stat(x).st_mtime
+                except OSError:
+                    continue
+                if m > best[0]:
+                    best = (m, x)
+    return best
+
+
+def cmd_watch(a):
+    """A worker's watchdog: returns when its folder says DONE, goes quiet, or passes its time cap."""
+    dirs = [Path(d).resolve() for d in a.dirs]
+    first = dirs[0]
+    first.mkdir(parents=True, exist_ok=True)
+    stamp = first / WATCH_STAMP
+    if not stamp.exists():
+        stamp.write_text(f"{time.time():.0f}\n")
+    try:
+        t0 = float(stamp.read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        t0 = time.time()
+    if a.timeout > TIMEOUT_MAX:
+        die(f"--timeout {a.timeout:g}: at most {TIMEOUT_MAX:g} s a call; watch again")
+    end = time.time() + a.timeout
+    while True:
+        now = time.time()
+        m, p = newest_write(dirs)
+        last = max(m, t0)
+        quiet, age = now - last, now - t0
+        where = f"newest write {dur(quiet)} ago ({p or 'none'}); worker out {dur(age)}"
+        if (first / "DONE").exists():
+            print(f"bgwait watch: DONE -- {first}/DONE is there; {where}")
+            return 0
+        if quiet >= a.idle:
+            print(f"bgwait watch: STALLED -- nothing written under {', '.join(map(str, dirs))} for {dur(quiet)} "
+                  f"(--idle {dur(a.idle)}); {where}.\n  Stop the worker (TaskStop), read its STATE.md, and give "
+                  f"what is left to a fresh worker -- never wait on it again.")
+            return 3
+        if age >= a.max:
+            print(f"bgwait watch: OVER ITS CAP -- out {dur(age)} (--max {dur(a.max)}), still writing; {where}.\n"
+                  f"  A bounded task does not take this long: stop it, split what is left.")
+            return 4
+        if now >= end:
+            print(f"bgwait watch: still working -- {where}; watch again")
+            return 124
+        time.sleep(min(a.poll, max(1.0, end - now)))
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["_exec"] and len(argv) == 2:
@@ -1298,6 +1370,14 @@ def main(argv=None):
     p.add_argument("--dir", action="append", help="a jobs folder (default: this session's); may repeat")
     p.add_argument("--top", type=int, default=12)
     p.set_defaults(fn=cmd_cores)
+    p = sub.add_parser("watch", help="a worker's watchdog: exit 0 at DIR/DONE, 3 when nothing is written for "
+                                     "--idle, 4 past --max, 124 at --timeout")
+    p.add_argument("dirs", nargs="+", metavar="DIR", help="the worker's folders (tmpWork/<task>/ first)")
+    p.add_argument("--idle", type=float, default=1800.0, help="seconds with no write that make it STALLED (30 min)")
+    p.add_argument("--max", type=float, default=5400.0, help="seconds out, from the first watch (90 min)")
+    p.add_argument("--timeout", type=float, default=TIMEOUT_MAX, help=f"seconds this call waits (at most {TIMEOUT_MAX:g})")
+    p.add_argument("--poll", type=float, default=30.0)
+    p.set_defaults(fn=cmd_watch)
     a = ap.parse_args(argv)
     if a.verb == "run" and a.cmd[:1] == ["--"]:
         a.cmd = a.cmd[1:]
